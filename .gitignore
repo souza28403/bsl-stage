@@ -1,0 +1,16 @@
+build/
+out/
+.vs/
+.vscode/
+*.user
+*.suo
+CMakeUserPresets.json
+imgui.ini
+third_party/ffmpeg/
+testmedia/
+
+# capturas com a tela/webcam reais do usuario: nao publicar
+docs/screenshot-fase3a-captura.png
+docs/screenshot-fase3a-alvo.png
+third_party/pdfium/
+docs/qa/

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Gera midia de teste em testmedia/ usando o ffmpeg do PATH.
+set -euo pipefail
+OUT="${1:-testmedia}"
+mkdir -p "$OUT"
+F="ffmpeg -hide_banner -loglevel error -y"
+SRC1080="testsrc2=s=1920x1080:r=30:d=5"
+SRC360="testsrc2=s=640x360:r=30:d=3"
+# circulo opaco em fundo transparente (alpha)
+ALPHA="format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(hypot(X-320,Y-180),150),255,0)'"
+
+$F -f lavfi -i "$SRC1080" -c:v libx264 -pix_fmt yuv420p -preset veryfast "$OUT/h264_1080p.mp4"
+$F -f lavfi -i "$SRC360" -vf "$ALPHA" -c:v libvpx-vp9 -pix_fmt yuva420p -b:v 1M "$OUT/vp9_alpha.webm"
+$F -f lavfi -i "$SRC360" -c:v libvpx -pix_fmt yuv420p -b:v 1M "$OUT/vp8.webm"
+$F -f lavfi -i "$SRC360" -c:v prores_ks -profile:v 3 -pix_fmt yuv422p10le "$OUT/prores.mov"
+$F -f lavfi -i "$SRC360" -c:v libx265 -pix_fmt yuv420p "$OUT/hevc.mkv"
+$F -f lavfi -i "$SRC360" -frames:v 1 -vf "$ALPHA" "$OUT/alpha.png"
+$F -f lavfi -i "$SRC360" -frames:v 1 -q:v 3 "$OUT/photo.jpg"
+$F -f lavfi -i "testsrc2=s=320x180:r=10:d=2" -vf "split[a][b];[a]palettegen[p];[b][p]paletteuse" "$OUT/anim.gif"
+$F -f lavfi -i "testsrc2=s=320x180:r=10:d=2" -c:v libwebp_anim -loop 0 -lossless 0 -q:v 70 "$OUT/anim.webp"
+$F -f lavfi -i "$SRC360" -frames:v 1 -c:v libwebp "$OUT/static.webp"
+ls -la "$OUT"
