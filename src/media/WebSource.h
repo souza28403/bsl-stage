@@ -7,7 +7,7 @@
 
 namespace bsl::media {
 
-class WebSource final : public RemoteSource
+class WebSource : public RemoteSource
 {
 public:
     WebSource(int canvasWidth, int canvasHeight);
@@ -37,10 +37,11 @@ protected:
     void onParamsChanged() override;
     void onCanvasResized(int w, int h) override;
 
-private:
-    WorkerJson paramsJson() const;
-    std::string currentUrl() const;
+    // Pagina e parametros enviados ao worker; as fontes BSL Light (WebBackgrounds, WebMotion) trocam os dois
+    virtual WorkerJson paramsJson() const;
+    virtual std::string currentUrl() const;
 
+private:
     bool fileMode_ = false;
     std::string lastUrl_;
     WorkerJson lastParams_;

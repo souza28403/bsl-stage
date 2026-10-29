@@ -6,7 +6,7 @@ namespace bsl::ui {
 
 // Aba "Arquivos": navegador de pastas com mídias (arrastar para a grade ou duplo clique)
 void drawBrowserPanel(PanelContext& ctx);
-// Aba "Geradores": Padrão de teste (arrastável) e geradores futuros desabilitados
+// Aba "Fontes" (id interno: geradores): seção BSL Light no topo, depois os geradores nativos, ISF e FFGL
 void drawGeneratorsPanel(PanelContext& ctx);
 
 } // namespace bsl::ui

@@ -4,11 +4,12 @@
 
 namespace bsl {
 
-// Framebuffer com uma textura RGBA8. Lanca std::runtime_error se incompleto.
+// Framebuffer com uma textura RGBA8 (ou RGBA32F com 'floatFormat', para os buffers FLOAT do ISF).
+// Lanca std::runtime_error se incompleto.
 class Fbo
 {
 public:
-    Fbo(int width, int height);
+    Fbo(int width, int height, bool floatFormat = false);
     ~Fbo();
     Fbo(const Fbo&) = delete;
     Fbo& operator=(const Fbo&) = delete;
@@ -19,6 +20,8 @@ public:
     static void unbind();
 
     GLuint texture() const { return texture_; }
+    GLuint id() const { return fbo_; }
+    bool isFloat() const { return float_; }
     int width() const { return width_; }
     int height() const { return height_; }
 
@@ -29,6 +32,7 @@ private:
     GLuint texture_ = 0;
     int width_ = 0;
     int height_ = 0;
+    bool float_ = false;
 };
 
 } // namespace bsl

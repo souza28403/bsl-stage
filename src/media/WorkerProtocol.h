@@ -12,6 +12,8 @@
 //      page       {n}                       ir para a pagina n (1..N)
 //      resize     {w, h}
 //      url        {url}   reload {}
+//      eval       {js, key?}                executa JavaScript na pagina (Web). Com 'key' o script e guardado e repetido a cada
+//                                           carga da pagina (e o "open" pode trazer "init": [{key, js}]): fontes BSL Light
 //      mouse      {type:"move"|"down"|"up"|"leave", x, y, button:0|1|2, clicks, mods}
 //      wheel      {x, y, dx, dy}
 //      key        {type:"down"|"up"|"char", code, ch, mods}

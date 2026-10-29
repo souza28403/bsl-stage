@@ -7,9 +7,9 @@ namespace bsl {
 namespace {
 
 const ProfileSettings kProfiles[kProfileCount] = {
-    {30, 0.50f, "Eco", "eco"},
-    {60, 0.75f, "Balanceado", "balanced"},
-    {0, 1.00f, "Máximo", "maximum"},
+    {30, 0.50f, "Eco", "eco", 0},
+    {60, 0.75f, "Balanceado", "balanced", 15},
+    {0, 1.00f, "Máximo", "maximum", 30},
 };
 
 } // namespace

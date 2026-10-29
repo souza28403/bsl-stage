@@ -16,15 +16,23 @@ class OutputRenderer;
 class ProjectSession;
 class ThumbnailCache;
 
-// Layout da janela: Composicao (clips/camadas) ou Mapeamento (screens/slices)
-enum class AppMode { Composition, Mapping };
+// Layout da janela: Composicao (clips/camadas), Mapeamento (screens/slices) ou Pixel Map (paineis fisicos e escala)
+enum class AppMode { Composition, Mapping, PixelMap };
 
 // Selecao no editor de mapeamento (indices em OutputSetup; validados a cada frame)
 struct MappingSelection
 {
     int screen = 0;
-    int slice = 0;   // -1 = so a Screen
+    int slice = 0;   // slice principal (o das Propriedades); -1 = so a Screen
     int corner = -1; // canto selecionado no painel Saida (-1 = nenhum)
+
+    // Selecao multipla (Ctrl/Shift+clique, retangulo, Ctrl+A): indices de slices de 'multiScreen', ordenados. O slice
+    // principal sempre faz parte dela; se algum codigo mudar 'slice' ou 'screen' direto, validateMappingSelection a refaz.
+    std::vector<int> multi;
+    int multiScreen = -1;
+
+    // Modo de edicao da vista Saida: false = Transformar (posicao, tamanho, rotacao); true = Pontos (4 cantos livres)
+    bool pointsMode = false;
 };
 
 struct Selection

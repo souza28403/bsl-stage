@@ -1,62 +1,42 @@
 #include "render/Compositor.h"
 
+#include "audio/AudioAnalyzer.h"
+#include "fx/ChainRunner.h"
+#include "render/CompositeShaders.h"
+#include "render/ZoneMasks.h"
+
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace bsl {
 
 namespace {
 
-const char* const kVertexSource = R"(#version 330 core
+using shaders::fragment;
+using shaders::kBlendBody;
+using shaders::kVertexSource;
+
+// Encaixe da fonte no canvas num FBO proprio (camada com efeitos): fora da fonte fica transparente
+const char* const kFitBody = R"(
+uniform sampler2D uSrc;
+uniform vec2 uRegion;
+uniform vec2 uSize;
+uniform int uSrcTop;
 void main()
 {
-    vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
-    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+    fragColor = sampleSource(uSrc, gl_FragCoord.xy / uRegion, uSize, uSrcTop);
 }
 )";
 
-// Um passe por camada: base (acumulado) + fonte -> novo acumulado.
-// Alpha da fonte e reto; resultado = mix(base, blend(base, src.rgb), src.a * opacidade).
-const char* const kFragmentSource = R"(#version 330 core
-out vec4 fragColor;
-
-uniform sampler2D uBase;
+// Master: o resultado dos efeitos vai por cima do preto (alpha reto) e recebe o fade; sai opaco
+const char* const kFinishBody = R"(
 uniform sampler2D uSrc;
-uniform vec2 uRegion;   // tamanho em pixels da area renderizada (previa em escala)
-uniform vec2 uSize;     // tamanho da fonte na tela, em fracao do canvas (fit mode)
-uniform float uOpacity;
-uniform int uBlend;
 uniform float uFade;    // master: escurece o resultado (1 = sem efeito)
-
-vec3 blendColors(vec3 b, vec3 s)
-{
-    switch (uBlend) {
-    case 1: return min(b + s, 1.0);                       // Adicionar
-    case 2: return max(b - s, 0.0);                       // Subtrair
-    case 3: return b * s;                                 // Multiplicar
-    case 4: return 1.0 - (1.0 - b) * (1.0 - s);          // Tela
-    case 5: return mix(2.0 * b * s,                       // Sobrepor
-                       1.0 - 2.0 * (1.0 - b) * (1.0 - s), step(0.5, b));
-    case 6: return max(b, s);                             // Clarear
-    case 7: return min(b, s);                             // Escurecer
-    case 8: return abs(b - s);                            // Diferenca
-    default: return s;                                    // Normal
-    }
-}
-
 void main()
 {
-    vec4 base = texelFetch(uBase, ivec2(gl_FragCoord.xy), 0);
-
-    vec2 cuv = gl_FragCoord.xy / uRegion;            // canvas, y para cima
-    vec2 suv = (cuv - 0.5) / uSize + 0.5;            // fonte, y para cima
-    vec4 src = vec4(0.0);
-    if (suv.x >= 0.0 && suv.x <= 1.0 && suv.y >= 0.0 && suv.y <= 1.0)
-        src = texture(uSrc, vec2(suv.x, 1.0 - suv.y)); // textura da fonte: v=0 no topo
-
-    float a = src.a * uOpacity;
-    vec3 rgb = mix(base.rgb, blendColors(base.rgb, src.rgb), a);
-    fragColor = vec4(rgb * uFade, 1.0);
+    vec4 c = texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0);
+    fragColor = vec4(c.rgb * c.a * uFade, 1.0);
 }
 )";
 
@@ -87,7 +67,10 @@ void fitSize(FitMode mode, int cw, int ch, int sw, int sh, float& outX, float& o
 } // namespace
 
 Compositor::Compositor(int width, int height)
-    : fbo_{Fbo(width, height), Fbo(width, height)}, shader_(kVertexSource, kFragmentSource)
+    : fbo_{Fbo(width, height), Fbo(width, height)},
+      shader_(kVertexSource, fragment(kBlendBody, true).c_str()),
+      fit_(kVertexSource, fragment(kFitBody, true).c_str()),
+      finish_(kVertexSource, fragment(kFinishBody, false).c_str())
 {
     glGenVertexArrays(1, &vao_);
 }
@@ -109,7 +92,7 @@ void Compositor::resize(int width, int height)
     current_ = 0;
 }
 
-void Compositor::render(const Composition& comp, float previewScale)
+void Compositor::render(Composition& comp, float previewScale, bool eco)
 {
     renderedScale_ = std::clamp(previewScale, 0.1f, 1.0f);
     const int w = std::max(1, static_cast<int>(static_cast<float>(width()) * renderedScale_));
@@ -117,13 +100,44 @@ void Compositor::render(const Composition& comp, float previewScale)
     // Escala exata para os UVs baterem com a area renderizada
     renderedScale_ = static_cast<float>(w) / static_cast<float>(width());
 
+    // Relogio dos efeitos
+    const auto now = std::chrono::steady_clock::now();
+    double dt = haveLast_ ? std::chrono::duration<double>(now - lastRender_).count() : 0.0;
+    dt = std::clamp(dt, 0.0, 0.1);
+    lastRender_ = now;
+    haveLast_ = true;
+    time_ += dt;
+
+    fx::EffectContext ctx;
+    ctx.time = time_;
+    ctx.dt = dt;
+    ctx.frameIndex = frame_++;
+    ctx.bpm = comp.bpm;
+    ctx.beat = comp.beat;
+    ctx.beatPhase = static_cast<float>(comp.beat - std::floor(comp.beat));
+    ctx.barPhase = static_cast<float>(std::fmod(std::max(comp.beat, 0.0), 4.0) / 4.0);
+    ctx.canvasWidth = comp.width;
+    ctx.canvasHeight = comp.height;
+    ctx.eco = eco;
+    ctx.pool = &pool_;
+    ctx.audio = audio::AudioAnalyzer::instance().snapshot();
+
+    // So vale a mascara de zonas publicada neste quadro (Z-Slice): ver render/ZoneMasks.h
+    ZoneMasks::instance().beginFrame();
+
     GLint prevViewport[4];
     glGetIntegerv(GL_VIEWPORT, prevViewport);
 
-    glViewport(0, 0, w, h);
-    glDisable(GL_BLEND);
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_SCISSOR_TEST);
+    // Estado do passe de composicao (os efeitos mexem no GL; refeito depois de cada cadeia)
+    auto blendState = [&] {
+        glViewport(0, 0, w, h);
+        glDisable(GL_BLEND);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_SCISSOR_TEST);
+        glDisable(GL_CULL_FACE);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    };
+    blendState();
 
     // Fundo preto opaco
     current_ = 0;
@@ -135,25 +149,82 @@ void Compositor::render(const Composition& comp, float previewScale)
     for (const Layer& l : comp.layers)
         anySolo = anySolo || l.solo;
 
-    shader_.use();
-    shader_.setInt("uBase", 0);
-    shader_.setInt("uSrc", 1);
-    shader_.setVec2("uRegion", static_cast<float>(w), static_cast<float>(h));
-    shader_.setFloat("uFade", 1.0f);
-    glBindVertexArray(vao_);
-
     for (int i = 0; i < comp.layerCount(); ++i) {
-        const Layer& layer = comp.layers[static_cast<size_t>(i)];
+        Layer& layer = comp.layers[static_cast<size_t>(i)];
         if (comp.masterBypass || layer.bypass || (anySolo && !layer.solo))
             continue;
-        const Clip* clip = comp.activeClip(i);
+        Clip* clip = comp.activeClip(i);
         if (!clip || !clip->isOpen() || clip->source->texture() == 0)
             continue;
         const media::ISource& src = *clip->source;
 
         float sx = 1.0f, sy = 1.0f;
         fitSize(clip->fit, comp.width, comp.height, src.width(), src.height(), sx, sy);
-        shader_.setVec2("uSize", sx, sy);
+
+        GLuint tex = src.texture();
+        bool top = true; // texturas de fonte: linha 0 = topo da imagem
+
+        // --- Cadeia do clip: no tamanho da fonte (no Eco, no maximo do tamanho da area renderizada) ---
+        FboPool::Lease srcCopy;
+        FboPool::Lease clipLease;
+        if (clip->effects.hasActive() && src.width() > 0 && src.height() > 0) {
+            int cw = src.width(), ch = src.height();
+            if (eco) {
+                const float k = std::min(1.0f, std::max(static_cast<float>(w) / static_cast<float>(cw),
+                                                        static_cast<float>(h) / static_cast<float>(ch)));
+                if (k < 0.999f) {
+                    cw = std::max(1, static_cast<int>(std::lround(static_cast<float>(cw) * k)));
+                    ch = std::max(1, static_cast<int>(std::lround(static_cast<float>(ch) * k)));
+                    srcCopy = pool_.acquire(cw, ch);
+                    blit_.copy(tex, src.width(), src.height(), *srcCopy, true); // reduz com filtro bilinear
+                }
+            }
+            ctx.topOrigin = true;
+            ctx.chain = fx::ChainKind::Clip;
+            ctx.layerIndex = i;
+            ctx.sourceId = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(clip->source.get()));
+            clipLease = fx::ChainRunner::run(clip->effects, ctx, srcCopy ? srcCopy->texture() : tex, cw, ch);
+            if (clipLease)
+                tex = clipLease->texture();
+            blendState();
+        }
+
+        // --- Cadeia da camada: no tamanho do canvas (area renderizada), depois do encaixe ---
+        FboPool::Lease fitLease;
+        FboPool::Lease layerLease;
+        float bsx = sx, bsy = sy;
+        if (layer.effects.hasActive()) {
+            fitLease = pool_.acquire(w, h);
+            fitLease->bind();
+            glViewport(0, 0, w, h);
+            fit_.use();
+            fit_.setInt("uSrc", 0);
+            fit_.setVec2("uRegion", static_cast<float>(w), static_cast<float>(h));
+            fit_.setVec2("uSize", sx, sy);
+            fit_.setInt("uSrcTop", top ? 1 : 0);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, tex);
+            glBindVertexArray(vao_);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+            glBindVertexArray(0);
+
+            ctx.topOrigin = false; // o FBO do encaixe e do canvas: linha 0 = base
+            ctx.chain = fx::ChainKind::Layer;
+            ctx.layerIndex = i;
+            ctx.sourceId = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(&layer));
+            layerLease = fx::ChainRunner::run(layer.effects, ctx, fitLease->texture(), w, h);
+            tex = layerLease ? layerLease->texture() : fitLease->texture();
+            top = false;
+            bsx = bsy = 1.0f; // ja encaixada no canvas
+            blendState();
+        }
+
+        shader_.use();
+        shader_.setInt("uBase", 0);
+        shader_.setInt("uSrc", 1);
+        shader_.setVec2("uRegion", static_cast<float>(w), static_cast<float>(h));
+        shader_.setVec2("uSize", bsx, bsy);
+        shader_.setInt("uSrcTop", top ? 1 : 0);
         shader_.setFloat("uOpacity", std::clamp(layer.opacity, 0.0f, 1.0f));
         shader_.setInt("uBlend", static_cast<int>(layer.blendMode));
 
@@ -161,30 +232,56 @@ void Compositor::render(const Composition& comp, float previewScale)
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, fbo_[current_].texture());
         glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, src.texture());
+        glBindTexture(GL_TEXTURE_2D, tex);
         fbo_[dst].bind();
+        glBindVertexArray(vao_);
         glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindVertexArray(0);
         current_ = dst;
     }
 
-    // Master: um passe final sem fonte (opacidade 0) que so aplica o fade
+    // --- Master: efeitos sobre o resultado de todas as camadas, depois o fade ---
     const float master = std::clamp(comp.masterOpacity, 0.0f, 1.0f);
-    if (!comp.masterBypass && master < 0.999f) {
-        shader_.setVec2("uSize", 1.0f, 1.0f);
-        shader_.setFloat("uOpacity", 0.0f);
-        shader_.setInt("uBlend", 0);
-        shader_.setFloat("uFade", master);
+    const bool masterFx = !comp.masterBypass && comp.masterEffects.hasActive();
+    if (masterFx || (!comp.masterBypass && master < 0.999f)) {
+        FboPool::Lease inLease;
+        FboPool::Lease outLease;
+        GLuint tex = fbo_[current_].texture();
+        if (masterFx) {
+            GLuint inTex = tex;
+            if (w != width() || h != height()) {
+                // O canvas so tem a regiao (0,0)-(w,h) renderizada: copia para uma textura w x h para os efeitos
+                inLease = pool_.acquire(w, h);
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo_[current_].id());
+                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, inLease->id());
+                glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                inTex = inLease->texture();
+            }
+            ctx.topOrigin = false; // canvas: linha 0 = base
+            ctx.chain = fx::ChainKind::Master;
+            ctx.layerIndex = -1;
+            ctx.sourceId = 1;      // master
+            outLease = fx::ChainRunner::run(comp.masterEffects, ctx, inTex, w, h);
+            if (outLease)
+                tex = outLease->texture();
+            else if (inLease)
+                tex = inLease->texture();
+            blendState();
+        }
+        finish_.use();
+        finish_.setInt("uSrc", 0);
+        finish_.setFloat("uFade", master);
         const int dst = 1 - current_;
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, fbo_[current_].texture());
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, fbo_[current_].texture());
+        glBindTexture(GL_TEXTURE_2D, tex);
         fbo_[dst].bind();
+        glBindVertexArray(vao_);
         glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindVertexArray(0);
         current_ = dst;
     }
 
-    glBindVertexArray(0);
     glUseProgram(0);
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, 0);
@@ -193,6 +290,7 @@ void Compositor::render(const Composition& comp, float previewScale)
 
     Fbo::unbind();
     glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
+    pool_.endFrame();
 }
 
 } // namespace bsl

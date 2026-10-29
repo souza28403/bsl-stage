@@ -87,6 +87,7 @@ const char* outputKindName(OutputKind kind)
     case OutputKind::Monitor: return "Monitor";
     case OutputKind::Window: return "Janela";
     case OutputKind::Spout: return "Spout";
+    case OutputKind::Ndi: return "NDI";
     default: return "Desativado";
     }
 }
@@ -117,6 +118,7 @@ int OutputSetup::addScreen(int canvasW, int canvasH)
     s.id = nextScreenId++;
     s.name = uniqueScreenName(*this, "Tela " + std::to_string(screens.size() + 1));
     s.spoutName = "BSL Stage - " + s.name;
+    s.ndiName = s.spoutName;
     s.width = canvasW;
     s.height = canvasH;
     s.slices.push_back(makeFullSlice("Slice 1", canvasW, canvasH, s.width, s.height));
@@ -142,6 +144,7 @@ int OutputSetup::duplicateScreen(int screenIndex)
     copy.id = nextScreenId++;
     copy.name = uniqueScreenName(*this, copy.name + " cópia");
     copy.spoutName = "BSL Stage - " + copy.name;
+    copy.ndiName = copy.spoutName;
     copy.kind = OutputKind::Disabled;
     screens.insert(screens.begin() + screenIndex + 1, std::move(copy));
     return screenIndex + 1;

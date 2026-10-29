@@ -4,16 +4,23 @@
 #include "app/Paths.h"
 #include "output/OutputRenderer.h"
 #include "ui/Brand.h"
+#include "ui/LayoutUi.h"
 #include "ui/Theme.h"
 #include "ui/Widgets.h"
+#include "ui/panels/AiWindow.h"
+#include "ui/panels/AudioWindow.h"
 #include "ui/panels/BrowserPanel.h"
 #include "ui/panels/CaptureTargetChooser.h"
 #include "ui/panels/ClipPanel.h"
 #include "ui/panels/CompositionPanel.h"
+#include "ui/panels/MapView.h"
 #include "ui/panels/MappingPanels.h"
+#include "ui/panels/PixelMapPanels.h"
+#include "ui/panels/PluginsWindow.h"
 #include "ui/panels/PreviewPanel.h"
 #include "ui/panels/StatusBar.h"
 #include "ui/panels/TabPanels.h"
+#include "ui/panels/VideoCompat.h"
 
 #include <imgui.h>
 #include <imgui_internal.h> // DockBuilder
@@ -36,11 +43,15 @@ namespace {
 // server: um imgui.ini antigo, com o dockspace "BSLS", é ignorado e o layout novo é construído.
 constexpr ImGuiID kDockSpaceId = 0x42534C43;        // "BSLC": layout do modo Composição
 constexpr ImGuiID kMappingDockSpaceId = 0x42534C4D; // "BSLM": layout do modo Mapeamento (salvo à parte)
+constexpr ImGuiID kPixelMapDockSpaceId = 0x42534C50; // "BSLP": layout do modo Pixel Map (salvo à parte)
 
 bool g_resetCompLayout = false; // refaz o layout da Composicao (inicio, Restaurar layout, troca de layout)
 bool g_resetMapLayout = false;  // idem para o Mapeamento
+bool g_resetPixelLayout = false; // idem para o Pixel Map
 bool g_openAbout = false;
 int g_focusFilesFrames = 0; // depois de montar o layout, seleciona a aba Arquivos (por alguns frames)
+const char* g_focusTab = nullptr; // aba pedida por --tab (depois da Arquivos)
+int g_focusTabFrames = 0;
 
 // Layouts prontos da Composição. Todas as proporções são frações da janela (nada em pixels), então valem
 // em qualquer tamanho e escala.
@@ -117,6 +128,25 @@ void buildMappingLayout(ImGuiID root, ImVec2 size)
     ImGui::DockBuilderDockWindow(panel::kMapInput, center);
     ImGui::DockBuilderDockWindow(panel::kMapOutput, bottom);
     ImGui::DockBuilderDockWindow(panel::kMapProps, right);
+    ImGui::DockBuilderFinish(root);
+}
+
+// Layout inicial do Pixel Map:
+//  | Configuração |        Overview         |
+//  |              |        Tabela           |
+void buildPixelMapLayout(ImGuiID root, ImVec2 size)
+{
+    ImGui::DockBuilderRemoveNode(root);
+    ImGui::DockBuilderAddNode(root, ImGuiDockNodeFlags_DockSpace);
+    ImGui::DockBuilderSetNodeSize(root, size);
+
+    ImGuiID center = root;
+    const ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.22f, nullptr, &center);
+    const ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.38f, nullptr, &center);
+
+    ImGui::DockBuilderDockWindow(panel::kPmConfig, left);
+    ImGui::DockBuilderDockWindow(panel::kPmOverview, center);
+    ImGui::DockBuilderDockWindow(panel::kPmTable, bottom);
     ImGui::DockBuilderFinish(root);
 }
 
@@ -242,6 +272,8 @@ void drawMenuBar(PanelContext& ctx)
             ctx.outputRenderer.setIdentify(!ctx.outputRenderer.identify());
         if (ImGui::MenuItem("Abrir Mapeamento"))
             ctx.mode = AppMode::Mapping;
+        if (ImGui::MenuItem("Abrir Pixel Map"))
+            ctx.mode = AppMode::PixelMap;
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Ver")) {
@@ -267,19 +299,35 @@ void drawMenuBar(PanelContext& ctx)
         if (ImGui::BeginMenu("Layout")) {
             for (int i = 0; i < kUiLayoutCount; ++i) {
                 const auto layout = static_cast<UiLayout>(i);
-                if (ImGui::MenuItem(uiLayoutLabel(layout), nullptr, ctx.settings.layout == layout)) {
+                if (ImGui::MenuItem(uiLayoutLabel(layout), nullptr,
+                                    ctx.settings.layout == layout && ctx.settings.lastLayoutPreset.empty())) {
                     ctx.settings.layout = layout;
+                    clearActiveLayoutPreset(ctx);
                     g_resetCompLayout = true; // vale ja na Composicao (ou ao voltar a ela, vindo do Mapeamento)
                 }
             }
+            drawLayoutPresetsMenu(ctx); // Salvar layout atual…, os do usuário (Alt+1..9) e Gerenciar…
             ImGui::EndMenu();
         }
         ImGui::Separator();
+        if (ImGui::MenuItem(ICON_AUDIO_LINES "  Áudio…##menu_audio"))
+            openAudioWindow();
+        if (ImGui::MenuItem(ICON_SPARKLES "  IA…##menu_ia"))
+            openAiWindow();
+        if (ImGui::MenuItem(ICON_PLUG "  Plugins…##menu_plugins"))
+            openPluginsWindow();
+        if (ImGui::MenuItem(ICON_GLOBE "  Compatibilidade de vídeo…##menu_compat"))
+            openCompatWindow();
+        ImGui::Separator();
         if (ImGui::MenuItem("Restaurar layout")) {
-            if (ctx.mode == AppMode::Mapping)
+            if (ctx.mode == AppMode::Mapping) {
                 g_resetMapLayout = true;
-            else
+            } else if (ctx.mode == AppMode::PixelMap) {
+                g_resetPixelLayout = true;
+            } else {
                 g_resetCompLayout = true;
+                clearActiveLayoutPreset(ctx); // volta ao layout pronto
+            }
         }
         ImGui::EndMenu();
     }
@@ -289,7 +337,7 @@ void drawMenuBar(PanelContext& ctx)
         ImGui::EndMenu();
     }
 
-    // Alternância de layout: Composição | Mapeamento
+    // Alternância de layout: Composição | Mapeamento | Pixel Map
     ImGui::Dummy(ImVec2(dp(18.0f), 1.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, dp(12.0f, 3.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, dp(4.0f, 0.0f));
@@ -298,6 +346,8 @@ void drawMenuBar(PanelContext& ctx)
         ctx.mode = AppMode::Composition;
     if (toggleChip("Mapeamento###modo_mapeamento", ctx.mode == AppMode::Mapping))
         ctx.mode = AppMode::Mapping;
+    if (toggleChip("Pixel Map###modo_pixelmap", ctx.mode == AppMode::PixelMap))
+        ctx.mode = AppMode::PixelMap;
     if (ctx.mode == AppMode::Mapping) {
         ImGui::Dummy(ImVec2(dp(14.0f), 1.0f));
         if (toggleChip(ICON_SCAN "  Identificar##map_identificar", ctx.outputRenderer.identify()))
@@ -344,9 +394,11 @@ void drawAboutModal()
         ImGui::BulletText("stb_image / stb_image_write / stb_truetype (domínio público)");
         ImGui::BulletText("nlohmann/json (MIT)");
         ImGui::BulletText("Spout2 SDK 2.007 (BSD-2)");
+        ImGui::BulletText("NDI (runtime da NDI instalado à parte; este programa não o inclui)");
 
         ImGui::Spacing();
         ImGui::TextColored(theme::kTextDim, "Fontes: Barlow, JetBrains Mono (OFL); ícones Lucide (ISC)");
+        ImGui::TextColored(theme::kTextDim, "NDI® is a registered trademark of Vizrt NDI AB");
         ImGui::Spacing();
         if (ImGui::Button("Fechar", ImVec2(dp(120.0f), 0.0f)))
             ImGui::CloseCurrentPopup();
@@ -364,16 +416,21 @@ void drawUi(PanelContext& ctx)
     drawMenuBar(ctx);
     drawStatusBar(ctx);
     handleProjectShortcuts(ctx);
+    handleLayoutShortcuts(ctx);
+    applyPendingLayout(ctx); // preset de layout pedido (menu, Gerenciar, Alt+1..9) ou o último usado, ao abrir o app
 
     // Cada modo tem seu próprio dockspace (e painéis com nomes diferentes), então o imgui.ini
-    // guarda os dois layouts separados.
+    // guarda os layouts separados.
     const bool mapping = ctx.mode == AppMode::Mapping;
-    const ImGuiID dockId = mapping ? kMappingDockSpaceId : kDockSpaceId;
-    bool& reset = mapping ? g_resetMapLayout : g_resetCompLayout;
+    const bool pixelMap = ctx.mode == AppMode::PixelMap;
+    const ImGuiID dockId = mapping ? kMappingDockSpaceId : pixelMap ? kPixelMapDockSpaceId : kDockSpaceId;
+    bool& reset = mapping ? g_resetMapLayout : pixelMap ? g_resetPixelLayout : g_resetCompLayout;
     if (!ImGui::DockBuilderGetNode(dockId) || reset) {
         reset = false;
         if (mapping)
             buildMappingLayout(dockId, viewport->WorkSize);
+        else if (pixelMap)
+            buildPixelMapLayout(dockId, viewport->WorkSize);
         else
             buildDefaultLayout(dockId, viewport->WorkSize, ctx.settings.layout);
     }
@@ -385,10 +442,18 @@ void drawUi(PanelContext& ctx)
 
     if (mapping) {
         validateMappingSelection(ctx);
+        mapHistoryObserve(ctx); // uma operacao de desfazer por gesto (arraste, valor digitado, botao...)
         drawMappingListPanel(ctx);
         drawMappingInputPanel(ctx);
         drawMappingOutputPanel(ctx);
         drawMappingPropertiesPanel(ctx);
+    } else if (pixelMap) {
+        validateMappingSelection(ctx);
+        mapHistoryObserve(ctx); // "Criar mapeamento" mexe no OutputSetup: entra no desfazer do mapeamento
+        pixelMapPrepare(ctx);
+        drawPixelMapOverviewPanel(ctx);
+        drawPixelMapConfigPanel(ctx);
+        drawPixelMapTablePanel(ctx);
     } else {
         drawOutputPanel(ctx);
         drawPreviewPanel(ctx);
@@ -403,12 +468,34 @@ void drawUi(PanelContext& ctx)
         if (g_focusFilesFrames > 0 && ImGui::FindWindowByName(panel::kFiles)) {
             ImGui::SetWindowFocus(panel::kFiles);
             --g_focusFilesFrames;
+        } else if (g_focusTabFrames > 0 && g_focusTab && ImGui::FindWindowByName(g_focusTab)) {
+            ImGui::SetWindowFocus(g_focusTab);
+            --g_focusTabFrames;
         }
     }
 
     drawCaptureTargetChooser(ctx);
     drawAboutModal();
+    drawLayoutWindows(ctx);
+    drawPluginsWindow(ctx);
+    drawCompatWindow(ctx);
+    drawAudioWindow(ctx);
+    drawAiWindow(ctx);
     ctx.project.drawModals();
+}
+
+void requestFocusTab(const std::string& key)
+{
+    struct Tab { const char* key; const char* window; };
+    static const Tab tabs[] = {{"arquivos", panel::kFiles},         {"geradores", panel::kGenerators},
+                               {"fontes", panel::kGenerators},
+                               {"efeitos", panel::kEffects},        {"composicao", panel::kCompositionTab},
+                               {"camada", panel::kLayerTab},        {"saida", panel::kOutputTab}};
+    for (const Tab& t : tabs)
+        if (key == t.key) {
+            g_focusTab = t.window;
+            g_focusTabFrames = 6;
+        }
 }
 
 } // namespace bsl::ui

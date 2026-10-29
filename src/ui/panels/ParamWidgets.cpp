@@ -4,6 +4,7 @@
 #include "media/FontCatalog.h"
 #include "ui/Theme.h"
 #include "ui/Widgets.h"
+#include "ui/panels/SliceEditor.h"
 
 #include <imgui.h>
 
@@ -122,6 +123,14 @@ std::vector<ParamEdit> drawParams(const std::vector<ParamDesc>& descs, const med
         }
 
         ImGui::PushID(d.id.c_str());
+        if (d.type == ParamType::Custom && d.custom == "bsl-slices") {
+            // Editor do Slice Refiner: ocupa a largura toda (sem a coluna de rotulo)
+            Json out;
+            if (drawSliceEditor(set, d.id, out))
+                edits.push_back({d.id, std::move(out)});
+            ImGui::PopID();
+            continue;
+        }
         const bool enabled = paramConditionMet(d.enabledIf, set);
         ImGui::BeginDisabled(!enabled);
 
@@ -256,6 +265,47 @@ std::vector<ParamEdit> drawParams(const std::vector<ParamDesc>& descs, const med
             break;
         }
         case ParamType::Custom: {
+            if (d.custom == "point2d") {
+                // ISF point2D: valor [x, y] em dois numeros arrastaveis lado a lado
+                const Json cur = set.raw(d.id);
+                const Json def = d.def;
+                auto comp = [](const Json& j, size_t i) {
+                    return (j.is_array() && j.size() > i && j[i].is_number()) ? j[i].get<float>() : 0.0f;
+                };
+                float vx = comp(cur, 0), vy = comp(cur, 1);
+                const float lo = static_cast<float>(d.min), hi = static_cast<float>(d.max);
+                const float step = std::max(0.01f, (hi - lo) / 400.0f);
+                const float half = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+                const char* pointFormat = (hi - lo) <= 20.0f ? "%.3f" : "%.1f";
+                bool changed = hotNumber("##x", vx, lo, hi, step, pointFormat, "x", comp(def, 0), half / uiScale());
+                ImGui::SameLine();
+                changed = hotNumber("##y", vy, lo, hi, step, pointFormat, "y", comp(def, 1), -1.0f) || changed;
+                if (changed)
+                    edits.push_back({d.id, Json::array({media::param::floatJson(vx), media::param::floatJson(vy)})});
+                break;
+            }
+            if (d.custom == "bsl-export") {
+                // LED Mapper: "Exportar…" abre o diálogo de salvar; o valor guarda {n: contador, path: arquivo}. A fonte
+                // grava o XML quando o contador muda (nunca ao abrir um projeto).
+                if (ImGui::Button("Exportar…##exportar", ImVec2(-FLT_MIN, 0.0f))) {
+                    const Json cur = set.raw(d.id);
+                    const int n = cur.is_object() && cur.contains("n") && cur["n"].is_number() ? cur["n"].get<int>() : 0;
+                    if (auto file = dialogs::saveFile(GetActiveWindow(), L"Exportar slices (Advanced Output do Resolume)",
+                                                      L"XML do Resolume (*.xml)", L"*.xml", L"LEDMapperPro_AdvancedOutput.xml",
+                                                      L"xml"))
+                        edits.push_back({d.id, Json{{"n", n + 1},
+                                                    {"path", std::string(reinterpret_cast<const char*>(file->u8string().c_str()))}}});
+                }
+                break;
+            }
+            if (d.custom == "event") {
+                // ISF event: botao; cada clique soma 1 ao contador (o shader ve verdadeiro por um quadro)
+                if (ImGui::Button("Disparar", ImVec2(-FLT_MIN, 0.0f))) {
+                    const Json cur = set.raw(d.id);
+                    edits.push_back({d.id, Json((cur.is_number() ? cur.get<int>() : 0) + 1)});
+                }
+                break;
+            }
             Json out;
             if (custom && custom(d, set.raw(d.id), out))
                 edits.push_back({d.id, std::move(out)});

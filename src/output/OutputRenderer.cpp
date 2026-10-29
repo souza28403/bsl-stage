@@ -1,11 +1,13 @@
 #include "output/OutputRenderer.h"
 
 #include "app/Log.h"
+#include "output/NdiOutput.h"
 #include "output/SpoutOutput.h"
 #include "output/TextLabel.h"
 #include "output/Warp.h"
 #include "render/Compositor.h"
 #include "render/Fbo.h"
+#include "render/ZoneMasks.h"
 
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
@@ -40,6 +42,8 @@ in vec2 vUv;
 out vec4 fragColor;
 
 uniform sampler2D uCanvas;
+uniform sampler2D uZoneMask; // mascara de zonas do Z-Slice (RGBA = Frente, Meio, Fundo, Zona 4), espaco do canvas
+uniform int uZone;           // -1 = sem filtro de profundidade; 0..3 = canal da zona que o slice mostra
 uniform vec2 uScreen;        // tamanho da Screen em px
 uniform mat3 uInv;           // px da tela (y para baixo) -> quadrado unitário (homogêneo)
 uniform vec3 uLine[4];       // lados topo, direita, base, esquerda: dist = dot(n, p) + c, >= 0 dentro
@@ -90,6 +94,10 @@ void main()
     vec2 tc = vec2(cpx.x / uCanvasSize.x, 1.0 - cpx.y / uCanvasSize.y) * uCanvasScale;
 
     vec3 rgb = max(textureLod(uCanvas, tc, 0.0).rgb * uGain + uBright, 0.0);
+    if (uZone >= 0) {
+        vec4 zw = textureLod(uZoneMask, vec2(cpx.x / uCanvasSize.x, 1.0 - cpx.y / uCanvasSize.y), 0.0);
+        rgb *= uZone == 0 ? zw.r : (uZone == 1 ? zw.g : (uZone == 2 ? zw.b : zw.a));
+    }
 
     float edge = ramp(dLeft, uEdgeW.x, uEdgeG.x) * ramp(dTop, uEdgeW.y, uEdgeG.y)
                * ramp(dRight, uEdgeW.z, uEdgeG.z) * ramp(dBottom, uEdgeW.w, uEdgeG.w);
@@ -166,6 +174,9 @@ struct OutputRenderer::Runtime
 
     std::unique_ptr<SpoutOutput> spout;
     bool spoutWarned = false;
+
+    std::unique_ptr<NdiOutput> ndi;
+    bool ndiWarned = false;
 
     ScreenStatus status = ScreenStatus::Idle;
     bool missingWarned = false;
@@ -259,6 +270,14 @@ OutputRenderer::Runtime& OutputRenderer::runtimeFor(int screenId)
     if (!slot)
         slot = std::make_unique<Runtime>();
     return *slot;
+}
+
+int OutputRenderer::ndiConnections(int screenId) const
+{
+    const auto it = runtimes_.find(screenId);
+    if (it == runtimes_.end() || !it->second->ndi)
+        return -1;
+    return it->second->ndi->connections();
 }
 
 ScreenStatus OutputRenderer::status(int screenId) const
@@ -384,6 +403,7 @@ void OutputRenderer::syncTarget(Screen& screen, Runtime& rt, std::vector<bool>& 
     switch (screen.kind) {
     case OutputKind::Monitor: {
         rt.spout.reset();
+        rt.ndi.reset();
         const int idx = findMonitor(screen, claimed);
         if (idx < 0) {
             destroyWindow(rt);
@@ -433,6 +453,7 @@ void OutputRenderer::syncTarget(Screen& screen, Runtime& rt, std::vector<bool>& 
     }
     case OutputKind::Window: {
         rt.spout.reset();
+        rt.ndi.reset();
         if (rt.window && rt.windowKind != OutputKind::Window)
             destroyWindow(rt);
         if (!rt.window) {
@@ -466,9 +487,28 @@ void OutputRenderer::syncTarget(Screen& screen, Runtime& rt, std::vector<bool>& 
     }
     case OutputKind::Spout:
         destroyWindow(rt);
+        rt.ndi.reset();
         if (!rt.spout)
             rt.spout = std::make_unique<SpoutOutput>();
         rt.spout->setName(screen.spoutName.empty() ? "BSL Stage" : screen.spoutName);
+        rt.status = ScreenStatus::Active;
+        break;
+    case OutputKind::Ndi:
+        destroyWindow(rt);
+        rt.spout.reset();
+        if (!rt.ndi)
+            rt.ndi = std::make_unique<NdiOutput>();
+        if (!rt.ndi->runtimeAvailable()) { // sem o runtime do NDI: a Screen não sai (o resto do app segue)
+            rt.status = ScreenStatus::Error;
+            if (!rt.ndiWarned) {
+                rt.ndiWarned = true;
+                log::warn("NDI: runtime não encontrado; a saída \"" + screen.name + "\" não vai enviar");
+            }
+            return;
+        }
+        rt.ndi->setName(screen.ndiName.empty() ? "BSL Stage" : screen.ndiName);
+        rt.ndi->setBgra(screen.ndiBgra);
+        rt.ndi->setFrameRate(fps_);
         rt.status = ScreenStatus::Active;
         break;
     case OutputKind::Disabled:
@@ -539,6 +579,8 @@ void OutputRenderer::renderScreen(const Screen& screen, Runtime& rt, const Compo
     Shader& sh_ = *sliceShader_;
     sh_.use();
     sh_.setInt("uCanvas", 0);
+    sh_.setInt("uZoneMask", 1);
+    sh_.setInt("uZone", -1);
     sh_.setVec2("uScreen", static_cast<float>(sw), static_cast<float>(sh));
     sh_.setVec2("uCanvasSize", static_cast<float>(canvas.width()), static_cast<float>(canvas.height()));
     sh_.setFloat("uCanvasScale", canvas.uvMax());
@@ -613,6 +655,18 @@ void OutputRenderer::renderScreen(const Screen& screen, Runtime& rt, const Compo
         sh_.setFloat("uOpacity", std::clamp(slice.opacity, 0.0f, 1.0f));
         sh_.setVec3("uGain", slice.gain[0], slice.gain[1], slice.gain[2]);
         sh_.setFloat("uBright", slice.brightness);
+        // Filtro de profundidade: so com Z-Slice ativo na fonte escolhida; senao o slice mostra tudo (e a interface avisa)
+        int zone = -1;
+        if (slice.zFilter > kZoneAll && slice.zFilter < kZoneFilterCount) {
+            ZoneMask zm;
+            if (ZoneMasks::instance().find(slice.zSource, zm)) {
+                zone = slice.zFilter - 1;
+                glActiveTexture(GL_TEXTURE1);
+                glBindTexture(GL_TEXTURE_2D, zm.texture);
+                glActiveTexture(GL_TEXTURE0);
+            }
+        }
+        sh_.setInt("uZone", zone);
         const float* idc = kIdColors[sliceNumber % 6];
         sh_.setVec3("uIdColor", idc[0], idc[1], idc[2]);
 
@@ -644,6 +698,9 @@ void OutputRenderer::renderScreen(const Screen& screen, Runtime& rt, const Compo
         placed.push_back({&slice, centroid});
     }
     glDisable(GL_SCISSOR_TEST);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE0);
 
     // Nomes dos slices por cima (só no modo Identificar)
     if (identify_ && !placed.empty()) {
@@ -761,6 +818,8 @@ void OutputRenderer::render(OutputSetup& setup, const Compositor& canvas, int pr
         } else {
             destroyWindow(rt);
             rt.spout.reset();
+            rt.ndi.reset();
+            rt.ndiWarned = false;
             rt.status = ScreenStatus::Idle;
             rt.missingWarned = false;
             rt.failedSignature.clear();
@@ -782,6 +841,10 @@ void OutputRenderer::render(OutputSetup& setup, const Compositor& canvas, int pr
                     rt.spoutWarned = true;
                     log::warn("Spout: não foi possível enviar \"" + screen.spoutName + "\"");
                 }
+            }
+            if (rt.ndi && !rt.ndi->send(rt.fbo->texture(), rt.fbo->width(), rt.fbo->height()) && !rt.ndiWarned) {
+                rt.ndiWarned = true;
+                log::warn("NDI: não foi possível enviar \"" + screen.ndiName + "\"");
             }
             if (rt.window)
                 presents.push_back({&rt, &screen});

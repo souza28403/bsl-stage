@@ -3,6 +3,7 @@
 // Código de saída 0 = passou.
 
 #include "output/SpoutOutput.h"
+#include "spouttest_source.h"
 
 #include <windows.h>
 
@@ -10,7 +11,9 @@
 #include <SpoutReceiver.h>
 #pragma warning(pop)
 
+#ifndef GLFW_INCLUDE_NONE
 #define GLFW_INCLUDE_NONE
+#endif
 #include <GLFW/glfw3.h>
 
 #include <chrono>
@@ -128,8 +131,38 @@ int main()
             failures += ok ? 0 : 1;
         }
 
-    out.release();
     rx.ReleaseReceiver();
+
+    // Segunda parte: o mesmo sender visto pela fonte Spout do app (gerador "gen:spout", entrada de qualquer programa DX/GL).
+    // A textura da fonte sai com a linha 0 = topo da imagem: o topo do GL (y >= kH/2 no buffer do sender) vem primeiro.
+    {
+        spouttest::AppSourceResult app;
+        const bool ran = spouttest::receiveWithAppSource("BSLStageSpoutTest", [&] { out.send(srcTex, kW, kH); }, app);
+        const bool setup = ran && app.registered && app.isLive;
+        std::printf("fonte Spout do app: registrada=%d ao_vivo=%d na_lista=%d conectou=%d %dx%d status=\"%s\"\n",
+                    app.registered ? 1 : 0, app.isLive ? 1 : 0, app.listed ? 1 : 0, app.connected ? 1 : 0, app.width,
+                    app.height, app.status.c_str());
+        if (!setup || !app.listed || !app.connected || app.width != kW || app.height != kH) {
+            std::printf("FAIL: a fonte Spout do app nao recebeu o sender\n");
+            ++failures;
+        } else {
+            const int axs[2] = {kW / 4, 3 * kW / 4};
+            const int ays[2] = {kH / 4, 3 * kH / 4};
+            for (int yi = 0; yi < 2; ++yi)
+                for (int xi = 0; xi < 2; ++xi) {
+                    // y da memoria cresce para baixo na imagem; o quadrante de origem tem y GL = kH - 1 - y
+                    const Px want = quadrantColor(axs[xi], kH - 1 - ays[yi]);
+                    const unsigned char* p = &app.rgba[(static_cast<size_t>(ays[yi]) * kW + static_cast<size_t>(axs[xi])) * 4];
+                    const Px got{p[0], p[1], p[2]};
+                    const bool ok = closeTo(got, want);
+                    std::printf("fonte pixel (%2d,%2d) %s  got=(%d,%d,%d) want=(%d,%d,%d)\n", axs[xi], ays[yi],
+                                ok ? "OK  " : "FAIL", got.r, got.g, got.b, want.r, want.g, want.b);
+                    failures += ok ? 0 : 1;
+                }
+        }
+    }
+
+    out.release();
     glDeleteTextures(1, &srcTex);
     glDeleteTextures(1, &rxTex);
     glfwDestroyWindow(window);

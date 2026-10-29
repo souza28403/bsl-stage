@@ -17,6 +17,8 @@ struct Point2
 {
     float x = 0.0f;
     float y = 0.0f;
+
+    bool operator==(const Point2&) const = default;
 };
 
 struct RectI
@@ -25,6 +27,8 @@ struct RectI
     int y = 0;
     int w = 0;
     int h = 0;
+
+    bool operator==(const RectI&) const = default;
 };
 
 // Ordem dos cantos do quad de saída (sentido horário a partir do canto superior esquerdo)
@@ -38,7 +42,26 @@ struct SoftEdge
 {
     float width = 0.0f; // 0 = sem soft edge
     float gamma = 1.0f; // 1 = rampa linear; >1 escurece o miolo da mistura
+
+    bool operator==(const SoftEdge&) const = default;
 };
+
+// Roteamento por profundidade (efeito Z-Slice): qual zona o slice mostra. A máscara de zonas vem do Z-Slice ativo na
+// fonte escolhida (Master ou uma camada); sem Z-Slice ativo o slice mostra tudo.
+enum ZoneFilter { kZoneAll = 0, kZoneFront = 1, kZoneMiddle = 2, kZoneBack = 3, kZone4 = 4 };
+inline constexpr int kZoneFilterCount = 5;
+inline constexpr int kZoneSourceMaster = -1; // Slice::zSource: -1 = Master; >= 0 = índice da camada (0 = a de baixo)
+
+inline const char* zoneFilterName(int zone)
+{
+    switch (zone) {
+    case kZoneFront: return "Frente";
+    case kZoneMiddle: return "Meio";
+    case kZoneBack: return "Fundo";
+    case kZone4: return "Zona 4";
+    default: return "Todas";
+    }
+}
 
 struct Slice
 {
@@ -53,9 +76,13 @@ struct Slice
     float gain[3] = {1.0f, 1.0f, 1.0f}; // ganho R, G, B (casar painéis LED)
     float brightness = 0.0f;   // soma após o ganho (-1..1)
     SoftEdge edges[4];         // por lado: ver EdgeSide
+    int zFilter = kZoneAll;    // ZoneFilter: kZoneAll = sem filtro (sem custo)
+    int zSource = kZoneSourceMaster; // de onde vem a máscara de zonas: kZoneSourceMaster ou o índice da camada
+
+    bool operator==(const Slice&) const = default;
 };
 
-enum class OutputKind { Disabled, Monitor, Window, Spout };
+enum class OutputKind { Disabled, Monitor, Window, Spout, Ndi };
 
 struct Screen
 {
@@ -67,8 +94,10 @@ struct Screen
     int monitorIndex = -1;       // só para Monitor: índice na última vez em que foi visto
     std::string monitorName;     // e o nome, para reencontrar se a ordem mudar
     std::string spoutName;       // só para Spout: nome do sender
+    std::string ndiName;         // só para NDI: nome do sender (padrão "BSL Stage - <tela>")
+    bool ndiBgra = false;        // só para NDI: false = UYVY (leve), true = BGRA (cheio, com alpha)
 
-    // Resolução da tela. Em Monitor o renderer a mantém igual à do monitor; em Janela/Spout é livre.
+    // Resolução da tela. Em Monitor o renderer a mantém igual à do monitor; em Janela/Spout/NDI é livre.
     int width = 1920;
     int height = 1080;
 
@@ -76,6 +105,8 @@ struct Screen
 
     // Saindo de verdade (ativa e com destino)
     bool live() const { return enabled && kind != OutputKind::Disabled; }
+
+    bool operator==(const Screen&) const = default;
 };
 
 // Monitor visto pelo GLFW (preenchido pelo OutputRenderer)
@@ -94,6 +125,9 @@ struct OutputSetup
 {
     std::vector<Screen> screens;
     int nextScreenId = 1;
+
+    // Comparacao estrutural (o historico de desfazer do mapeamento usa para saber se algo mudou)
+    bool operator==(const OutputSetup&) const = default;
 
     // Novo projeto: 1 Screen "Tela 1" com 1 Slice cobrindo o canvas, no primeiro monitor
     // secundário se existir (senão Desativado).

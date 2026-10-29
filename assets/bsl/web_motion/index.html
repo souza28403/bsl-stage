@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+	<meta charset="UTF-8">
+	<title>WebMotion Renderer</title>
+	<!--
+		Pagina do BSL WebMotion (plugin FFGL "WB01"). Baseada em web_app/index.html do plugin: receiveImage() separa as letras de
+		uma imagem pela transparencia e anima cada uma com atraso. Acrescentado para a fonte nativa do BSL Stage:
+		  setMotion({delay, duration})       atraso entre letras e duracao da entrada (o plugin fixava 0,1 s e 2 s)
+		  receiveImageAuto(dataUrl)          o mesmo que receiveImage, com o tamanho da propria imagem
+		  showText(texto, anim, cor, vw)     "Projetar Texto" do painel 8082 (cmd=text), anim = slide | zoom
+		  showLogo(url)                      "Projetar Logo" (cmd=logo)
+		  clearAll()                         "Apagar tela (fade out)" (cmd=clear)
+		  replay()                           repete a ultima animacao
+		No plugin essas tres rotas do painel respondiam not_found e nada chamava receiveImage.
+	-->
+	<style>
+		body, html {
+			margin: 0;
+			padding: 0;
+			width: 100vw;
+			height: 100vh;
+			overflow: hidden;
+			background-color: transparent;
+		}
+		#container {
+			position: absolute;
+			top: 0;
+			left: 0;
+			width: 100%;
+			height: 100%;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			perspective: 1000px;
+			transition: opacity 0.6s ease;
+		}
+		#container.fading { opacity: 0; }
+		.letter {
+			display: inline-block;
+			background-size: cover;
+			background-repeat: no-repeat;
+			animation: cinematic var(--dur, 2s) cubic-bezier(0.19, 1, 0.22, 1) both;
+		}
+		.glyph {
+			display: inline-block;
+			white-space: pre;
+			font-family: 'Arial Black', Impact, sans-serif;
+			font-weight: 900;
+			line-height: 1.05;
+			text-shadow: 0 0.04em 0.12em rgba(0, 0, 0, 0.55);
+		}
+		.glyph.slide { animation: slideup var(--dur, 2s) cubic-bezier(0.19, 1, 0.22, 1) both; }
+		.glyph.zoom { animation: zoomin var(--dur, 2s) cubic-bezier(0.19, 1, 0.22, 1) both; }
+		.logo {
+			max-width: 70vw;
+			max-height: 70vh;
+			animation: logoin var(--dur, 2s) cubic-bezier(0.19, 1, 0.22, 1) both;
+		}
+
+		@keyframes cinematic {
+			0% {
+				opacity: 0;
+				transform: translateZ(-1000px) scale(0) rotateY(90deg);
+				filter: blur(20px);
+			}
+			50% {
+				opacity: 1;
+				filter: blur(0px);
+			}
+			100% {
+				opacity: 1;
+				transform: translateZ(0) scale(1) rotateY(0deg);
+				filter: blur(0px);
+			}
+		}
+		@keyframes slideup {
+			0% { opacity: 0; transform: translateY(1.2em); filter: blur(8px); }
+			60% { opacity: 1; filter: blur(0); }
+			100% { opacity: 1; transform: translateY(0); filter: blur(0); }
+		}
+		@keyframes zoomin {
+			0% { opacity: 0; transform: scale(2.6); filter: blur(12px); }
+			60% { opacity: 1; filter: blur(0); }
+			100% { opacity: 1; transform: scale(1); filter: blur(0); }
+		}
+		@keyframes logoin {
+			0% { opacity: 0; transform: scale(0.6); filter: blur(14px); }
+			100% { opacity: 1; transform: scale(1); filter: blur(0); }
+		}
+
+		.placeholder {
+			color: white;
+			font-family: sans-serif;
+			font-size: 40px;
+			text-align: center;
+			margin-top: 20%;
+			opacity: 0.55;
+		}
+	</style>
+</head>
+<body>
+
+<div id="container">
+	<div class="placeholder">BSL WebMotion</div>
+</div>
+
+<script>
+var motion = { delay: 0.1, duration: 2 };
+var lastShow = null; // { kind, args } da ultima animacao, para replay()
+
+window.setMotion = function(o) {
+	if (!o) return;
+	if (typeof o.delay === 'number' && isFinite(o.delay)) motion.delay = Math.max(0, o.delay);
+	if (typeof o.duration === 'number' && isFinite(o.duration)) motion.duration = Math.max(0.1, o.duration);
+};
+
+function resetContainer() {
+	const container = document.getElementById('container');
+	container.classList.remove('fading');
+	container.innerHTML = '';
+	container.style.setProperty('--dur', motion.duration + 's');
+	return container;
+}
+
+window.receiveImage = function(base64Data, width, height) {
+	lastShow = { kind: 'image', args: [base64Data, width, height] };
+	const container = resetContainer(); // clear
+
+	const img = new Image();
+	img.onload = function() {
+		// Create canvas to analyze transparency
+		const canvas = document.createElement('canvas');
+		canvas.width = width;
+		canvas.height = height;
+		const ctx = canvas.getContext('2d');
+		ctx.drawImage(img, 0, 0);
+
+		const imgData = ctx.getImageData(0, 0, width, height);
+		const data = imgData.data;
+
+		// Simple horizontal letter separation
+		let inLetter = false;
+		let letterStartX = 0;
+		let letters = [];
+
+		for (let x = 0; x < width; x++) {
+			let columnHasPixels = false;
+			for (let y = 0; y < height; y++) {
+				const alpha = data[(y * width + x) * 4 + 3];
+				if (alpha > 10) { // threshold
+					columnHasPixels = true;
+					break;
+				}
+			}
+
+			if (columnHasPixels && !inLetter) {
+				inLetter = true;
+				letterStartX = x;
+			} else if (!columnHasPixels && inLetter) {
+				inLetter = false;
+				letters.push({ x: letterStartX, w: x - letterStartX });
+			}
+		}
+		if (inLetter) letters.push({ x: letterStartX, w: width - letterStartX });
+
+		// If no letters found, just use the whole image
+		if (letters.length === 0) {
+			letters.push({ x: 0, w: width });
+		}
+
+		// Create DOM elements for each letter
+		letters.forEach((l, i) => {
+			// Extract letter to new canvas
+			const lCanvas = document.createElement('canvas');
+			lCanvas.width = l.w;
+			lCanvas.height = height;
+			const lCtx = lCanvas.getContext('2d');
+			lCtx.drawImage(canvas, l.x, 0, l.w, height, 0, 0, l.w, height);
+
+			const div = document.createElement('div');
+			div.className = 'letter';
+			div.style.width = l.w + 'px';
+			div.style.height = height + 'px';
+			div.style.backgroundImage = 'url(' + lCanvas.toDataURL() + ')';
+			div.style.animationDelay = (i * motion.delay) + 's';
+
+			container.appendChild(div);
+		});
+		// So para quem quiser saber (testes): quantas letras foram criadas
+		window.__letterCount = letters.length;
+	};
+	img.src = base64Data;
+};
+
+// Mesmo que receiveImage, com o tamanho da propria imagem (limitado a 1600 px de largura para a analise por colunas)
+window.receiveImageAuto = function(dataUrl) {
+	const probe = new Image();
+	probe.onload = function() {
+		window.receiveImage(dataUrl, probe.naturalWidth, probe.naturalHeight);
+	};
+	probe.src = dataUrl;
+};
+
+window.showText = function(text, anim, color, sizeVw) {
+	lastShow = { kind: 'text', args: [text, anim, color, sizeVw] };
+	const container = resetContainer();
+	const box = document.createElement('div');
+	box.style.fontSize = (typeof sizeVw === 'number' && sizeVw > 0 ? sizeVw : 12) + 'vw';
+	box.style.color = color || '#ffffff';
+	box.style.textAlign = 'center';
+	const chars = Array.from(String(text || ''));
+	chars.forEach((ch, i) => {
+		const span = document.createElement('span');
+		span.className = 'glyph ' + (anim === 'zoom' ? 'zoom' : 'slide');
+		span.textContent = ch;
+		span.style.animationDelay = (i * motion.delay) + 's';
+		box.appendChild(span);
+	});
+	container.appendChild(box);
+	window.__letterCount = chars.length;
+};
+
+window.showLogo = function(url) {
+	lastShow = { kind: 'logo', args: [url] };
+	const container = resetContainer();
+	if (!url) return;
+	const img = document.createElement('img');
+	img.className = 'logo';
+	img.src = url;
+	container.appendChild(img);
+	window.__letterCount = 1;
+};
+
+window.clearAll = function() {
+	const container = document.getElementById('container');
+	container.classList.add('fading');
+	setTimeout(function() {
+		container.innerHTML = '';
+		container.classList.remove('fading');
+		lastShow = null;
+		window.__letterCount = 0;
+	}, 650);
+};
+
+window.replay = function() {
+	if (!lastShow) return;
+	const a = lastShow.args;
+	if (lastShow.kind === 'image') window.receiveImage(a[0], a[1], a[2]);
+	else if (lastShow.kind === 'text') window.showText(a[0], a[1], a[2], a[3]);
+	else if (lastShow.kind === 'logo') window.showLogo(a[0]);
+};
+</script>
+</body>
+</html>

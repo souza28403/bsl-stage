@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Generators.h"
+#include "fx/EffectChain.h"
 #include "media/ISource.h"
 #include "media/MediaFormats.h"
 #include "render/Texture.h"
@@ -52,6 +53,8 @@ struct Clip
     bool playing = true;
     bool interact = false;          // Web: encaminha mouse/teclado da Previa para a pagina (nao e salvo)
 
+    fx::EffectChain effects;        // cadeia de efeitos do clip (aplicada no tamanho da fonte, antes do encaixe)
+
     std::unique_ptr<media::ISource> source; // aberta so quando disparado
 
     // Miniatura de fonte ao vivo/gerada, atualizada a partir da fonte enquanto ela esta ativa (no maximo 1x/s)
@@ -61,7 +64,7 @@ struct Clip
     bool empty() const { return type == Type::Empty; }
     bool isOpen() const { return source && source->isOpen(); }
     // Videos e fontes ao vivo so tocam para frente: sem ping-pong
-    bool supportsPingPong() const { return kind != media::MediaKind::Video && !isLive() && !isPaged(); }
+    bool supportsPingPong() const { return kind != media::MediaKind::Video && !isLive() && !hasPageNav(); }
 
     bool isGenerator() const { return type == Type::Generator; }
     bool isTestPattern() const { return type == Type::Generator && generatorId == kTestPatternId; }
@@ -72,8 +75,10 @@ struct Clip
     bool isRemote() const;
     bool isWeb() const;   // gerador Web (URL) ou arquivo .html
     bool isPaged() const; // PDF ou documento do Office (paginas)
+    // Com navegacao por pagina: PDF/Office e a fonte BSL PPT Manager (um gerador que abre um documento)
+    bool hasPageNav() const { return isPaged() || generatorId == kBslPptManagerId; }
     // A Previa nunca abre uma segunda instancia (ao vivo ou remota)
-    bool isExclusive() const { return isLive() || isPaged(); }
+    bool isExclusive() const { return isLive() || hasPageNav(); }
     // Parametros da fonte (vazio nos arquivos e no padrao de teste). Funciona com a fonte fechada.
     std::vector<media::ParamDesc> paramDescs() const;
     // Grava o valor no clip e avisa a fonte aberta (onParamsChanged); atualiza o nome exibido

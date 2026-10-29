@@ -3,6 +3,7 @@
 #include "app/Log.h"
 #include "ui/Theme.h"
 #include "ui/Widgets.h"
+#include "ui/panels/AudioWindow.h"
 
 #include <glad/gl.h>
 
@@ -207,6 +208,14 @@ void drawStatusBar(PanelContext& ctx)
             }
             ImGui::EndCombo();
         }
+
+        // Medidor de áudio: o clique abre a configuração (Ver > Áudio)
+        ImGui::SameLine(0.0f, dp(20.0f));
+        ImGui::TextColored(theme::kTextDim, "Áudio");
+        ImGui::SameLine(0.0f, dp(6.0f));
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (ImGui::GetFrameHeight() - dp(12.0f)) * 0.5f);
+        if (audioMeter("##audio_medidor", ImVec2(dp(64.0f), dp(12.0f))))
+            openAudioWindow();
 
         // Relógio à direita
         const std::time_t t = std::time(nullptr);

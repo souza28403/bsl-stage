@@ -3,6 +3,7 @@
 #include "core/Clip.h"
 #include "core/Layer.h"
 #include "media/VideoDecoder.h"
+#include "output/PixelMap.h"
 
 #include <memory>
 #include <string>
@@ -30,6 +31,7 @@ struct Composition
     // Master: fade do resultado final e bypass geral
     float masterOpacity = 1.0f;
     bool masterBypass = false;
+    fx::EffectChain masterEffects; // efeitos do master (depois de todas as camadas, antes do fade)
 
     // Transporte global. O BPM por ora so alimenta o indicador de beat (sincronia de clips: Fase 5).
     bool paused = false;
@@ -39,6 +41,9 @@ struct Composition
     std::vector<Layer> layers;
     std::vector<Deck> decks;
     int currentDeck = 0; // deck mostrado na grade; as operacoes de celula abaixo valem para ele
+
+    // Pixel Map (modo "Pixel Map"): configuracao e paineis. Vai no projeto; nao mexe na composicao nem na saida.
+    pixelmap::Config pixelMap;
 
     // Opcoes usadas ao abrir videos (o App as ajusta conforme o perfil de desempenho)
     media::VideoDecoderOptions decoderOptions;

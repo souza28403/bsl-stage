@@ -4,6 +4,7 @@
 #include "ui/Theme.h"
 #include "ui/Ui.h"
 #include "ui/Widgets.h"
+#include "ui/panels/EffectChainWidget.h"
 
 #include <imgui.h>
 
@@ -75,19 +76,12 @@ std::string destinationLabel(const Screen& s, const std::vector<MonitorInfo>& mo
         return "Monitor ausente: " + s.monitorName;
     case OutputKind::Window: return "Janela";
     case OutputKind::Spout: return "Spout: " + s.spoutName;
+    case OutputKind::Ndi: return "NDI: " + s.ndiName;
     default: return "Desativado";
     }
 }
 
 } // namespace
-
-void drawEffectsPanel(PanelContext&)
-{
-    beginPanel(panel::kEffects);
-    ImGui::TextColored(theme::kTextDim, "Efeitos chegam na Fase 4.");
-    ImGui::TextColored(theme::kTextDim, "Aqui ficará a lista de efeitos para arrastar para clips e camadas.");
-    endPanel();
-}
 
 void drawCompositionTabPanel(PanelContext& ctx)
 {
@@ -108,6 +102,10 @@ void drawCompositionTabPanel(PanelContext& ctx)
     dimLabel("Master");
     hotPercent("##masterTab", comp.masterOpacity, 1.0f, -1.0f);
     ImGui::Checkbox("Bypass master", &comp.masterBypass);
+
+    ImGui::Spacing();
+    ImGui::SeparatorText("Efeitos do master");
+    drawEffectChain(comp.masterEffects, "master", &ctx, kZoneSourceMaster);
 
     endPanel();
 }
@@ -151,6 +149,10 @@ void drawLayerTabPanel(PanelContext& ctx)
         if (ImGui::Button("Parar camada"))
             comp.stopLayer(sel.layer);
         ImGui::EndDisabled();
+
+        ImGui::Spacing();
+        ImGui::SeparatorText("Efeitos da camada");
+        drawEffectChain(layer.effects, "camada", &ctx, sel.layer);
     } else {
         ImGui::TextColored(theme::kTextDim, "Selecione uma camada ou um clip para editar a camada.");
     }

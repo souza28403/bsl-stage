@@ -96,6 +96,10 @@ struct WebSession::Impl
     int reloadMinutes = 0;
     bool muted = true;
     std::string css;
+    // Scripts "persistentes" (chave -> JS) que o app manda para as fontes BSL (estado da pagina): rodam de novo a cada
+    // carga da pagina principal, na ordem em que a chave apareceu pela primeira vez
+    std::vector<std::pair<std::string, std::string>> sticky;
+    bool pageLoaded = false;
 
     // Estado interno
     bool useGpu = false;       // shared_texture_enabled
@@ -133,6 +137,9 @@ struct WebSession::Impl
     void createBrowser();
     void applyBrowserSettings();
     void injectCss();
+    void runScript(const std::string& js);
+    void setSticky(const std::string& key, const std::string& js);
+    void runSticky();
     void fallbackToCpu(const std::string& why);
     void onPaint(const void* buffer, int w, int h);
     void onAccelerated(HANDLE handle);
@@ -239,8 +246,17 @@ public:
     // --- CefLoadHandler ---
     void OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, int) override
     {
-        if (frame && frame->IsMain())
+        if (frame && frame->IsMain()) {
             owner_->injectCss();
+            owner_->pageLoaded = true;
+            owner_->runSticky();
+        }
+    }
+
+    void OnLoadStart(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, TransitionType) override
+    {
+        if (frame && frame->IsMain())
+            owner_->pageLoaded = false;
     }
 
     void OnLoadError(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, ErrorCode errorCode, const CefString& errorText,
@@ -357,6 +373,28 @@ void WebSession::Impl::injectCss()
         "if(!s){s=document.createElement('style');s.id='__bsl_css';(document.head||document.documentElement).appendChild(s);}"
         "s.textContent=" + literal + ";})();";
     browser->GetMainFrame()->ExecuteJavaScript(js, "bslstage://css", 0);
+}
+
+void WebSession::Impl::runScript(const std::string& js)
+{
+    if (browser && !js.empty())
+        browser->GetMainFrame()->ExecuteJavaScript(js, "bslstage://eval", 0);
+}
+
+void WebSession::Impl::setSticky(const std::string& key, const std::string& js)
+{
+    for (auto& entry : sticky)
+        if (entry.first == key) {
+            entry.second = js;
+            return;
+        }
+    sticky.emplace_back(key, js);
+}
+
+void WebSession::Impl::runSticky()
+{
+    for (const auto& entry : sticky)
+        runScript(entry.second);
 }
 
 void WebSession::Impl::onPaint(const void* buffer, int w, int h)
@@ -508,6 +546,10 @@ void WebSession::open(const Json& m)
     d.reloadMinutes = std::max(0, p.value("reloadMinutes", 0));
     d.muted = p.value("muted", true);
     d.css = p.value("css", std::string());
+    if (m.contains("init") && m["init"].is_array())
+        for (const Json& e : m["init"])
+            if (e.is_object())
+                d.setSticky(e.value("key", std::string()), e.value("js", std::string()));
 
     d.status("Iniciando navegador…");
     d.sink = createFrameSink(d.request);
@@ -565,6 +607,16 @@ void WebSession::handle(const Json& m)
     if (t == "reload") {
         if (d.browser)
             d.browser->ReloadIgnoreCache();
+        return;
+    }
+    if (t == "eval") {
+        // {js, key?}: com 'key' o script e guardado (e repetido a cada carga da pagina); sem ela roda uma vez
+        const std::string js = m.value("js", std::string());
+        const std::string key = m.value("key", std::string());
+        if (!key.empty())
+            d.setSticky(key, js);
+        if (d.browser && d.pageLoaded)
+            d.runScript(js);
         return;
     }
     if (!d.browser)

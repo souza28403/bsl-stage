@@ -136,6 +136,14 @@ public:
     }
     void setTempo(double beat, float bpm) { onTempo(beat, bpm); }
 
+    // Parametros que a propria fonte mudou (ex.: gerador FFGL cujo plugin tem interface propria). A Composition chama
+    // a cada quadro; grava em 'values' so o que mudou e devolve true (a fonte ja sabe desses valores).
+    virtual bool pollParamChanges(ParamValues& values)
+    {
+        (void)values;
+        return false;
+    }
+
     // Fonte ao vivo (dispositivo/captura): exclusiva, a Previa nao abre uma segunda instancia.
     virtual bool isLive() const { return false; }
     // Situacao para o ClipPanel (ex.: "Sem sinal"). Texto vazio = tudo certo.

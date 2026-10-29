@@ -1,7 +1,12 @@
 #include "core/Generators.h"
 
+#include "ffgl/FfglSource.h"
+#include "fx/bsl/BslSources.h"
+#include "fx/IsfSource.h"
 #include "media/CaptureDeviceSource.h"
+#include "media/NdiSource.h"
 #include "media/ScreenCaptureSource.h"
+#include "media/SpoutSource.h"
 #include "media/TextSource.h"
 #include "media/WebSource.h"
 #include "render/SolidColorSource.h"
@@ -33,6 +38,12 @@ const GeneratorInfo kGenerators[] = {
     {kWebUrlId, "Web (URL)", true, false, &media::WebSource::describe,
      [](int w, int h) -> std::unique_ptr<media::ISource> { return std::make_unique<media::WebSource>(w, h); },
      &media::WebSource::label},
+    {kNdiId, "NDI", true, false, &media::NdiSource::describe,
+     [](int, int) -> std::unique_ptr<media::ISource> { return std::make_unique<media::NdiSource>(); },
+     &media::NdiSource::label},
+    {kSpoutId, "Spout", true, false, &media::SpoutSource::describe,
+     [](int, int) -> std::unique_ptr<media::ISource> { return std::make_unique<media::SpoutSource>(); },
+     &media::SpoutSource::label},
 };
 
 } // namespace
@@ -44,6 +55,12 @@ std::span<const GeneratorInfo> allGenerators()
 
 const GeneratorInfo* findGenerator(const std::string& id)
 {
+    if (isIsfGeneratorId(id))
+        return fx::IsfSource::generatorInfo(id);
+    if (isFfglGeneratorId(id))
+        return ffgl::FfglSource::generatorInfo(id);
+    if (isBslGeneratorId(id))
+        return fx::bsllight::bslGeneratorInfo(id);
     for (const GeneratorInfo& g : kGenerators)
         if (id == g.id)
             return &g;

@@ -32,9 +32,12 @@ Cada fase termina com algo que roda e pode ser testado.
   compartilhada. Avanço automático por tempo ou batidas, fade, "Expandir páginas na linha", cache de conversão, "Interagir".
 
 ## Fase 4 — Efeitos e plugins
-- Host FFGL 2.x (carregar os plugins BSL e da comunidade)
-- Shaders ISF nativos
-- Efeitos nativos essenciais: transform, cor, blur, chroma key, máscara
+- **4A ✅ (sem teste manual de arrastar fora do uiqa, nem em GPU que não seja NVIDIA)**: cadeia de efeitos em Clip, Camada e
+  Master (`IEffect`, `EffectChain`, `EffectRegistry`, pool de FBOs, perfil Eco), 15 efeitos nativos, shaders ISF (pastas,
+  parser, GLSL 3.30, passes persistentes, geradores e efeitos, erros com a linha certa) e aba Efeitos. Ver
+  `docs/ARQUITETURA.md`.
+- **4B ✅ (host FFGL 2.x de terceiros; sem teste manual com plugins comerciais)**: descoberta segura (filtro de PE, varredura em processo separado com cache e bloqueio), execução com SEH, parâmetros, fontes FFGL como geradores, janela Plugins e "Importar plugins…". Plugado no mesmo `IEffect`/`EffectRegistry` (`ffgl:`). Os plugins BSL **não** vão como DLL: viram efeitos e fontes nativos (etapa à parte). Ver `docs/ARQUITETURA.md`.
+- Pendente: mixers FFGL; conta-gotas do Chroma key na Prévia
 
 ## Fase 5 — Controle
 - MIDI learn, OSC in/out, atalhos de teclado
@@ -48,6 +51,6 @@ Cada fase termina com algo que roda e pode ser testado.
 - Teste em PC antigo (GPU integrada, 4 GB RAM)
 
 ## Fase 7 — Extras
-- NDI in/out
+- NDI in/out (feito: fonte NDI, destino NDI da Screen e fonte Spout; ver ARQUITETURA.md)
 - Mapa de LED / Art-Net
 - Import do XML de Advanced Output do Resolume

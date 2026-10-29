@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BSL Light - Pro Pixel Mapping</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;700&display=swap');
+
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #030303; color: #e0e0e0; margin: 0; padding: 20px; }
+        .container { max-width: 1400px; margin: auto; background: #0a0a0a; padding: 25px; border-radius: 12px; box-shadow: 0 10px 50px rgba(255, 0, 51, 0.1); border: 1px solid #220505; }
+
+        /* Header & Logo */
+        .header-container { text-align: center; border-bottom: 1px solid #330000; padding-bottom: 20px; margin-bottom: 25px; }
+        .header-text h1 { color: #ffffff; margin: 0; font-family: 'Rajdhani', sans-serif; letter-spacing: 2px; font-size: 2.2em; text-transform: uppercase; }
+        .header-text h1 span { color: #ff0a33; }
+        .header-text p { color: #888; margin: 5px 0 0 0; font-family: monospace; font-size: 1em; letter-spacing: 1px; }
+
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px; }
+        .card { background: #0d0d0d; padding: 20px; border-radius: 8px; border-left: 4px solid #ff0a33; box-shadow: inset 0 0 20px rgba(0,0,0,0.5); position: relative; overflow: hidden; }
+        .card-cyan { border-left-color: #00e5ff; }
+
+        label { display: block; margin-bottom: 5px; font-weight: bold; font-size: 0.75em; color: #666; text-transform: uppercase; letter-spacing: 1px; }
+        input { width: 100%; padding: 12px; margin-bottom: 10px; background: #050505; border: 1px solid #330a0a; color: #fff; border-radius: 4px; box-sizing: border-box; font-family: monospace; font-size: 1.1em; transition: 0.3s; }
+        input[type="file"] { padding: 9px; font-size: 0.9em; background: #111; cursor: pointer; }
+        input:focus { outline: none; border-color: #ff0a33; box-shadow: 0 0 10px rgba(255, 10, 51, 0.3); }
+
+        button { background: #ff0a33; color: #fff; border: none; padding: 12px 20px; font-size: 1em; font-weight: bold; border-radius: 4px; cursor: pointer; transition: all 0.3s; font-family: 'Rajdhani', sans-serif; text-transform: uppercase; letter-spacing: 1px; }
+        button:hover { background: #cc0022; box-shadow: 0 0 20px rgba(255, 10, 51, 0.5); transform: translateY(-2px); }
+
+        .btn-add { background: #ff0a33; width: 100%; margin-top: 15px; font-size: 1.1em; }
+        .btn-delete { background: transparent; border: 1px solid #ff0a33; color: #ff0a33; padding: 8px 12px; font-size: 0.9em; border-radius: 4px; cursor: pointer; }
+        .btn-delete:hover { background: #ff0a33; color: #fff; }
+
+        .btn-download-slice { background: #00e5ff; color: #000; padding: 10px 15px; font-size: 0.85em; width: 100%; border-radius: 4px; box-shadow: 0 0 10px rgba(0,229,255,0.2); }
+        .btn-download-slice:hover { background: #00b3cc; box-shadow: 0 0 20px rgba(0,229,255,0.6); color: #fff; }
+
+        table { width: 100%; border-collapse: separate; border-spacing: 0 8px; margin-top: 20px; font-size: 0.95em; }
+        th { color: #666; text-transform: uppercase; font-family: 'Rajdhani', sans-serif; font-size: 1.1em; letter-spacing: 1px; padding: 10px; text-align: left; border-bottom: 1px solid #222; }
+        td { background: #0d0d0d; padding: 15px; vertical-align: middle; border-top: 1px solid #1a1a1a; border-bottom: 1px solid #1a1a1a; }
+        td:first-child { border-left: 1px solid #1a1a1a; border-radius: 8px 0 0 8px; border-left: 4px solid #ff0a33; }
+        td:last-child { border-right: 1px solid #1a1a1a; border-radius: 0 8px 8px 0; }
+
+        .canvas-container { text-align: center; margin-top: 20px; overflow-x: auto; background: #050505; padding: 20px; border-radius: 8px; border: 1px solid #1a0505; position: relative; }
+        canvas { max-width: 100%; height: auto; border: 1px solid #330000; box-shadow: 0 0 30px rgba(255,0,0,0.15); }
+
+        .flex-container { display: flex; gap: 25px; flex-wrap: wrap; }
+        .sidebar { flex: 1; min-width: 380px; max-width: 450px; }
+        .main-content { flex: 2; min-width: 600px; }
+        .tag-info { font-family: monospace; color: #888; font-size: 0.95em; }
+
+        #logoSource { display: none; }
+    </style>
+</head>
+<body>
+
+<!-- Imagem oculta usada como fonte -->
+<img id="logoSource" src="" alt="BSL Light Logo">
+
+<div class="container">
+    <div class="header-container">
+        <div class="header-text">
+            <h1>BSL <span>LIGHT</span> | PIXEL MAPPING PRO</h1>
+            <p>ADVANCED SCALING & CALIBRATION PATTERN GENERATOR</p>
+        </div>
+    </div>
+
+    <div class="flex-container">
+        <div class="sidebar">
+            <div class="card">
+                <h3 style="color: #fff; margin-top: 0;">1. CONFIGURAÇÃO GLOBAL</h3>
+
+                <label style="color: #00e5ff;">MARCA D'ÁGUA (OPCIONAL)</label>
+                <input type="file" id="logoUpload" accept="image/png, image/jpeg, image/svg+xml">
+                <p style="font-size: 0.75em; color: #666; margin-top: -5px; margin-bottom: 15px;">Selecione o arquivo "tb.png" para injetar na calibração.</p>
+
+                <div class="grid-2">
+                    <div>
+                        <label>Largura Input (px)</label>
+                        <input type="number" id="inW" value="1920" onchange="atualizarInterface()">
+                    </div>
+                    <div>
+                        <label>Altura Input (px)</label>
+                        <input type="number" id="inH" value="1080" onchange="atualizarInterface()">
+                    </div>
+                </div>
+
+                <div class="grid-2">
+                    <div>
+                        <label>Física Total W (px)</label>
+                        <input type="number" id="panW" value="2048" onchange="atualizarInterface()">
+                    </div>
+                    <div>
+                        <label>Física Total H (px)</label>
+                        <input type="number" id="panH" value="640" onchange="atualizarInterface()">
+                    </div>
+                </div>
+            </div>
+
+            <div class="card card-cyan" style="margin-top: 20px;">
+                <h3 style="color: #fff; margin-top: 0;">2. ADICIONAR PAINEL (SLICE)</h3>
+                <label>Nomenclatura do Painel</label>
+                <input type="text" id="sliceName" value="Testeira Palco">
+                <div class="grid-2">
+                    <div>
+                        <label>Largura Real (px)</label>
+                        <input type="number" id="sW" value="2048">
+                    </div>
+                    <div>
+                        <label>Altura Real (px)</label>
+                        <input type="number" id="sH" value="128">
+                    </div>
+                    <div>
+                        <label>Posição X (NovaLCT)</label>
+                        <input type="number" id="sX" value="0">
+                    </div>
+                    <div>
+                        <label>Posição Y (NovaLCT)</label>
+                        <input type="number" id="sY" value="0">
+                    </div>
+                </div>
+                <button class="btn-add" onclick="adicionarSlice()">+ INSERIR NO PROJETO</button>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="card" style="border-left-color: #333;">
+                <h3 style="color: #fff; margin-top: 0;">OVERVIEW DE COMPOSIÇÃO (RESOLUME)</h3>
+                <div class="canvas-container">
+                    <canvas id="mapaCanvas"></canvas>
+                    <button style="margin-top: 20px; width: 100%; background: #1a1a1a; border: 1px solid #333; color: #fff;" onclick="baixarMapaGeral()">⬇ EXPORTAR OVERVIEW MAP (.PNG)</button>
+                </div>
+            </div>
+
+            <div id="tabela-container"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let fatias = [];
+    const logoImg = document.getElementById('logoSource');
+    const logoUpload = document.getElementById('logoUpload');
+
+    const coresNeon = ['rgba(255, 10, 51, 0.2)', 'rgba(0, 229, 255, 0.2)', 'rgba(255, 255, 255, 0.1)', 'rgba(255, 204, 0, 0.2)'];
+    const coresBorder = ['#ff0a33', '#00e5ff', '#ffffff', '#ffcc00'];
+
+    // Carregador seguro de imagem para evitar bloqueio CORS
+    logoUpload.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if(file) {
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                logoImg.src = event.target.result;
+            }
+            reader.readAsDataURL(file);
+        }
+    });
+
+    // Quando a logo terminar de carregar, atualiza os visuais automaticamente
+    logoImg.onload = function() {
+        atualizarInterface();
+    };
+
+    function adicionarSlice() {
+        const name = document.getElementById('sliceName').value || `Painel ${fatias.length + 1}`;
+        const w = parseFloat(document.getElementById('sW').value);
+        const h = parseFloat(document.getElementById('sH').value);
+        const x = parseFloat(document.getElementById('sX').value);
+        const y = parseFloat(document.getElementById('sY').value);
+
+        if (isNaN(w) || isNaN(h) || isNaN(x) || isNaN(y)) {
+            alert("Parâmetros inválidos. Verifique as dimensões físicas."); return;
+        }
+
+        fatias.push({ nome: name, w: w, h: h, x: x, y: y });
+        document.getElementById('sliceName').value = `Painel ${fatias.length + 1}`;
+        atualizarInterface();
+    }
+
+    function removerSlice(index) { fatias.splice(index, 1); atualizarInterface(); }
+
+    function atualizarInterface() {
+        const inW = parseFloat(document.getElementById('inW').value);
+        const inH = parseFloat(document.getElementById('inH').value);
+        const panW = parseFloat(document.getElementById('panW').value);
+        const panH = parseFloat(document.getElementById('panH').value);
+
+        if(!inW || !inH || !panW || !panH) return;
+
+        const scaleX = inW / panW;
+        const scaleY = inH / panH;
+
+        atualizarTabela(scaleX, scaleY);
+        desenharCanvasOverview(inW, inH, scaleX, scaleY);
+    }
+
+    function atualizarTabela(scaleX, scaleY) {
+        if(fatias.length === 0) {
+            document.getElementById('tabela-container').innerHTML = ''; return;
+        }
+
+        let html = `<table><thead><tr>
+            <th>Identificação</th>
+            <th>Físico (NovaLCT)</th>
+            <th>Proporção Resolume</th>
+            <th style="text-align:center;">Pattern</th>
+            <th style="text-align:center;">Ação</th>
+        </tr></thead><tbody>`;
+
+        fatias.forEach((f, index) => {
+            const resX = Math.round(f.x * scaleX);
+            const resY = Math.round(f.y * scaleY);
+            const resW = Math.round(f.w * scaleX);
+            const resH = Math.round(f.h * scaleY);
+            const cor = coresBorder[index % coresBorder.length];
+
+            html += `<tr>
+                <td style="border-left-color: ${cor};">
+                    <strong style="color:#fff; font-size: 1.1em; text-transform: uppercase;">${f.nome}</strong>
+                </td>
+                <td class="tag-info">Pos: X ${f.x} | Y ${f.y}<br><span style="color:#aaa; font-weight:bold;">${f.w} x ${f.h} px</span></td>
+                <td>
+                    <strong style="color:${cor}; font-size:1.2em;">${resW} x ${resH} px</strong><br>
+                    <span style="color:#666; font-size:0.85em;">X: ${resX} | Y: ${resY}</span>
+                </td>
+                <td style="text-align:center;"><button class="btn-download-slice" onclick="baixarSlice(${index})">GERAR HD</button></td>
+                <td style="text-align:center;"><button class="btn-delete" onclick="removerSlice(${index})">X</button></td>
+            </tr>`;
+        });
+        html += `</tbody></table>`;
+        document.getElementById('tabela-container').innerHTML = html;
+    }
+
+    function desenharCanvasOverview(inW, inH, scaleX, scaleY) {
+        const canvas = document.getElementById('mapaCanvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = inW; canvas.height = inH;
+
+        ctx.fillStyle = "#050505"; ctx.fillRect(0, 0, inW, inH);
+        ctx.strokeStyle = "rgba(255, 10, 51, 0.05)"; ctx.lineWidth = 1;
+        for(let i=0; i<inW; i+=20) { ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i,inH); ctx.stroke(); }
+        for(let i=0; i<inH; i+=20) { ctx.beginPath(); ctx.moveTo(0,i); ctx.lineTo(inW,i); ctx.stroke(); }
+        ctx.strokeStyle = "rgba(255, 10, 51, 0.15)";
+        for(let i=0; i<inW; i+=100) { ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i,inH); ctx.stroke(); }
+        for(let i=0; i<inH; i+=100) { ctx.beginPath(); ctx.moveTo(0,i); ctx.lineTo(inW,i); ctx.stroke(); }
+
+        // Desenha a logo no fundo do mapa geral, se carregada
+        if (logoImg.src && logoImg.complete && logoImg.naturalHeight !== 0) {
+            ctx.globalAlpha = 0.1; // Opacidade da marca d'água
+            const mw = Math.min(inW * 0.4, 400);
+            const aspect = logoImg.naturalWidth / logoImg.naturalHeight;
+            const mh = mw / aspect;
+            ctx.drawImage(logoImg, (inW - mw)/2, (inH - mh)/2, mw, mh);
+            ctx.globalAlpha = 1.0;
+        }
+
+        fatias.forEach((f, index) => {
+            const resX = f.x * scaleX; const resY = f.y * scaleY;
+            const resW = f.w * scaleX; const resH = f.h * scaleY;
+            const corNeon = coresNeon[index % coresNeon.length];
+            const corBorder = coresBorder[index % coresBorder.length];
+
+            ctx.fillStyle = corNeon; ctx.fillRect(resX, resY, resW, resH);
+            ctx.strokeStyle = corBorder; ctx.lineWidth = 2; ctx.strokeRect(resX, resY, resW, resH);
+
+            ctx.fillStyle = "#FFFFFF"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+            const centerX = resX + (resW / 2); const centerY = resY + (resH / 2);
+            let fontSize = Math.min(resW * 0.08, resH * 0.25, 30);
+
+            ctx.font = `bold ${fontSize}px 'Rajdhani', sans-serif`;
+            ctx.fillText(f.nome.toUpperCase(), centerX, centerY - (fontSize * 0.6));
+
+            ctx.font = `bold ${fontSize * 0.6}px monospace`;
+            ctx.fillStyle = corBorder;
+            ctx.fillText(`${Math.round(resW)}x${Math.round(resH)}`, centerX, centerY + (fontSize * 0.6));
+        });
+    }
+
+    function baixarSlice(index) {
+        const slice = fatias[index];
+        const w = slice.w; const h = slice.h;
+        const cx = w / 2;  const cy = h / 2;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+
+        const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(w, h));
+        grd.addColorStop(0, "#140003");
+        grd.addColorStop(1, "#020000");
+        ctx.fillStyle = grd; ctx.fillRect(0, 0, w, h);
+
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.03)"; ctx.lineWidth = 1;
+        for(let i=0; i<w; i+=10) { ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i,h); ctx.stroke(); }
+        for(let i=0; i<h; i+=10) { ctx.beginPath(); ctx.moveTo(0,i); ctx.lineTo(w,i); ctx.stroke(); }
+
+        ctx.strokeStyle = "rgba(255, 10, 51, 0.1)"; ctx.lineWidth = 1;
+        for(let i=0; i<w; i+=50) { ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i,h); ctx.stroke(); }
+        for(let i=0; i<h; i+=50) { ctx.beginPath(); ctx.moveTo(0,i); ctx.lineTo(w,i); ctx.stroke(); }
+
+        const radius = Math.min(w, h) * 0.4;
+        ctx.strokeStyle = "#ff0a33"; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(cx, cy, radius, 0, 2 * Math.PI); ctx.stroke();
+
+        ctx.strokeStyle = "#00e5ff"; ctx.setLineDash([5, 10]); ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(cx, cy, radius * 0.8, 0, 2 * Math.PI); ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.strokeStyle = "rgba(0, 229, 255, 0.3)"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, h); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, cy); ctx.lineTo(w, cy); ctx.stroke();
+
+        const cornerLen = Math.min(w, h) * 0.15;
+        ctx.strokeStyle = "#ff0a33"; ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.moveTo(15, 15 + cornerLen); ctx.lineTo(15, 15); ctx.lineTo(15 + cornerLen, 15); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(w - 15, 15 + cornerLen); ctx.lineTo(w - 15, 15); ctx.lineTo(w - 15 - cornerLen, 15); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(15, h - 15 - cornerLen); ctx.lineTo(15, h - 15); ctx.lineTo(15 + cornerLen, h - 15); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(w - 15, h - 15 - cornerLen); ctx.lineTo(w - 15, h - 15); ctx.lineTo(w - 15 - cornerLen, h - 15); ctx.stroke();
+
+        const chkSize = 20;
+        function drawChecker(x, y) {
+            for(let i=0; i<chkSize; i++) {
+                for(let j=0; j<chkSize; j++) {
+                    ctx.fillStyle = (i+j)%2 === 0 ? '#FFF' : '#000';
+                    ctx.fillRect(x+i, y+j, 1, 1);
+                }
+            }
+        }
+        drawChecker(cx - chkSize/2, 20);
+        drawChecker(cx - chkSize/2, h - 20 - chkSize);
+        drawChecker(20, cy - chkSize/2);
+        drawChecker(w - 20 - chkSize, cy - chkSize/2);
+
+        ctx.strokeStyle = "#ff0a33";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(0, 0, w, h);
+
+        if (h > 120 && w > 300) {
+            const barW = Math.min(w * 0.8, 1000);
+            const barH = Math.min(h * 0.12, 60);
+            const startX = cx - (barW / 2);
+            const startY = h - barH - 30;
+
+            const colors = ['#FF0000', '#00FF00', '#0000FF', '#FFFFFF', '#000000'];
+            const stepW = barW / colors.length;
+
+            colors.forEach((c, i) => {
+                ctx.fillStyle = c;
+                ctx.fillRect(startX + (i * stepW), startY, stepW, barH);
+            });
+
+            const rampGrd = ctx.createLinearGradient(startX, startY - 20, startX + barW, startY - 20);
+            rampGrd.addColorStop(0, "#FFFFFF");
+            rampGrd.addColorStop(1, "#000000");
+            ctx.fillStyle = rampGrd;
+            ctx.fillRect(startX, startY - 20, barW, 15);
+
+            ctx.strokeStyle = '#222'; ctx.lineWidth = 1;
+            ctx.strokeRect(startX, startY, barW, barH);
+        }
+
+        const boxW = Math.min(w * 0.6, 600);
+        const boxH = Math.min(h * 0.5, 240);
+        const boxX = cx - boxW/2;
+        const boxY = cy - boxH/2;
+
+        ctx.fillStyle = "rgba(5, 5, 5, 0.85)";
+        ctx.fillRect(boxX, boxY, boxW, boxH);
+        ctx.strokeStyle = "#ff0a33"; ctx.lineWidth = 2;
+        ctx.strokeRect(boxX, boxY, boxW, boxH);
+
+        ctx.fillStyle = "#ff0a33";
+        ctx.fillRect(boxX, boxY, boxW, 5);
+
+        let logoH = boxH * 0.35;
+        // Se a imagem estiver carregada pelo usuário, desenha ela no box
+        if (logoImg.src && logoImg.complete && logoImg.naturalHeight !== 0) {
+            const aspect = logoImg.naturalWidth / logoImg.naturalHeight;
+            const logoW = logoH * aspect;
+            ctx.drawImage(logoImg, cx - logoW/2, boxY + 15, logoW, logoH);
+        } else {
+            // Placeholder de espaço caso não tenha logo carregada
+            logoH = 10;
+        }
+
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        let baseFontSize = Math.min(boxW * 0.08, boxH * 0.15, 32);
+
+        ctx.fillStyle = "#ff0a33";
+        ctx.font = `bold ${baseFontSize * 0.6}px 'Rajdhani', sans-serif`;
+        ctx.fillText("BSL LIGHT PIXEL MAPPING", cx, boxY + logoH + 30);
+
+        ctx.fillStyle = "#FFFFFF";
+        ctx.font = `bold ${baseFontSize * 1.2}px 'Rajdhani', sans-serif`;
+        ctx.fillText(slice.nome.toUpperCase(), cx, boxY + logoH + 30 + baseFontSize);
+
+        ctx.fillStyle = "#00e5ff";
+        ctx.font = `${baseFontSize * 0.65}px monospace`;
+        ctx.fillText(`RES FÍSICA: ${w}x${h} px`, cx, boxY + boxH - 35);
+        ctx.fillStyle = "#888";
+        ctx.font = `${baseFontSize * 0.5}px monospace`;
+        ctx.fillText(`COORDENADA: X:${slice.x} Y:${slice.y}`, cx, boxY + boxH - 15);
+
+        const link = document.createElement('a');
+        link.download = `BSLLight_Pattern_${slice.nome}_${w}x${h}.png`;
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+    }
+
+    function baixarMapaGeral() {
+        if(fatias.length === 0) { alert("Adicione ao menos um painel."); return; }
+        const link = document.createElement('a');
+        link.download = 'BSLLight_Resolume_Map.png';
+        link.href = document.getElementById('mapaCanvas').toDataURL('image/png');
+        link.click();
+    }
+
+    window.onload = () => {
+        atualizarInterface();
+    };
+</script>
+</body>
+</html>

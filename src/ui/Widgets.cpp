@@ -1,6 +1,7 @@
 #include "ui/Widgets.h"
 
 #include "app/Qa.h"
+#include "ui/Brand.h"
 #include "ui/Theme.h"
 
 #include <imgui_internal.h> // DockNode, ImTextCharFromUtf8
@@ -526,6 +527,24 @@ bool hotInt(const char* id, int& v, int lo, int hi, float step, const char* form
     if (changed)
         v = static_cast<int>(std::lround(d));
     return changed;
+}
+
+bool brandHeader(const char* label)
+{
+    const bool open = ImGui::CollapsingHeader(label);
+    const ImVec2 a = ImGui::GetItemRectMin();
+    const ImVec2 b = ImGui::GetItemRectMax();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const Texture& mark = brand().monogram;
+    const float h = (b.y - a.y) - dp(6.0f);
+    if (mark && mark.height > 0) {
+        const float w = h * static_cast<float>(mark.width) / static_cast<float>(mark.height);
+        const float x1 = b.x - dp(8.0f);
+        dl->AddImage(static_cast<ImTextureID>(mark.id), ImVec2(x1 - w, a.y + dp(3.0f)), ImVec2(x1, a.y + dp(3.0f) + h));
+    } else {
+        drawIcon(dl, ICON_ZAP, ImVec2(b.x - dp(16.0f), (a.y + b.y) * 0.5f), ImGui::GetColorU32(theme::kAccent), 1.1f);
+    }
+    return open;
 }
 
 bool hotPercent(const char* id, float& value, float def, float width)

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "fx/EffectChain.h"
+
 #include <string>
 
 namespace bsl {
@@ -26,6 +28,7 @@ struct Layer
     bool solo = false;     // se alguma camada esta em solo, so as em solo aparecem
     int activeDeck = -1;   // deck do clip tocando (-1 = nenhum)
     int activeColumn = -1; // coluna do clip tocando (-1 = nenhuma)
+    fx::EffectChain effects; // efeitos da camada (no tamanho do canvas, antes do blend)
 };
 
 } // namespace bsl

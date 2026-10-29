@@ -64,6 +64,34 @@ Settings Settings::load()
         for (int i = 0; i < kUiLayoutCount; ++i)
             if (layoutKey == uiLayoutKey(static_cast<UiLayout>(i)))
                 s.layout = static_cast<UiLayout>(i);
+        if (j.contains("lastLayoutPreset") && j["lastLayoutPreset"].is_string())
+            s.lastLayoutPreset = j["lastLayoutPreset"].get<std::string>();
+        if (j.contains("isfFolders") && j["isfFolders"].is_array()) {
+            for (const auto& item : j["isfFolders"])
+                if (item.is_string() && !item.get<std::string>().empty() && s.isfFolders.size() < 32)
+                    s.isfFolders.push_back(item.get<std::string>());
+        }
+        s.ffglUseResolume = j.value("ffglUseResolume", false);
+        if (j.contains("ffglFolders") && j["ffglFolders"].is_array()) {
+            for (const auto& item : j["ffglFolders"])
+                if (item.is_string() && !item.get<std::string>().empty() && s.ffglFolders.size() < 32)
+                    s.ffglFolders.push_back(item.get<std::string>());
+        }
+        if (j.contains("audio") && j["audio"].is_object()) {
+            const auto& a = j["audio"];
+            s.audio.enabled = a.value("enabled", true);
+            s.audio.source = a.value("source", std::string("loopback")) == "input" ? audio::AudioSource::Input
+                                                                                   : audio::AudioSource::Loopback;
+            s.audio.deviceId = a.value("deviceId", std::string());
+            s.audio.gain = std::clamp(a.value("gain", 1.0f), 0.1f, 4.0f);
+            s.audio.gate = std::clamp(a.value("gate", 0.0f), 0.0f, 0.15f);
+            s.audio.attackMs = std::clamp(a.value("attackMs", 0.0f), 0.0f, 200.0f);
+            s.audio.releaseScale = std::clamp(a.value("releaseScale", 1.0f), 0.25f, 4.0f);
+        }
+        s.aiFps = std::clamp(j.value("aiFps", 0), 0, 60);
+        s.aiDevice = j.value("aiDevice", std::string("auto"));
+        if (s.aiDevice != "gpu" && s.aiDevice != "cpu")
+            s.aiDevice = "auto";
         if (j.contains("recentProjects") && j["recentProjects"].is_array()) {
             for (const auto& item : j["recentProjects"]) {
                 if (!item.is_string() || s.recentProjects.size() >= kMaxRecentProjects)
@@ -108,6 +136,19 @@ void Settings::save() const
                                                            : "window";
     j["uiScale"] = uiScale;
     j["layout"] = uiLayoutKey(layout);
+    j["lastLayoutPreset"] = lastLayoutPreset;
+    j["isfFolders"] = isfFolders;
+    j["ffglUseResolume"] = ffglUseResolume;
+    j["ffglFolders"] = ffglFolders;
+    j["audio"] = {{"enabled", audio.enabled},
+                  {"source", audio.source == audio::AudioSource::Input ? "input" : "loopback"},
+                  {"deviceId", audio.deviceId},
+                  {"gain", audio.gain},
+                  {"gate", audio.gate},
+                  {"attackMs", audio.attackMs},
+                  {"releaseScale", audio.releaseScale}};
+    j["aiFps"] = aiFps;
+    j["aiDevice"] = aiDevice;
     j["recentProjects"] = recentProjects;
     j["window"] = {{"width", windowWidth}, {"height", windowHeight}};
 

@@ -37,6 +37,7 @@ constexpr ImVec4 kOnAccent = rgb(0xFFFFFF);     // texto sobre o vermelho
 
 constexpr ImVec4 kSuccess = rgb(0x1EA75A);
 constexpr ImVec4 kWarning = rgb(0xF5A524);
+constexpr ImVec4 kError = rgb(0xFF4D4F);        // falha em execucao (ex.: plugin FFGL que caiu)
 constexpr ImVec4 kInfo = rgb(0x2F7FE0);
 
 // Cantos pequenos e densidade alta (mais informacao por tela, como nos apps Adobe)

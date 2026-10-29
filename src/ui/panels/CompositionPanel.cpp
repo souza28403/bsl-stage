@@ -10,6 +10,7 @@
 #include "ui/Ui.h"
 #include "ui/Widgets.h"
 #include "ui/panels/CaptureTargetChooser.h"
+#include "ui/panels/EffectChainWidget.h"
 #include "ui/panels/TransportBar.h"
 
 #include <imgui.h>
@@ -235,6 +236,10 @@ void drawLayerControls(PanelContext& ctx, int li, ImVec2 pos, Deferred& deferred
         qa::note(tag + " nome");
         if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
             ctx.selection = {Selection::Kind::Layer, li, -1};
+        if (const std::string dropped = acceptEffectDrop(); !dropped.empty()) { // efeito solto no cabeçalho: vai para a camada
+            layer.effects.add(dropped);
+            ctx.selection = {Selection::Kind::Layer, li, -1};
+        }
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
             beginRename(g_renameLayer, li, layer.name);
         if (ImGui::IsItemHovered())
@@ -248,6 +253,7 @@ void drawLayerControls(PanelContext& ctx, int li, ImVec2 pos, Deferred& deferred
         if (playing)
             drawPlayTriangle(dl, ImVec2(nameEnd.x - dp(13.0f), pos.y + nameH() * 0.5f), dp(9.0f),
                              ImGui::GetColorU32(selected ? theme::kOnAccent : theme::kAccent));
+        drawEffectsBadge(dl, ImVec2(nameEnd.x - dp(36.0f), pos.y + nameH() * 0.5f), layer.effects);
     }
 
     // X / B / S + blend
@@ -451,17 +457,25 @@ void drawCells(PanelContext& ctx, Deferred& deferred, bool& addColumnRequested, 
             ImGui::PushID(col);
             ImGui::SetCursorScreenPos(a);
             const bool pressed = ImGui::InvisibleButton("cell", ImVec2(cw, ch));
-            qa::note("celula L" + std::to_string(li + 1) + " C" + std::to_string(col + 1));
+            const std::string cellTag = "celula L" + std::to_string(li + 1) + " C" + std::to_string(col + 1);
+            qa::note(cellTag);
             const bool hovered = ImGui::IsItemHovered();
+            // A célula tem duas áreas, como no Resolume: a miniatura (vai para a saída) e a faixa do nome (só ver na prévia)
+            const bool overName = hovered && ImGui::GetIO().MousePos.y >= thumbMax.y;
+            const bool overThumb = hovered && !overName;
+            qa::noteRect(cellTag + " nome", a.x, thumbMax.y, b.x, b.y);
 
             if (dropInWindow && contains(a, b, drop.x, drop.y))
                 dropCell = {li, col};
 
-            // Clique (soltar sem arrastar) dispara e seleciona; pressionar ja seleciona
+            // Soltar o clique (sem arrastar) na miniatura dispara e seleciona; na faixa do nome só seleciona (a
+            // Prévia carrega o clip, a saída não muda). Pressionar já seleciona nos dois casos.
             if (pressed) {
-                deferred.push_back([&comp, &ctx, li, col] {
+                const bool onName = ImGui::GetIO().MouseClickedPos[ImGuiMouseButton_Left].y >= thumbMax.y;
+                deferred.push_back([&comp, &ctx, li, col, onName] {
                     ctx.selection = {Selection::Kind::Clip, li, col};
-                    comp.trigger(li, col);
+                    if (!onName)
+                        comp.trigger(li, col);
                 });
             } else if (ImGui::IsItemActivated()) {
                 ctx.selection = {Selection::Kind::Clip, li, col};
@@ -487,6 +501,17 @@ void drawCells(PanelContext& ctx, Deferred& deferred, bool& addColumnRequested, 
                         ctx.selection = {Selection::Kind::Clip, li, col};
                         afterClipPlaced(comp, li, col);
                     });
+                } else if (const ImGuiPayload* fxp = ImGui::AcceptDragDropPayload(kEffectPayload)) {
+                    // Efeito solto na célula: entra na cadeia do clip (célula vazia não tem onde recebê-lo)
+                    const std::string type(static_cast<const char*>(fxp->Data));
+                    if (!clip.empty()) {
+                        deferred.push_back([&comp, &ctx, li, col, type] {
+                            comp.clip(li, col).effects.add(type);
+                            ctx.selection = {Selection::Kind::Clip, li, col};
+                        });
+                    } else {
+                        log::warn("Solte o efeito sobre um clip (a célula está vazia).");
+                    }
                 } else if (const ImGuiPayload* q = ImGui::AcceptDragDropPayload("BSL_CLIP_CELL")) {
                     CellRef from{};
                     std::memcpy(&from, q->Data, sizeof(from));
@@ -563,9 +588,9 @@ void drawCells(PanelContext& ctx, Deferred& deferred, bool& addColumnRequested, 
                 if (!drewThumb)
                     drawCenteredMono(dl, a, thumbMax, "...", ImGui::GetColorU32(theme::kTextDim));
 
-                // Nome embaixo (reticências se não couber na célula)
+                // Nome embaixo (reticências se não couber na célula; com o mouse na faixa, sobra espaço para o olho)
                 dl->PushClipRect(ImVec2(a.x + dp(2.0f), thumbMax.y), ImVec2(b.x - dp(2.0f), b.y), true);
-                drawEllipsized(dl, ImVec2(a.x + dp(5.0f), thumbMax.y + dp(2.0f)), cw - dp(10.0f),
+                drawEllipsized(dl, ImVec2(a.x + dp(5.0f), thumbMax.y + dp(2.0f)), cw - dp(overName ? 28.0f : 10.0f),
                                ImGui::GetColorU32(theme::kText), clip.name);
                 dl->PopClipRect();
 
@@ -574,10 +599,11 @@ void drawCells(PanelContext& ctx, Deferred& deferred, bool& addColumnRequested, 
                     const media::SourceStatus st = clip.source->status();
                     if (!st.text.empty()) {
                         const bool warn = st.level == media::SourceStatus::Level::Warning;
+                        const bool err = st.level == media::SourceStatus::Level::Error;
                         const ImVec2 t0(a.x + px, a.y + px), t1(thumbMax.x - px, thumbMax.y);
                         dl->AddRectFilled(t0, t1, IM_COL32(0, 0, 0, 150));
                         drawCenteredFit(dl, ImVec2(t0.x + dp(4.0f), t0.y), ImVec2(t1.x - dp(4.0f), t1.y), st.text.c_str(),
-                                        ImGui::GetColorU32(warn ? theme::kWarning : theme::kText));
+                                        ImGui::GetColorU32(err ? theme::kError : warn ? theme::kWarning : theme::kText));
                     }
                 }
 
@@ -590,8 +616,25 @@ void drawCells(PanelContext& ctx, Deferred& deferred, bool& addColumnRequested, 
                 }
             }
 
-            if (hovered)
-                dl->AddRectFilled(a, b, IM_COL32(255, 255, 255, 14), rounding());
+            if (!clip.empty() && !clip.missing)
+                drawEffectsBadge(dl, ImVec2(b.x - dp(13.0f), a.y + dp(13.0f)), clip.effects);
+
+            // Hover por área: play sobre a miniatura (toca na saída), olho sobre o nome (ver na prévia)
+            const bool usable = !clip.empty() && !clip.missing && !ImGui::IsMouseDragging(ImGuiMouseButton_Left);
+            if (overThumb) {
+                dl->AddRectFilled(a, thumbMax, IM_COL32(255, 255, 255, 14), rounding(), ImDrawFlags_RoundCornersTop);
+                if (usable) {
+                    const ImVec2 c((a.x + thumbMax.x) * 0.5f, (a.y + thumbMax.y) * 0.5f);
+                    dl->AddCircleFilled(c, dp(14.0f), IM_COL32(0, 0, 0, 150));
+                    drawPlayTriangle(dl, c, dp(14.0f), IM_COL32(255, 255, 255, 235));
+                }
+            } else if (overName) {
+                dl->AddRectFilled(ImVec2(a.x, thumbMax.y), b, IM_COL32(255, 255, 255, 30), rounding(),
+                                  ImDrawFlags_RoundCornersBottom);
+                if (usable)
+                    drawIcon(dl, ICON_EYE, ImVec2(b.x - dp(12.0f), thumbMax.y + labelH() * 0.5f),
+                             ImGui::GetColorU32(theme::kTextStrong));
+            }
             if (selected)
                 dl->AddRect(ImVec2(a.x - dp(1.5f), a.y - dp(1.5f)), ImVec2(b.x + dp(1.5f), b.y + dp(1.5f)),
                             IM_COL32(246, 246, 247, 210), rounding(), 0, dp(1.5f));
@@ -605,7 +648,8 @@ void drawCells(PanelContext& ctx, Deferred& deferred, bool& addColumnRequested, 
                     ImGui::SetTooltip("%s\n%s\nArquivo não encontrado: %s\nBotão direito: Localizar…", clip.name.c_str(),
                                       where.c_str(), paths::toUtf8(clip.path).c_str());
                 else
-                    ImGui::SetTooltip("%s\n%s", clip.name.c_str(), where.c_str());
+                    ImGui::SetTooltip("%s\n%s\n%s", clip.name.c_str(), where.c_str(),
+                                      overName ? "Clique: ver na prévia" : "Clique: tocar na saída");
             }
             ImGui::PopID();
         }

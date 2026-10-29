@@ -25,6 +25,7 @@ except Exception:
 INPUT_MOUSE, INPUT_KEYBOARD = 0, 1
 MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP = 0x0002, 0x0004
 MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP = 0x0008, 0x0010
+MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP = 0x0020, 0x0040
 MOUSEEVENTF_WHEEL = 0x0800
 KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE = 0x0001, 0x0002, 0x0004
 SW_RESTORE, SW_MAXIMIZE = 9, 3
@@ -175,7 +176,11 @@ class App:
                 buf = ctypes.create_unicode_buffer(64)
                 user32.GetClassNameW(hwnd, buf, 64)
                 if buf.value.startswith("GLFW"):
-                    found.append(hwnd)
+                    title = ctypes.create_unicode_buffer(64)
+                    user32.GetWindowTextW(hwnd, title, 64)
+                    # A janela de saida (monitor) tambem e GLFW: a principal e a que tem o titulo do app
+                    if title.value.startswith("BSL Stage") and "— Saída" not in title.value:
+                        found.append(hwnd)
             return True
 
         user32.EnumWindows(cb, 0)
@@ -327,7 +332,14 @@ class App:
     # ------------------------------------------------------------ input
     def to_screen(self, x, y):
         ox, oy = self.client_origin()
-        return int(round(ox + x)), int(round(oy + y))
+        # O app nao e "DPI aware": com a escala do Windows em 120%/150% a area cliente tem mais pixels reais do que os
+        # que ele conta (snapshot "win"). O driver e DPI aware, entao converte.
+        kx = ky = 1.0
+        win = (self.snapshot or {}).get("win")
+        if win and win[0] > 0 and win[1] > 0:
+            cw, ch = self.client_size()
+            kx, ky = cw / win[0], ch / win[1]
+        return int(round(ox + x * kx)), int(round(oy + y * ky))
 
     def mouse_move(self, x, y, client=False):
         if client:
@@ -339,6 +351,7 @@ class App:
         time.sleep(0.06)
 
     def click_at(self, x, y, button="left", double=False):
+        self.ensure_focus()
         self.hover(x, y)
         down, up = (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP) if button == "left" else (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP)
         for _ in range(2 if double else 1):
@@ -356,11 +369,14 @@ class App:
         self.wait_frames(3)
         return it
 
-    def drag(self, x0, y0, x1, y1, steps=14, hold=0.0, button="left", mods=()):
+    def drag(self, x0, y0, x1, y1, steps=14, hold=0.0, button="left", mods=(), probe=None):
         """Arrasta em coordenadas do cliente, com passos curtos (o ImGui precisa de varios frames).
-        'mods' = teclas seguradas durante o arrasto ("shift", "ctrl")."""
+        'mods' = teclas seguradas durante o arrasto ("shift", "ctrl", "alt", "space"); 'button' = left | right | middle.
+        'probe' = funcao chamada com o botao AINDA apertado, depois do ultimo passo (le o estado ou tira screenshot no
+        meio do arrasto, por exemplo as linhas-guia do ima); o resultado dela e devolvido."""
         self.hover(x0, y0)
-        down, up = (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP) if button == "left" else (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP)
+        down, up = {"left": (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP), "right": (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
+                    "middle": (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP)}[button]
         for m in mods:
             _key(VK[m])
         time.sleep(0.05 if mods else 0)
@@ -370,11 +386,16 @@ class App:
             self.mouse_move(x0 + (x1 - x0) * i / steps, y0 + (y1 - y0) * i / steps, client=True)
             time.sleep(0.03)
         time.sleep(0.08 + hold)
+        result = None
+        if probe:
+            self.wait_frames(4)
+            result = probe()
         _mouse(up)
         time.sleep(0.08)
         for m in reversed(mods):
             _key(VK[m], up=True)
         self.wait_frames(3)
+        return result
 
     def drag_items(self, src, dst, **kw):
         self.drag(src.rect.cx, src.rect.cy, dst.rect.cx, dst.rect.cy, **kw)
@@ -398,7 +419,13 @@ class App:
         for _ in range(2):
             self.key("esc")
 
+    def ensure_focus(self):
+        # Outra janela pode ter roubado o foco entre dois passos (o teclado iria para ela): traz o app de volta
+        if user32.GetForegroundWindow() != self.hwnd:
+            self.focus()
+
     def key(self, name, *mods, wait=True):
+        self.ensure_focus()
         vk = VK[name] if name in VK else ord(name.upper())
         for m in mods:
             _key(VK[m])
@@ -417,6 +444,7 @@ class App:
         _key(VK[name], up=True)
 
     def type_text_nowait(self, text):
+        self.ensure_focus()
         for ch in text:
             _key(0, unicode_char=ch)
             _key(0, up=True, unicode_char=ch)

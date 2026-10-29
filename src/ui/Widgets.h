@@ -60,6 +60,10 @@ void drawCenteredMono(ImDrawList* dl, ImVec2 a, ImVec2 b, const char* text, ImU3
 // Texto da fonte do corpo centralizado em [a, b], reduzido para caber na largura (nome do tipo nas celulas)
 void drawCenteredFit(ImDrawList* dl, ImVec2 a, ImVec2 b, const char* text, ImU32 color);
 
+// Cabecalho recolhivel da secao "BSL Light" (abas Efeitos e Fontes): como um CollapsingHeader, com o monograma da marca
+// pequeno no canto direito (ou o icone zap, se a imagem nao carregou). 'label' pode ter "##id".
+bool brandHeader(const char* label);
+
 // --- Numeros arrastaveis estilo After Effects ("hot text") -------------------------------------------------
 // Valor em vermelho claro, sem caixa, unidade em cinza. Passar o mouse sublinha e troca o cursor; arrastar na
 // horizontal muda o valor ('step' por pixel; Shift = x10, Ctrl = x0,1); clique sem arrastar abre o campo de

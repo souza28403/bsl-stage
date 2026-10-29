@@ -2,12 +2,14 @@
 //
 //   bslstage_worker.exe --pipe <nome> --parent <pid>         modo normal (um por clip)
 //   bslstage_worker.exe --thumb <entrada> <saida> <w> <h>    miniatura da pagina 1 (arquivo bruto: w, h, paginas, RGBA)
+//   bslstage_worker.exe --scan-ffgl <dll> [<saida.json>]      varre um plugin FFGL (JSON na saida padrao ou no arquivo)
 //   bslstage_worker.exe --type=...                            subprocesso do CEF (quando a Web esta habilitada)
 //
 // Se o app morrer, o job object do app (KILL_ON_JOB_CLOSE) derruba o worker; alem disso o worker vigia o
 // processo pai e sai sozinho.
 
 #include "media/WorkerProtocol.h"
+#include "worker/FfglScan.h"
 #include "worker/FrameSink.h"
 #include "worker/OfficeConverter.h"
 #include "worker/PdfDocument.h"
@@ -523,7 +525,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    std::wstring pipe, thumbIn, thumbOut;
+    std::wstring pipe, thumbIn, thumbOut, scanDll, scanOut;
     DWORD parent = 0;
     int thumbW = 160, thumbH = 90;
     bool thumb = false;
@@ -540,6 +542,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
             thumbOut = argv[++i];
             thumbW = std::wcstol(argv[++i], nullptr, 10);
             thumbH = std::wcstol(argv[++i], nullptr, 10);
+        } else if (a == L"--scan-ffgl" && i + 1 < argc) {
+            scanDll = argv[++i];
+            if (i + 1 < argc && std::wstring(argv[i + 1]).rfind(L"--", 0) != 0)
+                scanOut = argv[++i];
         } else if (a.rfind(L"--type=", 0) == 0) {
             cefSub = true;
         }
@@ -553,6 +559,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
         return 1;
 #endif
     }
+    if (!scanDll.empty())
+        runFfglScan(scanDll, scanOut); // nao volta
     if (thumb)
         return runThumbnail(thumbIn, thumbOut, std::clamp(thumbW, 16, 1024), std::clamp(thumbH, 16, 1024));
     if (pipe.empty() || parent == 0)

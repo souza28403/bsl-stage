@@ -14,3 +14,6 @@ docs/screenshot-fase3a-captura.png
 docs/screenshot-fase3a-alvo.png
 third_party/pdfium/
 docs/qa/
+
+third_party/onnxruntime/
+assets/models/

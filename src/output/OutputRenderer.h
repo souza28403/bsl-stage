@@ -57,6 +57,10 @@ public:
     // Lê o FBO da Screen (linhas de cima para baixo, RGBA8)
     bool readScreen(int screenId, std::vector<unsigned char>& rgba, int& width, int& height) const;
     ScreenStatus status(int screenId) const;
+    // Receptores NDI conectados à Screen (-1 se ela não está saindo por NDI)
+    int ndiConnections(int screenId) const;
+    // Frame rate da composição: o ritmo do envio NDI
+    void setFrameRate(float fps) { fps_ = fps; }
 
     // "Identificar": borda + nome + grade de teste por cima das saídas
     void setIdentify(bool on) { identify_ = on; }
@@ -90,6 +94,7 @@ private:
     bool monitorsDirty_ = false;
     bool identify_ = false;
     bool vsyncWindow_ = false;
+    float fps_ = 30.0f;
 
     std::map<int, std::unique_ptr<Runtime>> runtimes_;
     std::unique_ptr<Shader> sliceShader_;

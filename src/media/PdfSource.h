@@ -11,7 +11,7 @@
 
 namespace bsl::media {
 
-class PdfSource final : public RemoteSource
+class PdfSource : public RemoteSource
 {
 public:
     PdfSource(int canvasWidth, int canvasHeight);

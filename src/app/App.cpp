@@ -1,11 +1,24 @@
 #include "app/App.h"
 
+#include "app/FfglSetup.h"
+#include "app/IsfSetup.h"
 #include "app/Log.h"
 #include "app/Paths.h"
 #include "app/ProjectSession.h"
 #include "app/Qa.h"
+#include "ai/AiEngine.h"
+#include "audio/AudioAnalyzer.h"
+#include "ffgl/FfglCatalog.h"
+#include "fx/IsfLibrary.h"
+#include "fx/bsl/BslCommon.h"
+#include "fx/bsl/BslSources.h"
+#include "fx/bsl/PixelMapFeed.h"
+#include "fx/bsl/SliceFeed.h"
 #include "media/DocThumb.h"
+#include "media/SpoutSource.h"
 #include "media/WorkerHost.h"
+#include "ndi/NdiFinder.h"
+#include "ndi/NdiRuntime.h"
 #include "output/OutputRenderer.h"
 #include "render/Compositor.h"
 #include "render/LiveThumb.h"
@@ -13,9 +26,13 @@
 #include "render/ThumbnailCache.h"
 #include "ui/Brand.h"
 #include "ui/Theme.h"
+#include "ui/LayoutUi.h"
 #include "ui/Ui.h"
 #include "ui/panels/CaptureTargetChooser.h"
+#include "ui/panels/MapView.h"
+#include "ui/panels/PixelMapPanels.h"
 #include "ui/panels/PreviewPanel.h"
+#include "ui/panels/TabPanels.h"
 
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
@@ -109,7 +126,11 @@ bool writePng(const std::filesystem::path& path, int w, int h, std::vector<unsig
 
 } // namespace
 
-App::App(AppOptions options) : options_(std::move(options)) {}
+App::App(AppOptions options) : options_(std::move(options))
+{
+    if (!options_.ndiLib.empty())
+        ndi::Runtime::setLibraryOverride(options_.ndiLib);
+}
 
 App::~App()
 {
@@ -165,6 +186,15 @@ bool App::init()
         settings_.uiScaleMode = UiScaleMode::Fixed;
     }
     composition_ = Composition::createDefault();
+    {
+        Settings ffglSettings = settings_; // --plugins entra so na varredura, nao nas configuracoes salvas
+        for (const std::filesystem::path& dir : options_.pluginFolders)
+            ffglSettings.ffglFolders.push_back(paths::toUtf8(dir));
+        configureFfglCatalog(ffglSettings); // plugins FFGL: varredura em segundo plano (cache em %LOCALAPPDATA%)
+    }
+    configureIsfLibrary(settings_); // pastas ISF (Documents\BSL Stage\ISF + extras); varredura em segundo plano
+    audio::AudioAnalyzer::instance().setConfig(settings_.audio); // analise de audio: thread propria (loopback por padrao)
+    audio::AudioAnalyzer::instance().start();
 
     glfwSetErrorCallback(glfwErrorCallback);
     if (!glfwInit())
@@ -235,7 +265,7 @@ bool App::init()
         return false;
     }
     output_ = OutputSetup::createDefault(composition_.width, composition_.height, outputs_->monitors());
-    mode_ = options_.startInMapping ? AppMode::Mapping : AppMode::Composition;
+    mode_ = options_.startInMapping ? AppMode::Mapping : options_.startInPixelMap ? AppMode::PixelMap : AppMode::Composition;
     if (options_.outputWindow)
         setupOutputTest();
     if (options_.testMissingMonitor && !output_.screens.empty()) {
@@ -254,6 +284,10 @@ bool App::init()
     applyDecoderOptions();
     if (!options_.demoFolder.empty())
         setupDemo();
+    if (!options_.focusTab.empty())
+        ui::requestFocusTab(options_.focusTab);
+    if (!options_.fxOpen.empty())
+        ui::setEffectsPanelOnlyOpen(options_.fxOpen);
 
     // Projeto: Novo/Abrir/Salvar, autosave e recuperação. Capturas de teste não mexem em lock/autosave.
     project_ = std::make_unique<ProjectSession>(
@@ -268,6 +302,11 @@ bool App::init()
         project_->openNow(options_.projectPath);
         project_->takeLoaded();
         afterProjectLoaded();
+        // Testes: --trigger <camada> <coluna> também vale com um projeto (dispara e seleciona o clip)
+        for (const auto& [layer, column] : options_.triggers)
+            composition_.trigger(layer - 1, column - 1);
+        if (!options_.triggers.empty())
+            selection_ = {Selection::Kind::Clip, options_.triggers.back().first - 1, options_.triggers.back().second - 1};
     }
     return true;
 }
@@ -278,12 +317,15 @@ void App::shutdown()
         qa::finish();
         qaOn_ = false;
     }
+    ffgl::Catalog::instance().shutdown(); // mata a varredura de plugin em andamento
+    audio::AudioAnalyzer::instance().stop();
     if (project_)
         project_->shutdown(); // encerramento normal: apaga o lock e os autosaves
 
-    // Janelas de saída e senders Spout primeiro (precisam do contexto principal vivo)
+    // Janelas de saída e senders Spout/NDI primeiro (precisam do contexto principal vivo)
     if (window_)
         outputs_.reset();
+    ndi::Finder::shutdownShared();
 
     if (imguiReady_) {
         ImGui_ImplOpenGL3_Shutdown();
@@ -305,12 +347,14 @@ void App::shutdown()
     // Tudo que tem recursos GL precisa ser liberado com o contexto ainda vivo
     if (window_) {
         ui::releasePreview();         // fonte da Prévia
+        ai::AiEngine::instance().shutdown(); // thread da IA, texturas e sessões (precisa do contexto GL)
         composition_ = Composition{}; // fecha as fontes abertas
         thumbs_.reset();
         liveThumbs_.reset();
         // Fontes fechadas acima pedem o encerramento dos workers (PDF/Office/Web); espera um pouco para nao deixar
         // Office ou navegador abertos. O job object do app derruba o que sobrar quando o processo sair.
         media::WorkerHost::waitAllStopped(8000);
+        ui::pixelMapRelease();
         ui::unloadBrand();
         compositor_.reset();
         glfwDestroyWindow(window_);
@@ -404,6 +448,8 @@ void App::afterProjectLoaded()
         composition_.height = compositor_->height();
     }
     applyDecoderOptions();
+    ui::mapEditorReset(output_); // o historico de desfazer do mapeamento e do projeto anterior
+    ui::pixelMapReset();
 }
 
 void App::applyDecoderOptions()
@@ -502,6 +548,51 @@ void App::setupDemo()
         Clip color = Clip::generator(kSolidColorId);
         color.setParam("color", media::param::colorJson({0.925f, 0.2f, 0.216f, 1.0f}));
         composition_.setClip(1, 1, std::move(color));
+    }
+
+    // Fase 4A: um clip com dois efeitos (desfoque + vinheta) e um gerador ISF numa célula (sem disparar: a camada 3
+    // continua mostrando o texto)
+    if (!composition_.clip(0, 0).empty()) {
+        fx::EffectChain& chain = composition_.clip(0, 0).effects;
+        chain.add("native:blur").setParam("radius", media::param::floatJson(6.0f));
+        chain.add("native:vignette").setParam("amount", media::param::floatJson(0.7f));
+    }
+    if (composition_.layerCount() >= 3 && composition_.columnCount() >= 3)
+        composition_.setClip(2, 2, Clip::generator("isf:Gradiente animado.fs"));
+
+    // Fase 4B: o primeiro plugin FFGL de efeito que houver nas pastas de plugins vai para o clip (0,1)
+    if (!options_.pluginFolders.empty() || !ffgl::Catalog::instance().folders().empty()) {
+        ffgl::Catalog& plugins = ffgl::Catalog::instance();
+        plugins.waitIdle(60000);
+        for (const ffgl::EntryPtr& e : plugins.entries()) {
+            if (e->info.type != ffgl::kTypeEffect || e->map.descs.empty() || composition_.clip(0, 1).empty())
+                continue;
+            composition_.clip(0, 1).effects.add(e->typeId);
+            log::info("--demo: efeito FFGL \"" + ffgl::pluginDisplayName(e->info) + "\" no clip (1, 2)");
+            break;
+        }
+    }
+
+    // Plugins BSL Light nativos: o GenBackgrounds numa celula (camada 3, coluna 5) e o AlphaReactor no clip com alpha
+    // (ou no primeiro clip, se nao houver video com alpha)
+    while (composition_.columnCount() < 5)
+        composition_.addColumn();
+    if (composition_.layerCount() >= 3) {
+        Clip bg = Clip::generator(fx::bsllight::kGenBackgroundsId);
+        bg.setParam("style", "aurora");
+        composition_.setClip(2, 4, std::move(bg));
+    }
+    // BSL WebBackgrounds (pagina no CEF do processo auxiliar) numa celula livre da camada 2, sem disparar
+    if (fx::bsllight::bslWebAvailable() && composition_.layerCount() >= 2) {
+        while (composition_.columnCount() < 6)
+            composition_.addColumn();
+        if (composition_.clip(1, 5).empty()) // coluna 6: a coluna 4 e a dos documentos (Fase 3B, logo abaixo)
+            composition_.setClip(1, 5, Clip::generator(fx::bsllight::kWebBackgroundsId));
+    }
+    {
+        Clip& alphaClip = !composition_.clip(1, 0).empty() ? composition_.clip(1, 0) : composition_.clip(0, 0);
+        if (!alphaClip.empty())
+            alphaClip.effects.add(fx::bsllight::kAlphaReactorId);
     }
 
     composition_.triggerColumn(0);
@@ -666,11 +757,28 @@ void App::frame()
     composition_.update(dt);
     updateLiveThumbs();
     syncCanvasSize();
+    // O Slice Refiner 2 desenha os slices do proprio BSL Stage (OutputSetup)
+    fx::bsllight::SliceFeed::instance().set(fx::bsllight::sliceFeedFromOutput(output_), composition_.width,
+                                            composition_.height);
+    // A fonte "Padrao de calibracao BSL" desenha os paineis do Pixel Map (o input acompanha o canvas enquanto ligado)
+    pixelmap::syncInput(composition_.pixelMap, composition_.width, composition_.height);
+    fx::bsllight::PixelMapFeed::instance().set(composition_.pixelMap);
+
+    // IA local: taxa do perfil (Eco = desligada), taxa e dispositivo escolhidos em Ver > IA
+    {
+        ai::AiEngine& aiEngine = ai::AiEngine::instance();
+        aiEngine.setProfileRate(settingsFor(settings_.profile).aiFps);
+        aiEngine.setRateOverride(settings_.aiFps);
+        aiEngine.setDevicePref(settings_.aiDevice == "gpu"   ? ai::DevicePref::Gpu
+                               : settings_.aiDevice == "cpu" ? ai::DevicePref::Cpu
+                                                             : ai::DevicePref::Auto);
+    }
 
     // Com saida real o canvas e renderizado a 100% (a escala reduzida do perfil so vale para a previa)
     const bool wantOutputShot = !options_.screenshotOutputPath.empty() && !outputShotDone_;
     const bool outputLive = OutputRenderer::anyLive(output_) || wantOutputShot;
-    compositor_->render(composition_, outputLive ? 1.0f : settingsFor(settings_.profile).previewScale);
+    compositor_->render(composition_, outputLive ? 1.0f : settingsFor(settings_.profile).previewScale,
+                        settings_.profile == PerformanceProfile::Eco);
 
     // Screen que o editor de mapeamento mostra (renderizada mesmo sem destino)
     int previewScreenId = -1;
@@ -678,10 +786,12 @@ void App::frame()
         previewScreenId = output_.screens[static_cast<size_t>(mapping_.screen)].id;
     else if (wantOutputShot && !output_.screens.empty())
         previewScreenId = output_.screens.front().id;
+    outputs_->setFrameRate(composition_.fps);
     outputs_->render(output_, *compositor_, previewScreenId);
     applySwapInterval();
 
     updateUiScale();
+    ui::runLayoutDialogs(glfwGetWin32Window(window_)); // Exportar/Importar layout: dialogos de arquivo fora do desenho
     if (qaOn_) {
         runQaCommands();
         qa::beginFrame();
@@ -834,7 +944,7 @@ std::string App::qaStateJson() const
     using nlohmann::json;
     json j;
     const Composition& c = composition_;
-    j["mode"] = mode_ == AppMode::Mapping ? "mapping" : "composition";
+    j["mode"] = mode_ == AppMode::Mapping ? "mapping" : mode_ == AppMode::PixelMap ? "pixelmap" : "composition";
     j["layout"] = uiLayoutKey(settings_.layout);
     j["scaleMode"] = settings_.uiScaleMode == UiScaleMode::Window   ? "window"
                      : settings_.uiScaleMode == UiScaleMode::System ? "system"
@@ -845,11 +955,66 @@ std::string App::qaStateJson() const
     for (const Deck& d : c.decks)
         decks.push_back({{"name", d.name}, {"clips", d.clipCount()}});
     j["decks"] = decks;
+    // Cadeias de efeitos: [{type, bypass}] (testes de interface conferem a ordem e o bypass)
+    auto chainJson = [](const fx::EffectChain& chain) {
+        json arr = json::array();
+        for (const fx::EffectInstance& e : chain.items)
+            arr.push_back({{"type", e.typeId}, {"bypass", e.bypass}});
+        return arr;
+    };
     json layers = json::array();
-    for (const Layer& l : c.layers)
+    for (int li = 0; li < c.layerCount(); ++li) {
+        const Layer& l = c.layers[static_cast<size_t>(li)];
+        const Clip* active = c.activeClip(li);
         layers.push_back({{"name", l.name}, {"activeDeck", l.activeDeck}, {"activeColumn", l.activeColumn},
-                          {"opacity", l.opacity}, {"bypass", l.bypass}, {"solo", l.solo}});
+                          {"opacity", l.opacity}, {"bypass", l.bypass}, {"solo", l.solo},
+                          {"blend", static_cast<int>(l.blendMode)},
+                          {"clipPlaying", active && active->isOpen() ? active->source->isPlaying() : false},
+                          {"clipPosition", active && active->isOpen() ? active->source->position() : 0.0},
+                          {"effects", chainJson(l.effects)}});
+    }
     j["layers"] = layers;
+    {
+        const ui::PreviewInfo pv = ui::previewInfo();
+        const ui::PreviewOptions& po = ui::previewOptions();
+        j["preview"] = {{"mode", po.source == ui::PreviewSource::Layer ? "layer" : "clip"},
+                        {"checker", po.checker},
+                        {"fit", po.fit == FitMode::Fill ? "fill" : "fit"},
+                        {"layer", pv.layer},
+                        {"column", pv.column},
+                        {"hasClip", pv.hasClip},
+                        {"live", pv.live},
+                        {"own", pv.ownSource},
+                        {"playing", pv.playing},
+                        {"position", pv.position},
+                        {"duration", pv.duration}};
+        j["layoutPresets"] = ui::layoutUiInfo().presets;
+        j["lastLayoutPreset"] = settings_.lastLayoutPreset;
+    }
+    j["masterEffects"] = chainJson(c.masterEffects);
+    j["isf"] = {{"scanning", fx::IsfLibrary::instance().scanning()},
+                {"entries", fx::IsfLibrary::instance().entries().size()}};
+    j["ffgl"] = {{"scanning", ffgl::Catalog::instance().scanning()},
+                 {"entries", ffgl::Catalog::instance().entries().size()},
+                 {"blocked", ffgl::Catalog::instance().blocked().size()}};
+    {
+        // NDI e Spout: situação do runtime, fontes da rede e senders ativos (testes de interface)
+        ndi::Runtime& rt = ndi::Runtime::instance();
+        json sources = json::array();
+        if (rt.available()) {
+            ndi::Finder::shared().start();
+            for (const ndi::SourceInfo& s : ndi::Finder::shared().sources())
+                sources.push_back(s.name);
+        }
+        json outs = json::array();
+        for (const Screen& s : output_.screens)
+            if (s.kind == OutputKind::Ndi)
+                outs.push_back({{"screen", s.name}, {"name", s.ndiName}, {"connections", outputs_->ndiConnections(s.id)}});
+        j["ndi"] = {{"available", rt.available()}, {"version", rt.version()}, {"error", rt.error()},
+                    {"sources", sources}, {"outputs", outs}};
+        j["spout"] = {{"senders", media::SpoutSource::activeSenders()}};
+    }
+    j["focused"] = window_ && glfwGetWindowAttrib(window_, GLFW_FOCUSED) != 0;
     j["columns"] = c.columnCount();
     j["bpm"] = c.bpm;
     j["masterOpacity"] = c.masterOpacity;
@@ -867,21 +1032,59 @@ std::string App::qaStateJson() const
         const Clip& clip = c.clip(selection_.layer, selection_.column);
         j["selClip"] = {{"name", clip.name}, {"speed", clip.speed}, {"loop", static_cast<int>(clip.loop)},
                         {"fit", static_cast<int>(clip.fit)}, {"playing", clip.playing}, {"params", clip.params.json()},
-                        {"open", clip.isOpen()}};
+                        {"open", clip.isOpen()}, {"effects", chainJson(clip.effects)},
+                        {"status", clip.isOpen() ? clip.source->status().text : std::string()}};
     }
     json screens = json::array();
     for (const Screen& s : output_.screens) {
         json slices = json::array();
         for (const Slice& sl : s.slices) {
             slices.push_back({{"name", sl.name},
+                              {"zFilter", sl.zFilter},
+                              {"zSource", sl.zSource},
                               {"input", {sl.input.x, sl.input.y, sl.input.w, sl.input.h}},
                               {"corners", {sl.corners[0].x, sl.corners[0].y, sl.corners[1].x, sl.corners[1].y,
                                            sl.corners[2].x, sl.corners[2].y, sl.corners[3].x, sl.corners[3].y}}});
         }
-        screens.push_back({{"name", s.name}, {"w", s.width}, {"h", s.height}, {"slices", slices}});
+        screens.push_back({{"name", s.name}, {"w", s.width}, {"h", s.height}, {"slices", slices},
+                           {"kind", outputKindName(s.kind)}});
     }
     j["screens"] = screens;
-    j["mapping"] = {{"screen", mapping_.screen}, {"slice", mapping_.slice}, {"corner", mapping_.corner}};
+    const ui::MapEditorInfo mapInfo = ui::mapEditorInfo();
+    j["mapping"] = {{"screen", mapping_.screen},     {"slice", mapping_.slice},          {"corner", mapping_.corner},
+                    {"multi", mapping_.multi},       {"pointsMode", mapping_.pointsMode}, {"undo", mapInfo.undoCount},
+                    {"redo", mapInfo.redoCount},     {"snap", mapInfo.snap},             {"grid", mapInfo.grid},
+                    {"gridStep", mapInfo.gridStep},  {"inputZoom", mapInfo.inputZoom},   {"outputZoom", mapInfo.outputZoom},
+                    {"dragging", mapInfo.dragging},  {"guides", mapInfo.guides}};
+    {
+        // Pixel Map: configuracao, retangulos calculados (Math.round do HTML), validacao e estado da interface
+        const pixelmap::Config& pmc = c.pixelMap;
+        const pixelmap::Validation pmv = pixelmap::validate(pmc);
+        const ui::PixelMapUiInfo pmi = ui::pixelMapUiInfo();
+        json panels = json::array();
+        for (size_t i = 0; i < pmc.panels.size(); ++i) {
+            const pixelmap::Panel& p = pmc.panels[i];
+            const RectI r = pixelmap::scaledRectRounded(pmc, p);
+            panels.push_back({{"name", p.name},
+                              {"phys", {p.x, p.y, p.w, p.h}},
+                              {"comp", {r.x, r.y, r.w, r.h}},
+                              {"cabinets", p.byCabinets},
+                              {"overlap", pmv.overlap[i]},
+                              {"outside", pmv.outside[i]}});
+        }
+        j["pixelmap"] = {{"input", {pmc.inW, pmc.inH}},
+                         {"linked", pmc.linkCanvas},
+                         {"phys", {pmc.physW, pmc.physH}},
+                         {"watermark", static_cast<int>(pmc.watermark)},
+                         {"panels", panels},
+                         {"scaleWarn", pmv.scaleWarn},
+                         {"selected", pmi.selected},
+                         {"snap", pmi.snap},
+                         {"dragging", pmi.dragging},
+                         {"guides", pmi.guides},
+                         {"zoom", pmi.zoom},
+                         {"status", pmi.status}};
+    }
     j["dirty"] = project_ ? project_->dirty() : false;
     j["project"] = project_ ? paths::toUtf8(project_->path()) : std::string();
     j["busy"] = project_ ? project_->busy() : false;

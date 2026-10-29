@@ -28,6 +28,7 @@ struct TextStyle
     int margin = 40;
     bool wrap = true;            // quebra automatica de linha (ignorada no letreiro horizontal)
     float lineSpacing = 1.0f;    // multiplicador da altura de linha
+    float letterSpacing = 0.0f;  // px somados ao avanco de cada caractere (tracking)
 
     bool outline = false;
     Color outlineColor{0, 0, 0, 1};

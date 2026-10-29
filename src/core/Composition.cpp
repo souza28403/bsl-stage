@@ -241,6 +241,7 @@ int Composition::expandPages(int layer, int column)
     const std::filesystem::path file = base.path;
     const media::ParamValues baseParams = base.params;
     const FitMode fit = base.fit;
+    const fx::EffectChain baseEffects = base.effects; // cada pagina herda os efeitos do clip original
     const std::string baseName = paths::toUtf8(file.filename());
 
     int created = 0;
@@ -253,6 +254,7 @@ int Composition::expandPages(int layer, int column)
         c.params.set("autoMode", "off");
         c.params.set("label", baseName + " (p. " + std::to_string(i) + ")");
         c.fit = fit;
+        c.effects = baseEffects;
         c.refreshName();
         const int col = column + i - 1;
         while (col >= columnCount())
@@ -313,6 +315,7 @@ void Composition::update(double dt)
         c->source->setCanvasSize(width, height);
         c->source->setTempo(beat, bpm);
         c->source->update(dt);
+        c->source->pollParamChanges(c->params); // fonte com interface propria (plugin FFGL) que mudou parametros
         c->playing = c->source->isPlaying(); // "Uma vez" termina e pausa sozinho
     }
 }

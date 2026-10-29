@@ -5,11 +5,14 @@
 
 namespace bsl {
 
-Fbo::Fbo(int width, int height) : width_(width), height_(height)
+Fbo::Fbo(int width, int height, bool floatFormat) : width_(width), height_(height), float_(floatFormat)
 {
     glGenTextures(1, &texture_);
     glBindTexture(GL_TEXTURE_2D, texture_);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    if (floatFormat)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, width, height, 0, GL_RGBA, GL_FLOAT, nullptr);
+    else
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -46,7 +49,8 @@ Fbo::Fbo(Fbo&& other) noexcept
     : fbo_(std::exchange(other.fbo_, 0)),
       texture_(std::exchange(other.texture_, 0)),
       width_(other.width_),
-      height_(other.height_)
+      height_(other.height_),
+      float_(other.float_)
 {
 }
 
@@ -58,6 +62,7 @@ Fbo& Fbo::operator=(Fbo&& other) noexcept
         texture_ = std::exchange(other.texture_, 0);
         width_ = other.width_;
         height_ = other.height_;
+        float_ = other.float_;
     }
     return *this;
 }

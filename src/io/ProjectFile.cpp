@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
@@ -48,7 +49,11 @@ constexpr FitKey kFitKeys[] = {{FitMode::Fit, "fit"}, {FitMode::Fill, "fill"},
 
 struct KindKey { OutputKind mode; const char* key; };
 constexpr KindKey kKindKeys[] = {{OutputKind::Disabled, "disabled"}, {OutputKind::Monitor, "monitor"},
-                                 {OutputKind::Window, "window"}, {OutputKind::Spout, "spout"}};
+                                 {OutputKind::Window, "window"}, {OutputKind::Spout, "spout"}, {OutputKind::Ndi, "ndi"}};
+
+struct ZoneKey { int mode; const char* key; };
+constexpr ZoneKey kZoneKeys[] = {{kZoneAll, "all"}, {kZoneFront, "front"}, {kZoneMiddle, "middle"},
+                                 {kZoneBack, "back"}, {kZone4, "zone4"}};
 
 template <typename Table, typename E>
 const char* keyOf(const Table& table, E value)
@@ -118,6 +123,8 @@ Json clipToJson(int layer, int column, const Clip& clip, const fs::path& project
     j["speed"] = num(clip.speed);
     j["loopMode"] = keyOf(kLoopKeys, clip.loop);
     j["fitMode"] = keyOf(kFitKeys, clip.fit);
+    if (!clip.effects.empty())
+        j["effects"] = Json(clip.effects.toJson());
     return j;
 }
 
@@ -140,6 +147,11 @@ Json sliceToJson(const Slice& s)
     for (const SoftEdge& e : s.edges)
         edges.push_back({{"width", num(e.width)}, {"gamma", num(e.gamma)}});
     j["softEdges"] = std::move(edges); // esquerda, topo, direita, baixo
+    // Roteamento por profundidade (Z-Slice): so entra no arquivo quando foi usado (projetos antigos ficam iguais)
+    if (s.zFilter != kZoneAll || s.zSource != kZoneSourceMaster) {
+        j["zFilter"] = keyOf(kZoneKeys, s.zFilter);
+        j["zSource"] = s.zSource; // -1 = Master; >= 0 = camada (0 = a de baixo)
+    }
     return j;
 }
 
@@ -151,6 +163,8 @@ Json screenToJson(const Screen& s)
     j["kind"] = keyOf(kKindKeys, s.kind);
     j["monitor"] = {{"index", s.monitorIndex}, {"name", s.monitorName}};
     j["spoutName"] = s.spoutName;
+    j["ndiName"] = s.ndiName;
+    j["ndiBgra"] = s.ndiBgra;
     j["width"] = s.width;
     j["height"] = s.height;
     Json slices = Json::array();
@@ -249,6 +263,8 @@ Slice sliceFromJson(const Json& j, int index, int canvasW, int canvasH, int scre
             s.edges[i].width = getFloat((*e)[i], "width", 0.0f, 0.0f, 16384.0f);
             s.edges[i].gamma = getFloat((*e)[i], "gamma", 1.0f, 0.05f, 16.0f);
         }
+    s.zFilter = fromKey(kZoneKeys, getStr(j, "zFilter"), static_cast<int>(kZoneAll));
+    s.zSource = getInt(j, "zSource", kZoneSourceMaster, kZoneSourceMaster, 1023);
     return s;
 }
 
@@ -263,6 +279,8 @@ Screen screenFromJson(const Json& j, int index, int canvasW, int canvasH)
         s.monitorName = getStr(*m, "name");
     }
     s.spoutName = getStr(j, "spoutName", "BSL Stage - " + s.name);
+    s.ndiName = getStr(j, "ndiName", "BSL Stage - " + s.name);
+    s.ndiBgra = getBool(j, "ndiBgra", false);
     s.width = getInt(j, "width", canvasW, 16, 16384);
     s.height = getInt(j, "height", canvasH, 16, 16384);
     if (const Json* slices = getArr(j, "slices")) {
@@ -299,6 +317,15 @@ fs::path resolveClipPath(const fs::path& projectDirAbs, const std::string& relPa
     if (!projectDirAbs.empty() && !relPath.empty())
         return (projectDirAbs / pathFromU8(relPath)).lexically_normal();
     return {};
+}
+
+// "effects" do objeto (clip, camada ou master): cadeia de efeitos; ausente = vazia
+fx::EffectChain effectsFromJson(const Json& j, std::vector<std::string>& warnings)
+{
+    const Json* arr = getArr(j, "effects");
+    if (!arr)
+        return {};
+    return fx::EffectChain::fromJson(media::Json::parse(arr->dump(), nullptr, false), &warnings);
 }
 
 Clip clipFromJson(const Json& j, const fs::path& projectDirAbs, std::vector<std::string>& warnings, int& missing)
@@ -348,6 +375,7 @@ Clip clipFromJson(const Json& j, const fs::path& projectDirAbs, std::vector<std:
         }
     }
 
+    clip.effects = effectsFromJson(j, warnings);
     clip.setSpeed(getFloat(j, "speed", 1.0f, 0.0f, 4.0f));
     clip.setLoop(fromKey(kLoopKeys, getStr(j, "loopMode"), media::LoopMode::Loop));
     clip.fit = fromKey(kFitKeys, getStr(j, "fitMode"), FitMode::Fit);
@@ -360,6 +388,99 @@ fs::path absoluteDir(const fs::path& dir)
         return {};
     std::error_code ec;
     return fs::absolute(dir, ec).lexically_normal();
+}
+
+// --- Pixel Map (aditivo: so grava quando foi mexido) ---
+
+constexpr const char* kWatermarkKeys[] = {"monogram", "image", "none"};
+
+// Config sem nenhuma mexida? (a entrada nao conta enquanto acompanha o canvas: ela vem da composicao)
+bool pixelMapIsDefault(const pixelmap::Config& c)
+{
+    pixelmap::Config d;
+    d.inW = c.inW;
+    d.inH = c.inH;
+    return c == d;
+}
+
+Json pixelMapToJson(const pixelmap::Config& c)
+{
+    Json j = Json::object();
+    j["input"] = {{"w", c.inW}, {"h", c.inH}, {"linked", c.linkCanvas}};
+    j["physical"] = {{"w", c.physW}, {"h", c.physH}};
+    Json wm = Json::object();
+    wm["kind"] = kWatermarkKeys[static_cast<int>(c.watermark)];
+    if (c.watermark == pixelmap::Watermark::Image)
+        wm["path"] = c.watermarkPath;
+    j["watermark"] = std::move(wm);
+    Json panels = Json::array();
+    for (const pixelmap::Panel& p : c.panels) {
+        Json pj = Json::object();
+        pj["name"] = p.name;
+        pj["x"] = p.x;
+        pj["y"] = p.y;
+        pj["w"] = p.w;
+        pj["h"] = p.h;
+        if (p.color != 0) {
+            char buf[16];
+            std::snprintf(buf, sizeof(buf), "#%06X", p.color & 0xFFFFFFu);
+            pj["color"] = buf;
+        }
+        if (p.byCabinets)
+            pj["cabinets"] = {{"cols", p.cols}, {"rows", p.rows}, {"w", p.cabW}, {"h", p.cabH}};
+        panels.push_back(std::move(pj));
+    }
+    j["panels"] = std::move(panels);
+    return j;
+}
+
+pixelmap::Config pixelMapFromJson(const Json& j, int canvasW, int canvasH)
+{
+    pixelmap::Config c;
+    if (const Json* in = getObj(j, "input")) {
+        c.inW = getInt(*in, "w", c.inW, 1, pixelmap::kMaxDim);
+        c.inH = getInt(*in, "h", c.inH, 1, pixelmap::kMaxDim);
+        c.linkCanvas = getBool(*in, "linked", true);
+    }
+    if (const Json* ph = getObj(j, "physical")) {
+        c.physW = getInt(*ph, "w", c.physW, 1, pixelmap::kMaxDim);
+        c.physH = getInt(*ph, "h", c.physH, 1, pixelmap::kMaxDim);
+    }
+    if (const Json* wm = getObj(j, "watermark")) {
+        const std::string kind = getStr(*wm, "kind", "monogram");
+        for (int i = 0; i < 3; ++i)
+            if (kind == kWatermarkKeys[i])
+                c.watermark = static_cast<pixelmap::Watermark>(i);
+        c.watermarkPath = getStr(*wm, "path");
+        if (c.watermark == pixelmap::Watermark::Image && c.watermarkPath.empty())
+            c.watermark = pixelmap::Watermark::Monogram;
+    }
+    if (const Json* panels = getArr(j, "panels")) {
+        for (const Json& pj : *panels) {
+            if (static_cast<int>(c.panels.size()) >= pixelmap::kMaxPanels)
+                break;
+            pixelmap::Panel p;
+            p.name = getStr(pj, "name", "Painel " + std::to_string(c.panels.size() + 1));
+            p.x = getInt(pj, "x", 0, -pixelmap::kMaxDim, pixelmap::kMaxDim);
+            p.y = getInt(pj, "y", 0, -pixelmap::kMaxDim, pixelmap::kMaxDim);
+            p.w = getInt(pj, "w", 128, 1, pixelmap::kMaxDim);
+            p.h = getInt(pj, "h", 128, 1, pixelmap::kMaxDim);
+            const std::string col = getStr(pj, "color");
+            if (col.size() == 7 && col[0] == '#')
+                p.color = static_cast<std::uint32_t>(std::strtoul(col.c_str() + 1, nullptr, 16)) & 0xFFFFFFu;
+            if (const Json* cab = getObj(pj, "cabinets")) {
+                p.byCabinets = true;
+                p.cols = getInt(*cab, "cols", 1, 1, 256);
+                p.rows = getInt(*cab, "rows", 1, 1, 256);
+                p.cabW = getInt(*cab, "w", 128, 1, pixelmap::kMaxDim);
+                p.cabH = getInt(*cab, "h", 128, 1, pixelmap::kMaxDim);
+            }
+            c.panels.push_back(std::move(p));
+        }
+    }
+    pixelmap::normalize(c);
+    pixelmap::syncInput(c, canvasW, canvasH); // acompanhando o canvas, o input e o da composicao
+    return c;
 }
 
 } // namespace
@@ -378,6 +499,8 @@ std::string serialize(const Composition& comp, const OutputSetup& output, const 
     c["fps"] = num(comp.fps);
     c["bpm"] = num(comp.bpm);
     c["master"] = {{"opacity", num(comp.masterOpacity)}, {"bypass", comp.masterBypass}};
+    if (!comp.masterEffects.empty())
+        c["master"]["effects"] = Json(comp.masterEffects.toJson());
     c["currentDeck"] = comp.currentDeck;
     root["composition"] = std::move(c);
 
@@ -389,6 +512,8 @@ std::string serialize(const Composition& comp, const OutputSetup& output, const 
         lj["blend"] = keyOf(kBlendKeys, l.blendMode);
         lj["bypass"] = l.bypass;
         lj["solo"] = l.solo;
+        if (!l.effects.empty())
+            lj["effects"] = Json(l.effects.toJson());
         layers.push_back(std::move(lj));
     }
     root["layers"] = std::move(layers);
@@ -414,6 +539,11 @@ std::string serialize(const Composition& comp, const OutputSetup& output, const 
     Json out = Json::object();
     out["screens"] = std::move(screens);
     root["output"] = std::move(out);
+
+    pixelmap::Config pm = comp.pixelMap;
+    pixelmap::syncInput(pm, comp.width, comp.height);
+    if (!pixelMapIsDefault(pm))
+        root["pixelMap"] = pixelMapToJson(pm);
 
     return root.dump(2, ' ', false, Json::error_handler_t::replace) + "\n";
 }
@@ -458,6 +588,7 @@ LoadResult parse(const std::string& textIn, const fs::path& projectDir, Composit
     if (const Json* m = getObj(cr, "master")) {
         c.masterOpacity = getFloat(*m, "opacity", 1.0f, 0.0f, 1.0f);
         c.masterBypass = getBool(*m, "bypass", false);
+        c.masterEffects = effectsFromJson(*m, res.warnings);
     }
 
     // Camadas (sem nenhuma no arquivo: as 3 padrao)
@@ -471,6 +602,7 @@ LoadResult parse(const std::string& textIn, const fs::path& projectDir, Composit
             l.blendMode = fromKey(kBlendKeys, getStr(lj, "blend"), BlendMode::Normal);
             l.bypass = getBool(lj, "bypass", false);
             l.solo = getBool(lj, "solo", false);
+            l.effects = effectsFromJson(lj, res.warnings);
             c.layers.push_back(std::move(l));
         }
     }
@@ -534,6 +666,11 @@ LoadResult parse(const std::string& textIn, const fs::path& projectDir, Composit
     } else {
         o = OutputSetup::createDefault(c.width, c.height, {});
     }
+
+    if (const Json* pj = getObj(root, "pixelMap"))
+        c.pixelMap = pixelMapFromJson(*pj, c.width, c.height);
+    else
+        pixelmap::syncInput(c.pixelMap, c.width, c.height);
 
     comp = std::move(c);
     output = std::move(o);

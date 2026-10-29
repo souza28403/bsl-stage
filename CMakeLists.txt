@@ -108,6 +108,71 @@ if(NOT EXISTS "${BSL_PDFIUM_ROOT}/include/fpdfview.h")
     file(REMOVE "${_tgz}")
 endif()
 
+# --- ONNX Runtime + DirectML (IA local opcional): pacotes NuGet oficiais, baixados no configure para third_party/onnxruntime ---
+# Microsoft.ML.OnnxRuntime.DirectML (MIT): onnxruntime.dll + cabecalhos. Microsoft.AI.DirectML (MIT): DirectML.dll + DirectML.h.
+# O app carrega as DLLs em tempo de execucao (LoadLibrary pelo caminho completo, ao lado do exe): sem elas a IA fica
+# "indisponivel" e o resto funciona. Nao ha .lib para linkar.
+set(BSL_ORT_VERSION "1.24.4")
+set(BSL_ORT_SHA256 "57e9f11b73437bef7a309496135d4c1f96b1a8e9ddba60013fa27bfc1d788681")
+set(BSL_DML_VERSION "1.15.4")
+set(BSL_DML_SHA256 "4e7cb7ddce8cf837a7a75dc029209b520ca0101470fcdf275c1f49736a3615b9")
+set(BSL_ORT_ROOT "${CMAKE_SOURCE_DIR}/third_party/onnxruntime/ort-${BSL_ORT_VERSION}")
+set(BSL_DML_ROOT "${CMAKE_SOURCE_DIR}/third_party/onnxruntime/directml-${BSL_DML_VERSION}")
+function(bsl_fetch_nupkg name version sha256 destDir)
+    set(_zip "${CMAKE_SOURCE_DIR}/third_party/onnxruntime/${name}-${version}.zip")
+    message(STATUS "Baixando ${name} ${version} (NuGet)...")
+    file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/third_party/onnxruntime")
+    file(DOWNLOAD "https://api.nuget.org/v3-flatcontainer/${name}/${version}/${name}.${version}.nupkg"
+        "${_zip}" SHOW_PROGRESS STATUS _dl_status TLS_VERIFY ON EXPECTED_HASH SHA256=${sha256})
+    list(GET _dl_status 0 _dl_code)
+    if(NOT _dl_code EQUAL 0)
+        file(REMOVE "${_zip}")
+        message(FATAL_ERROR "Falha ao baixar ${name}: ${_dl_status}")
+    endif()
+    file(MAKE_DIRECTORY "${destDir}")
+    file(ARCHIVE_EXTRACT INPUT "${_zip}" DESTINATION "${destDir}")
+    file(REMOVE "${_zip}")
+endfunction()
+if(NOT EXISTS "${BSL_ORT_ROOT}/runtimes/win-x64/native/onnxruntime.dll")
+    bsl_fetch_nupkg("microsoft.ml.onnxruntime.directml" "${BSL_ORT_VERSION}" "${BSL_ORT_SHA256}" "${BSL_ORT_ROOT}")
+endif()
+if(NOT EXISTS "${BSL_DML_ROOT}/bin/x64-win/DirectML.dll")
+    bsl_fetch_nupkg("microsoft.ai.directml" "${BSL_DML_VERSION}" "${BSL_DML_SHA256}" "${BSL_DML_ROOT}")
+endif()
+set(BSL_ORT_DLLS
+    "${BSL_ORT_ROOT}/runtimes/win-x64/native/onnxruntime.dll"
+    "${BSL_ORT_ROOT}/runtimes/win-x64/native/onnxruntime_providers_shared.dll"
+    "${BSL_DML_ROOT}/bin/x64-win/DirectML.dll")
+
+# --- Modelos de IA (Hugging Face, revisao fixa + SHA256) baixados no configure para assets/models ---
+# Depth Anything V2 Small (Apache-2.0) e MODNet (Apache-2.0); licencas em docs/PATENTES-E-LICENCAS.md.
+set(BSL_MODELS_DIR "${CMAKE_SOURCE_DIR}/assets/models")
+function(bsl_fetch_model fileName url sha256)
+    if(EXISTS "${BSL_MODELS_DIR}/${fileName}")
+        file(SHA256 "${BSL_MODELS_DIR}/${fileName}" _have)
+        if(_have STREQUAL "${sha256}")
+            return()
+        endif()
+        file(REMOVE "${BSL_MODELS_DIR}/${fileName}")
+    endif()
+    message(STATUS "Baixando modelo ${fileName}...")
+    file(MAKE_DIRECTORY "${BSL_MODELS_DIR}")
+    file(DOWNLOAD "${url}" "${BSL_MODELS_DIR}/${fileName}" SHOW_PROGRESS STATUS _dl_status TLS_VERIFY ON
+        EXPECTED_HASH SHA256=${sha256})
+    list(GET _dl_status 0 _dl_code)
+    if(NOT _dl_code EQUAL 0)
+        file(REMOVE "${BSL_MODELS_DIR}/${fileName}")
+        # Sem o modelo o app continua: os efeitos de IA mostram "modelo ausente"
+        message(WARNING "Falha ao baixar o modelo ${fileName}: ${_dl_status}")
+    endif()
+endfunction()
+set(_hf_depth "https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/4472b7362082ad9968fee890ca0f1e5aca36b93d/onnx")
+set(_hf_modnet "https://huggingface.co/Xenova/modnet/resolve/fa2fa546052fba4c08921230a26cc69a333fca12/onnx")
+bsl_fetch_model("depth_anything_v2_small_fp16.onnx" "${_hf_depth}/model_fp16.onnx"
+    "2df6223f206b5164e21f664ace61dabeb9bb6a49b8b5a3e00510b4807d0f5b04")
+bsl_fetch_model("modnet_fp32.onnx" "${_hf_modnet}/model.onnx"
+    "07c308cf0fc7e6e8b2065a12ed7fc07e1de8febb7dc7839d7b7f15dd66584df9")
+
 # stb_image / stb_truetype: implementacao compilada em C, sem os warnings do projeto
 add_library(stb_image STATIC third_party/stb_image_impl.c third_party/stb_image_write_impl.c
     third_party/stb_truetype_impl.c)
@@ -149,6 +214,19 @@ add_library(spoutgl STATIC
 target_include_directories(spoutgl SYSTEM PUBLIC ${BSL_SPOUTGL_DIR})
 target_link_libraries(spoutgl PUBLIC opengl32 d3d11 d3d9 dxgi winmm version comctl32 shell32 ole32 oleaut32 uuid advapi32 user32 gdi32)
 
+# --- Host FFGL 2.x, nucleo sem GL: filtro de PE, chamadas protegidas por SEH, carga da DLL, varredura, parametros.
+# Usado pelo app, pelo processo auxiliar (--scan-ffgl) e pelos testes. Os cabecalhos do SDK ficam em third_party/ffgl.
+add_library(bslffgl_core STATIC
+    src/ffgl/FfglInfo.cpp
+    src/ffgl/FfglPe.cpp
+    src/ffgl/FfglCall.cpp
+    src/ffgl/FfglPlugin.cpp
+    src/ffgl/FfglParams.cpp)
+target_include_directories(bslffgl_core PUBLIC src)
+target_include_directories(bslffgl_core SYSTEM PUBLIC third_party/ffgl)
+target_compile_definitions(bslffgl_core PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(bslffgl_core PUBLIC glad nlohmann_json::nlohmann_json)
+
 # --- Midia: decodificacao em CPU (sem GL, testavel isoladamente) ---
 add_library(bslmedia_cpu STATIC
     src/media/MediaFormats.cpp
@@ -183,15 +261,80 @@ add_library(bslsources STATIC
     src/media/FadeBlender.cpp
     src/media/PdfSource.cpp
     src/media/WebSource.cpp
+    # Interoperabilidade: NDI (runtime carregado em tempo de execucao, cabecalho minimo proprio) e fonte Spout
+    src/ndi/NdiRuntime.cpp
+    src/ndi/NdiFinder.cpp
+    src/media/NdiSource.cpp
+    src/media/SpoutInput.cpp
+    src/media/SpoutSource.cpp
     src/render/Shader.cpp
     src/render/Fbo.cpp
+    src/render/FboPool.cpp
+    src/render/TextureLoader.cpp
     src/render/TestPatternSource.cpp
     src/render/SolidColorSource.cpp
-    src/render/D3D11Interop.cpp)
+    src/render/D3D11Interop.cpp
+    src/render/ZoneMasks.cpp
+    # IA local opcional (ONNX Runtime + DirectML, carregados em tempo de execucao): runtime, motor assincrono
+    src/ai/AiRuntime.cpp
+    src/ai/AiEngine.cpp
+    # Efeitos (Fase 4A): cadeia, registro, nativos e ISF
+    src/fx/EffectChain.cpp
+    src/fx/EffectRegistry.cpp
+    src/fx/ChainRunner.cpp
+    src/fx/FxGl.cpp
+    src/fx/NativeEffects.cpp
+    src/fx/IsfDoc.cpp
+    src/fx/IsfRenderer.cpp
+    src/fx/IsfLibrary.cpp
+    src/fx/IsfEffect.cpp
+    src/fx/IsfSource.cpp
+    # Host FFGL (Fase 4B): catalogo, instancia em execucao (efeito), fonte (gerador), provedor do registro, importacao
+    src/ffgl/FfglCatalog.cpp
+    src/ffgl/FfglInstance.cpp
+    src/ffgl/FfglSource.cpp
+    src/ffgl/FfglProvider.cpp
+    src/ffgl/FfglImport.cpp
+    # Audio nativo (WASAPI + FFT) e plugins BSL Light reescritos (efeitos e fontes "bsl:")
+    src/audio/AudioDsp.cpp
+    src/audio/AudioAnalyzer.cpp
+    src/fx/bsl/BslCommon.cpp
+    src/fx/bsl/BslProvider.cpp
+    src/fx/bsl/AlphaReactor.cpp
+    src/fx/bsl/DatamoshPixelSort.cpp
+    src/fx/bsl/AudioReactiveTypo.cpp
+    src/fx/bsl/Vhs.cpp
+    src/fx/bsl/Relight25D.cpp
+    src/fx/bsl/BodyGlitch.cpp
+    src/fx/bsl/PerformerAura.cpp
+    src/fx/bsl/ZSlice.cpp
+    src/fx/bsl/SliceRefiner2.cpp
+    src/fx/bsl/SliceFeed.cpp
+    src/fx/bsl/BslShaderSource.cpp
+    src/fx/bsl/GenBackgrounds.cpp
+    src/fx/bsl/LedMapper.cpp
+    # Pixel Map: modelo/escala/CSV, desenho em CPU dos padroes e a fonte "Padrao de calibracao BSL"
+    # (PixelMapMapping.cpp usa o OutputSetup: so entra no link de quem o chama e ja o tem)
+    src/output/PixelMap.cpp
+    src/output/PixelMapMapping.cpp
+    src/output/PatternRaster.cpp
+    src/fx/bsl/PixelMapSource.cpp
+    # Etapa B: Slice Refiner 3 (estado, previa JPEG), fontes web (WebBackgrounds, WebMotion), PPT Manager e o servidor HTTP
+    src/net/MiniHttp.cpp
+    src/fx/bsl/SliceState.cpp
+    src/fx/bsl/BslPreview.cpp
+    src/fx/bsl/SliceRefiner3.cpp
+    src/fx/bsl/WebStudio.cpp
+    src/fx/bsl/BslWebSources.cpp
+    src/fx/bsl/PptManager.cpp)
 target_include_directories(bslsources PUBLIC src)
+# ONNX Runtime e DirectML: so cabecalhos, e so o src/ai os inclui (as DLLs sao carregadas em tempo de execucao)
+target_include_directories(bslsources SYSTEM PRIVATE "${BSL_ORT_ROOT}/build/native/include" "${BSL_DML_ROOT}/include")
+# Cabecalho minimo proprio do NDI (so declaracoes; o runtime oficial e carregado em tempo de execucao)
+target_include_directories(bslsources PUBLIC third_party/ndi-min)
 target_compile_definitions(bslsources PUBLIC GLFW_INCLUDE_NONE NOMINMAX WIN32_LEAN_AND_MEAN)
-target_link_libraries(bslsources PUBLIC glad bslmedia_cpu nlohmann_json::nlohmann_json
-    opengl32 d3d11 dxgi dwmapi windowsapp runtimeobject shell32 ole32 uuid)
+target_link_libraries(bslsources PUBLIC glad bslffgl_core bslmedia_cpu nlohmann_json::nlohmann_json
+    spoutgl opengl32 d3d11 d3d12 dxgi dwmapi windowsapp runtimeobject shell32 ole32 uuid ws2_32)
 
 # --- Executavel ---
 add_executable(BSLStage
@@ -201,33 +344,51 @@ add_executable(BSLStage
     src/app/Qa.cpp
     src/app/ProjectSession.cpp
     src/app/Settings.cpp
+    src/app/IsfSetup.cpp
+    src/app/FfglSetup.cpp
     src/core/Clip.cpp
     src/core/Composition.cpp
     src/io/FileDialogs.cpp
     src/io/ProjectFile.cpp
     src/output/OutputSetup.cpp
     src/output/Warp.cpp
+    src/output/Snap.cpp
+    src/output/MapEdit.cpp
+    src/output/MapHistory.cpp
     src/output/SpoutOutput.cpp
+    src/output/NdiOutput.cpp
     src/output/TextLabel.cpp
     src/output/OutputRenderer.cpp
     src/render/Compositor.cpp
+    src/render/LayerPreview.cpp
     src/render/LiveThumb.cpp
-    src/render/TextureLoader.cpp
     src/render/ThumbnailCache.cpp
     src/ui/Brand.cpp
     src/ui/Theme.cpp
     src/ui/Ui.cpp
+    src/ui/LayoutPreset.cpp
+    src/ui/LayoutUi.cpp
     src/ui/Widgets.cpp
     src/ui/panels/BrowserPanel.cpp
     src/ui/panels/CompositionPanel.cpp
     src/ui/panels/TransportBar.cpp
     src/ui/panels/ClipPanel.cpp
     src/ui/panels/TabPanels.cpp
+    src/ui/panels/EffectsPanel.cpp
+    src/ui/panels/EffectChainWidget.cpp
+    src/ui/panels/ZoneRouting.cpp
+    src/ui/panels/PluginsWindow.cpp
+    src/ui/panels/AudioWindow.cpp
+    src/ui/panels/AiWindow.cpp
     src/ui/panels/PreviewPanel.cpp
     src/ui/panels/StatusBar.cpp
     src/ui/panels/MappingPanels.cpp
+    src/ui/panels/MapView.cpp
+    src/ui/panels/PixelMapPanels.cpp
     src/ui/panels/ParamWidgets.cpp
-    src/ui/panels/CaptureTargetChooser.cpp)
+    src/ui/panels/SliceEditor.cpp
+    src/ui/panels/CaptureTargetChooser.cpp
+    src/ui/panels/VideoCompat.cpp)
 
 target_include_directories(BSLStage PRIVATE src)
 target_compile_definitions(BSLStage PRIVATE GLFW_INCLUDE_NONE NOMINMAX WIN32_LEAN_AND_MEAN
@@ -265,12 +426,13 @@ set(BSL_WORKER_SOURCES
     src/worker/PipeChannel.cpp
     src/worker/FrameSink.cpp
     src/worker/PdfDocument.cpp
-    src/worker/OfficeConverter.cpp)
+    src/worker/OfficeConverter.cpp
+    src/worker/FfglScan.cpp)
 add_executable(bslstage_worker WIN32 ${BSL_WORKER_SOURCES})
 target_include_directories(bslstage_worker PRIVATE src)
 target_include_directories(bslstage_worker SYSTEM PRIVATE "${BSL_PDFIUM_ROOT}/include")
 target_compile_definitions(bslstage_worker PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
-target_link_libraries(bslstage_worker PRIVATE nlohmann_json::nlohmann_json "${BSL_PDFIUM_ROOT}/lib/pdfium.dll.lib"
+target_link_libraries(bslstage_worker PRIVATE bslffgl_core nlohmann_json::nlohmann_json "${BSL_PDFIUM_ROOT}/lib/pdfium.dll.lib"
     d3d11 dxgi d3dcompiler ole32 oleaut32 uuid shell32 advapi32 user32)
 add_custom_command(TARGET bslstage_worker POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${BSL_PDFIUM_ROOT}/bin/pdfium.dll" $<TARGET_FILE_DIR:bslstage_worker>
@@ -308,17 +470,90 @@ target_link_libraries(bslstage_gltest PRIVATE bslsources glfw bslmedia_cpu)
 add_executable(bslstage_livetest tools/livetest.cpp)
 target_link_libraries(bslstage_livetest PRIVATE bslsources glfw bslmedia_cpu)
 
+# --- Teste dos efeitos (janela oculta): nativos, ISF (parser e shaders proprios), cadeia com bypass e ordem ---
+add_executable(bslstage_fxtest tools/fxtest.cpp
+    src/render/Compositor.cpp
+    src/core/Clip.cpp src/core/Composition.cpp)
+target_include_directories(bslstage_fxtest PRIVATE src)
+target_link_libraries(bslstage_fxtest PRIVATE bslsources glfw bslmedia_cpu)
+
+# --- Host FFGL: DLLs de teste (so para o bslstage_ffgltest; ver tools/ffgl-test-plugins/README.md) ---
+set(_fftp tools/ffgl-test-plugins)
+file(GLOB _fftp_sdk "${_fftp}/sdk/ffgl/*.cpp" "${_fftp}/sdk/ffglex/*.cpp")
+function(bsl_test_plugin target outName)
+    add_library(${target} SHARED ${ARGN})
+    target_compile_definitions(${target} PRIVATE NOMINMAX)
+    target_link_libraries(${target} PRIVATE glad opengl32)
+    set_target_properties(${target} PROPERTIES OUTPUT_NAME ${outName} FOLDER tests
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/ffgl-test-plugins")
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W0 /utf-8)
+    endif()
+endfunction()
+bsl_test_plugin(ffgltest_addsubtract "TestAddSubtract" ${_fftp_sdk} ${_fftp}/AddSubtract/AddSubtract.cpp ${_fftp}/shim/glew_shim.c)
+target_include_directories(ffgltest_addsubtract PRIVATE ${_fftp}/shim ${_fftp}/sdk)
+bsl_test_plugin(ffgltest_gradients "TestGradients" ${_fftp_sdk} ${_fftp}/Gradients/FFGLGradients.cpp ${_fftp}/shim/glew_shim.c)
+target_include_directories(ffgltest_gradients PRIVATE ${_fftp}/shim ${_fftp}/sdk)
+bsl_test_plugin(ffgltest_probe_fx "TestProbeFx" ${_fftp_sdk} ${_fftp}/ProbePlugin.cpp ${_fftp}/shim/glew_shim.c)
+target_include_directories(ffgltest_probe_fx PRIVATE ${_fftp}/shim ${_fftp}/sdk)
+bsl_test_plugin(ffgltest_probe_src "TestProbeSrc" ${_fftp_sdk} ${_fftp}/ProbePlugin.cpp ${_fftp}/shim/glew_shim.c)
+target_include_directories(ffgltest_probe_src PRIVATE ${_fftp}/shim ${_fftp}/sdk)
+target_compile_definitions(ffgltest_probe_src PRIVATE PROBE_SOURCE)
+bsl_test_plugin(ffgltest_crash "TestCrash" ${_fftp}/FailPlugin.cpp)
+target_compile_definitions(ffgltest_crash PRIVATE FAIL_CRASH)
+target_include_directories(ffgltest_crash SYSTEM PRIVATE third_party/ffgl)
+bsl_test_plugin(ffgltest_hang "TestHang" ${_fftp}/FailPlugin.cpp)
+target_compile_definitions(ffgltest_hang PRIVATE FAIL_HANG)
+target_include_directories(ffgltest_hang SYSTEM PRIVATE third_party/ffgl)
+bsl_test_plugin(ffgltest_nomain "TestNoMain" ${_fftp}/FailPlugin.cpp)
+target_compile_definitions(ffgltest_nomain PRIVATE FAIL_NOMAIN)
+
+# --- Teste do host FFGL (janela oculta): varredura, parametros, processamento, falhas, filtro de PE, plugins empacotados ---
+add_executable(bslstage_ffgltest tools/ffgltest.cpp)
+target_include_directories(bslstage_ffgltest PRIVATE src)
+target_link_libraries(bslstage_ffgltest PRIVATE bslsources glfw bslmedia_cpu)
+add_dependencies(bslstage_ffgltest bslstage_worker ffgltest_probe_fx ffgltest_probe_src ffgltest_addsubtract ffgltest_gradients
+    ffgltest_crash ffgltest_hang ffgltest_nomain)
+
+# --- Teste dos plugins BSL Light nativos (janela oculta): instancia, 60 quadros, parametros, audio sintetico, slices ---
+# (OutputRenderer + Compositor: o roteamento dos slices por zona de profundidade e testado de ponta a ponta)
+add_executable(bslstage_bsltest tools/bsltest.cpp src/output/OutputSetup.cpp src/core/Clip.cpp src/core/Composition.cpp
+    src/output/OutputRenderer.cpp src/output/Warp.cpp src/output/TextLabel.cpp src/output/NdiOutput.cpp
+    src/output/SpoutOutput.cpp src/render/Compositor.cpp)
+target_include_directories(bslstage_bsltest PRIVATE src)
+target_link_libraries(bslstage_bsltest PRIVATE bslsources glfw bslmedia_cpu spoutgl)
+add_dependencies(bslstage_bsltest bslstage_worker)
+
+# --- Teste da IA local (janela oculta): ONNX Runtime + DirectML/CPU, modelos, AiEngine, Eco, modelo ausente, efeitos de IA ---
+add_executable(bslstage_aitest tools/aitest.cpp)
+target_include_directories(bslstage_aitest PRIVATE src)
+target_link_libraries(bslstage_aitest PRIVATE bslsources glfw bslmedia_cpu)
+
 # --- Teste de documentos e Web (janela oculta): PDF, Office, Web, worker que cai ---
 add_executable(bslstage_doctest tools/doctest.cpp src/worker/OfficeConverter.cpp src/worker/WorkerUtil.cpp)
 target_include_directories(bslstage_doctest PRIVATE src)
 target_link_libraries(bslstage_doctest PRIVATE bslsources glfw bslmedia_cpu ole32 oleaut32 uuid)
 add_dependencies(bslstage_doctest bslstage_worker)
 
-# --- Teste do Spout: sender (bsl::SpoutOutput) -> receiver no mesmo processo, confere pixels ---
-add_executable(bslstage_spouttest tools/spouttest.cpp src/output/SpoutOutput.cpp)
+# --- Teste do Spout: sender (bsl::SpoutOutput) -> receiver no mesmo processo, confere pixels; e sender -> fonte Spout do app ---
+# (spouttest_source.cpp e a unica parte que usa o glad/ISource: o Spout traz o proprio carregador GL e conflita com ele)
+add_executable(bslstage_spouttest tools/spouttest.cpp tools/spouttest_source.cpp src/output/SpoutOutput.cpp)
 target_include_directories(bslstage_spouttest PRIVATE src)
 target_compile_definitions(bslstage_spouttest PRIVATE NOMINMAX)
-target_link_libraries(bslstage_spouttest PRIVATE glfw spoutgl)
+target_link_libraries(bslstage_spouttest PRIVATE bslsources glfw bslmedia_cpu spoutgl)
+
+# --- Teste do NDI (runtime oficial carregado de --ndi-lib): sender/receiver, fonte NDI, NdiOutput, saida de uma Screen, sem runtime ---
+add_executable(bslstage_ndittest tools/ndittest.cpp
+    src/output/NdiOutput.cpp
+    src/output/OutputRenderer.cpp
+    src/output/OutputSetup.cpp
+    src/output/Warp.cpp
+    src/output/TextLabel.cpp
+    src/output/SpoutOutput.cpp
+    src/render/Compositor.cpp
+    src/core/Clip.cpp src/core/Composition.cpp)
+target_include_directories(bslstage_ndittest PRIVATE src)
+target_link_libraries(bslstage_ndittest PRIVATE bslsources glfw bslmedia_cpu spoutgl)
 
 # --- Teste de projeto (.bslstage): console, sem janela nem contexto GL (so linka as fontes que a Composition referencia) ---
 add_executable(bslstage_projecttest tools/projecttest.cpp
@@ -327,27 +562,54 @@ add_executable(bslstage_projecttest tools/projecttest.cpp
     src/output/OutputSetup.cpp)
 target_link_libraries(bslstage_projecttest PRIVATE bslsources nlohmann_json::nlohmann_json bslmedia_cpu shell32 ole32)
 
-foreach(_tgt BSLStage bslstage_mediatest bslstage_gltest bslstage_projecttest bslstage_livetest bslstage_doctest)
+# --- Teste do editor de mapeamento (console, sem GL): ima, alinhar/distribuir/encostar, transformar <-> pontos, desfazer ---
+add_executable(bslstage_maptest tools/maptest.cpp
+    src/output/Snap.cpp
+    src/output/MapEdit.cpp
+    src/output/MapHistory.cpp
+    src/output/OutputSetup.cpp)
+target_include_directories(bslstage_maptest PRIVATE src)
+
+# --- Teste do Pixel Map (janela oculta so para a fonte ao vivo): escala, mapeamento, CSV, PNG do padrao, validacao ---
+add_executable(bslstage_pixelmaptest tools/pixelmaptest.cpp src/output/OutputSetup.cpp)
+target_include_directories(bslstage_pixelmaptest PRIVATE src)
+target_link_libraries(bslstage_pixelmaptest PRIVATE bslsources glfw bslmedia_cpu)
+
+# --- Teste dos presets de layout (console, sem janela nem ImGui): JSON, troca de trechos do imgui.ini, pasta de presets ---
+add_executable(bslstage_uitest tools/uitest.cpp src/ui/LayoutPreset.cpp)
+target_include_directories(bslstage_uitest PRIVATE src)
+target_link_libraries(bslstage_uitest PRIVATE nlohmann_json::nlohmann_json)
+
+foreach(_tgt BSLStage bslstage_spouttest bslstage_ndittest bslstage_pixelmaptest bslstage_mediatest bslstage_gltest bslstage_projecttest bslstage_livetest bslstage_doctest bslstage_fxtest bslstage_ffgltest bslstage_bsltest bslstage_aitest)
     add_custom_command(TARGET ${_tgt} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${BSL_FFMPEG_DLLS} $<TARGET_FILE_DIR:${_tgt}>
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${BSL_FFMPEG_DLLS} ${BSL_ORT_DLLS} $<TARGET_FILE_DIR:${_tgt}>
         VERBATIM)
 endforeach()
 
 # Marca, fontes e demais recursos ficam ao lado do exe (assetsDir() procura ali primeiro)
 add_custom_command(TARGET BSLStage POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/assets $<TARGET_FILE_DIR:BSLStage>/assets
+    COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${CMAKE_SOURCE_DIR}/assets $<TARGET_FILE_DIR:BSLStage>/assets
     VERBATIM)
 
 if(MSVC)
     target_compile_options(BSLStage PRIVATE /W4 /utf-8 /permissive-)
     target_compile_options(bslmedia_cpu PRIVATE /W4 /utf-8 /permissive-)
+    target_compile_options(bslffgl_core PRIVATE /W4 /utf-8 /permissive-)
     target_compile_options(bslsources PRIVATE /W4 /utf-8 /permissive-)
     target_compile_options(bslstage_livetest PRIVATE /W4 /utf-8 /permissive-)
     target_compile_options(bslstage_mediatest PRIVATE /W4 /utf-8 /permissive-)
     target_compile_options(bslstage_gltest PRIVATE /W4 /utf-8 /permissive-)
     target_compile_options(bslstage_spouttest PRIVATE /W4 /utf-8 /permissive-)
+    target_compile_options(bslstage_ndittest PRIVATE /W4 /utf-8 /permissive-)
     target_compile_options(bslstage_projecttest PRIVATE /W4 /utf-8 /permissive-)
+    target_compile_options(bslstage_maptest PRIVATE /W4 /utf-8 /permissive-)
+    target_compile_options(bslstage_uitest PRIVATE /W4 /utf-8 /permissive-)
+    target_compile_options(bslstage_pixelmaptest PRIVATE /W4 /utf-8 /permissive-)
     target_compile_options(bslstage_doctest PRIVATE /W4 /utf-8 /permissive-)
+    target_compile_options(bslstage_fxtest PRIVATE /W4 /utf-8 /permissive-)
+    target_compile_options(bslstage_ffgltest PRIVATE /W4 /utf-8 /permissive-)
+    target_compile_options(bslstage_bsltest PRIVATE /W4 /utf-8 /permissive-)
+    target_compile_options(bslstage_aitest PRIVATE /W4 /utf-8 /permissive-)
     target_compile_options(bslstage_worker PRIVATE /W4 /utf-8 /permissive-)
     target_compile_options(spoutgl PRIVATE /utf-8 /w)
     # Release sem janela de console; Debug mantem console

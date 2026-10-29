@@ -41,6 +41,47 @@ std::filesystem::path desktopDir()
     return knownFolder(FOLDERID_Desktop);
 }
 
+std::filesystem::path documentsDir()
+{
+    return knownFolder(FOLDERID_Documents) / L"BSL Stage";
+}
+
+std::filesystem::path isfDir()
+{
+    if (!g_appDataOverride.empty())
+        return g_appDataOverride / L"ISF";
+    return documentsDir() / L"ISF";
+}
+
+std::filesystem::path localDataDir()
+{
+    std::filesystem::path dir = g_appDataOverride.empty() ? knownFolder(FOLDERID_LocalAppData) / L"BSL Stage"
+                                                          : g_appDataOverride;
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    return dir;
+}
+
+std::filesystem::path pluginsDir()
+{
+    if (!g_appDataOverride.empty())
+        return g_appDataOverride / L"Plugins";
+    return documentsDir() / L"Plugins";
+}
+
+std::vector<std::filesystem::path> resolumeEffectDirs()
+{
+    std::vector<std::filesystem::path> out;
+    const std::filesystem::path docs = knownFolder(FOLDERID_Documents);
+    std::error_code ec;
+    for (const wchar_t* product : {L"Resolume Arena", L"Resolume Avenue"}) {
+        const std::filesystem::path dir = docs / product / L"Extra Effects";
+        if (std::filesystem::is_directory(dir, ec))
+            out.push_back(dir);
+    }
+    return out;
+}
+
 std::filesystem::path assetsDir()
 {
     static const std::filesystem::path cached = [] {

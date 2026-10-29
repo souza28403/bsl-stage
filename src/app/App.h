@@ -31,6 +31,7 @@ struct AppOptions
     // Fase 2A (testes automaticos)
     bool outputWindow = false;                    // --output-window
     bool startInMapping = false;                  // --mode mapping
+    bool startInPixelMap = false;                 // --mode pixelmap
     std::filesystem::path screenshotOutputPath;   // --screenshot-output <arquivo.png> <segundos>
     double screenshotOutputSeconds = 0.0;
     int canvasWidth = 0;                          // --canvas <w> <h>: muda o canvas depois de montar a saida
@@ -51,6 +52,10 @@ struct AppOptions
     // --qa <pasta>: modo de teste de interface (ver app/Qa.h). Isola settings/imgui.ini/log em <pasta>/appdata.
     std::filesystem::path qaDir;
     bool openCaptureChooser = false; // --choose-target: abre a janela de alvo da captura (celula 3,2) para o screenshot
+    std::vector<std::filesystem::path> pluginFolders; // --plugins <pasta>: pasta de plugins FFGL extra, so nesta execucao (testes)
+    std::string fxOpen;              // --fx-open nativos|isf|ffgl: so essa secao da aba Efeitos nasce aberta (testes)
+    std::string focusTab;            // --tab efeitos|arquivos|geradores|camada|composicao|saida: aba a mostrar (testes)
+    std::filesystem::path ndiLib;    // --ndi-lib <dll>: runtime do NDI neste caminho (so para testes; senao: pasta do exe / NDI_RUNTIME_DIR_V6|V5)
 };
 
 class App

@@ -12,7 +12,9 @@
 #include "ui/Ui.h"
 #include "ui/Widgets.h"
 #include "ui/panels/CaptureTargetChooser.h"
+#include "ui/panels/EffectChainWidget.h"
 #include "ui/panels/ParamWidgets.h"
+#include "ui/panels/VideoCompat.h"
 
 #include <imgui.h>
 
@@ -109,8 +111,10 @@ void statusLine(const Clip& clip)
         return;
     ImGui::Spacing();
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextColored(st.level == media::SourceStatus::Level::Warning ? theme::kWarning : theme::kTextDim, "%s",
-                       st.text.c_str());
+    ImGui::TextColored(st.level == media::SourceStatus::Level::Error     ? theme::kError
+                       : st.level == media::SourceStatus::Level::Warning ? theme::kWarning
+                                                                         : theme::kTextDim,
+                       "%s", st.text.c_str());
     ImGui::PopTextWrapPos();
 }
 
@@ -181,7 +185,7 @@ void clipControls(Clip& clip)
     const bool open = clip.isOpen();
     const double duration = open ? clip.source->duration() : 0.0;
 
-    if (clip.isPaged()) {
+    if (clip.hasPageNav()) {
         pagedControls(clip);
         return;
     }
@@ -282,6 +286,22 @@ void clipParams(PanelContext& ctx, Clip& clip)
                 ImGui::SetTooltip("Clique para escolher outro monitor ou janela (vale também com o clip ativo)");
             return false;
         }
+        if (d.custom == "ndi-source") {
+            std::string chosen;
+            if (drawNdiSourcePicker(current.is_string() ? current.get<std::string>() : std::string(), chosen)) {
+                out = chosen;
+                return true;
+            }
+            return false;
+        }
+        if (d.custom == "spout-sender") {
+            std::string chosen;
+            if (drawSpoutSenderPicker(current.is_string() ? current.get<std::string>() : std::string(), chosen)) {
+                out = chosen;
+                return true;
+            }
+            return false;
+        }
         if (d.custom == "capture-device") {
             media::DeviceCatalog& cat = media::DeviceCatalog::instance();
             cat.ensureListed();
@@ -328,22 +348,6 @@ void clipParams(PanelContext& ctx, Clip& clip)
         clip.setParam(e.id, std::move(e.value));
 }
 
-// Area tracejada onde os efeitos serao soltos (Fase 4)
-void effectsDropArea()
-{
-    ImVec2 size = ImGui::GetContentRegionAvail();
-    size.x = std::max(size.x, dp(40.0f));
-    size.y = std::max(size.y, dp(56.0f));
-    ImGui::Dummy(size);
-    const ImVec2 a = ImGui::GetItemRectMin();
-    const ImVec2 b = ImGui::GetItemRectMax();
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    drawDashedRect(dl, a, b, ImGui::GetColorU32(theme::kPanelActive));
-    const char* text = "Arraste efeitos aqui (Fase 4)";
-    const ImVec2 ts = ImGui::CalcTextSize(text);
-    dl->AddText(ImVec2((a.x + b.x - ts.x) * 0.5f, (a.y + b.y - ts.y) * 0.5f), ImGui::GetColorU32(theme::kTextDim), text);
-}
-
 } // namespace
 
 void drawClipPanel(PanelContext& ctx)
@@ -363,7 +367,7 @@ void drawClipPanel(PanelContext& ctx)
         ImGui::TextWrapped("%s", clip.name.c_str());
         ImGui::PopFont();
 
-        if (clip.isPaged())
+        if (clip.hasPageNav())
             pagedHeader(clip);
         else if (clip.isWeb())
             webHeader(clip);
@@ -408,7 +412,8 @@ void drawClipPanel(PanelContext& ctx)
         }
 
         ImGui::Spacing();
-        effectsDropArea();
+        ImGui::SeparatorText("Efeitos");
+        drawEffectChain(clip.effects, "clip");
     } else if (sel.kind == Selection::Kind::Clip && comp.validCell(sel.layer, sel.column)) {
         ImGui::TextColored(theme::kTextDim, "Célula vazia (camada %d, coluna %d)", sel.layer + 1, sel.column + 1);
     } else {

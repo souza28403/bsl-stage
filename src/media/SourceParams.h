@@ -295,6 +295,7 @@ public:
     }
 
     const std::vector<ParamDesc>& descs() const { return descs_; }
+    const ParamValues& values() const { return values_; }
 
 private:
     static bool isColor(const Json& v)
@@ -314,7 +315,7 @@ private:
 // Estado que a fonte mostra no ClipPanel (ex.: "Sem sinal")
 struct SourceStatus
 {
-    enum class Level { Ok, Info, Warning };
+    enum class Level { Ok, Info, Warning, Error }; // Error: vermelho (ex.: plugin FFGL que falhou)
     Level level = Level::Ok;
     std::string text; // vazio = nada a mostrar
 };

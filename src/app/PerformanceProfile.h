@@ -12,6 +12,7 @@ struct ProfileSettings
     float previewScale;  // fracao da resolucao do canvas usada no preview
     const char* label;   // nome exibido na UI
     const char* key;     // nome salvo no JSON
+    int aiFps;           // taxa de inferencia da IA local por fonte (0 = IA desligada: efeitos de IA passam a imagem)
 };
 
 const ProfileSettings& settingsFor(PerformanceProfile profile);

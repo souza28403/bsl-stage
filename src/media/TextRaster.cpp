@@ -58,6 +58,7 @@ struct Face
     float ascent = 0.0f;  // px, acima da linha de base
     float descent = 0.0f; // px, negativo
     float lineGap = 0.0f;
+    float spacing = 0.0f; // tracking: somado a cada avanco (definido antes do primeiro uso)
     std::unordered_map<char32_t, float> advCache;
 
     float advance(char32_t cp)
@@ -66,7 +67,7 @@ struct Face
             return it->second;
         int adv = 0, lsb = 0;
         stbtt_GetCodepointHMetrics(info, static_cast<int>(cp), &adv, &lsb);
-        const float v = static_cast<float>(adv) * scale;
+        const float v = static_cast<float>(adv) * scale + spacing;
         advCache[cp] = v;
         return v;
     }
@@ -371,6 +372,7 @@ bool rasterizeText(const TextStyle& style, int canvasW, int canvasH, int maxText
     face.info = &font->info;
     const float sizePx = std::clamp(style.sizePx, 4.0f, 1500.0f);
     face.scale = stbtt_ScaleForPixelHeight(&font->info, sizePx);
+    face.spacing = std::clamp(style.letterSpacing, -50.0f, 200.0f);
     int asc = 0, desc = 0, gap = 0;
     stbtt_GetFontVMetrics(&font->info, &asc, &desc, &gap);
     face.ascent = static_cast<float>(asc) * face.scale;

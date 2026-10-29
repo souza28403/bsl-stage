@@ -34,6 +34,29 @@ ICONS = [
     ("square-plus", "SQUARE_PLUS"), ("copy", "COPY"), ("trash-2", "TRASH"), ("scan", "SCAN"),
     # menus
     ("file-plus", "FILE_PLUS"), ("save", "SAVE"), ("save-all", "SAVE_ALL"),
+    # efeitos (Fase 4)
+    ("sparkles", "SPARKLES"), ("grip-vertical", "GRIP"), ("ellipsis", "ELLIPSIS"),
+    ("chevron-down", "CHEVRON_DOWN"), ("move", "MOVE"), ("sliders-horizontal", "SLIDERS"),
+    ("droplet", "DROPLET"), ("contrast", "CONTRAST"), ("sun", "SUN"), ("pipette", "PIPETTE"),
+    ("square-dashed", "SQUARE_DASHED"), ("crop", "CROP"), ("flip-horizontal", "FLIP_H"),
+    ("flower-2", "FLOWER"), ("grid-2x2", "GRID_2X2"), ("zap", "ZAP"), ("blend", "BLEND"),
+    ("circle-dot", "CIRCLE_DOT"), ("layers", "LAYERS"), ("refresh-cw", "REFRESH"), ("folder-cog", "FOLDER_COG"),
+    ("search", "SEARCH"), ("file-code", "FILE_CODE"), ("undo-2", "UNDO"),
+    # plugins FFGL (Fase 4B)
+    ("plug", "PLUG"), ("triangle-alert", "ALERT"), ("package-plus", "PACKAGE_PLUS"),
+    # audio nativo e plugins BSL Light (Fase 4C)
+    ("audio-lines", "AUDIO_LINES"), ("mic", "MIC"), ("headphones", "HEADPHONES"),
+    # editor de mapeamento: ima, desfazer/refazer, vista, alinhar, distribuir e encostar
+    ("magnet", "MAGNET"), ("redo-2", "REDO"), ("maximize", "MAXIMIZE"), ("ruler", "RULER"),
+    ("align-start-vertical", "ALIGN_LEFT"), ("align-center-vertical", "ALIGN_CENTER_H"),
+    ("align-end-vertical", "ALIGN_RIGHT"), ("align-start-horizontal", "ALIGN_TOP"),
+    ("align-center-horizontal", "ALIGN_MIDDLE_V"), ("align-end-horizontal", "ALIGN_BOTTOM"),
+    ("align-horizontal-distribute-center", "DISTRIBUTE_H"), ("align-vertical-distribute-center", "DISTRIBUTE_V"),
+    ("arrow-up-to-line", "ARROW_UP_TO_LINE"), ("arrow-down-to-line", "ARROW_DOWN_TO_LINE"),
+    ("arrow-left-to-line", "ARROW_LEFT_TO_LINE"),
+    # Pixel Map: cadeado do input, exportar/importar, CSV, padrao HD
+    ("lock", "LOCK"), ("lock-open", "LOCK_OPEN"), ("download", "DOWNLOAD"), ("upload", "UPLOAD"),
+    ("file-spreadsheet", "FILE_SPREADSHEET"), ("image-down", "IMAGE_DOWN"), ("image-plus", "IMAGE_PLUS"),
 ]
 
 

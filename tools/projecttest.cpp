@@ -9,6 +9,8 @@
 #include "io/ProjectFile.h"
 #include "output/OutputSetup.h"
 
+#include <nlohmann/json.hpp>
+
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -130,6 +132,13 @@ Composition buildComposition(const fs::path& media)
     Clip solid = Clip::generator(kSolidColorId);
     solid.setParam("color", media::param::colorJson({0.0f, 0.25f, 1.0f, 1.0f}));
     comp.setClip(2, 6, std::move(solid));
+    Clip ndi = Clip::generator(kNdiId);
+    ndi.setParam("source", "MAQUINA (BSL Stage - Tela 1)");
+    ndi.setParam("lowLatency", true);
+    comp.setClip(2, 7, std::move(ndi));
+    Clip spout = Clip::generator(kSpoutId);
+    spout.setParam("sender", "Resolume Arena");
+    comp.setClip(1, 7, std::move(spout));
     return comp;
 }
 
@@ -160,6 +169,8 @@ OutputSetup buildOutput(int cw, int ch)
     left.gain[2] = 0.97f;
     left.brightness = -0.1f;
     left.opacity = 0.9f;
+    left.zFilter = kZoneFront; // roteamento por profundidade (Z-Slice): so a zona Frente, da camada 3
+    left.zSource = 2;
     Slice right = makeFullSlice("Direita", cw, ch, s1.width, s1.height);
     right.input = {cw / 2, 0, cw - cw / 2, ch};
     right.corners[kCornerTL] = {1000.0f, 20.0f};
@@ -167,6 +178,8 @@ OutputSetup buildOutput(int cw, int ch)
     right.flipH = true;
     right.flipV = true;
     right.enabled = false;
+    right.zFilter = kZoneBack; // Fundo, do master
+    right.zSource = kZoneSourceMaster;
     right.edges[kEdgeLeft].width = 64.0f;
     s1.slices.push_back(left);
     s1.slices.push_back(right);
@@ -176,6 +189,8 @@ OutputSetup buildOutput(int cw, int ch)
     s2.name = "Spout A";
     s2.kind = OutputKind::Spout;
     s2.spoutName = "BSL Stage - Spout A";
+    s2.ndiName = "BSL Stage - NDI A";
+    s2.ndiBgra = true;
     s2.enabled = false;
     s2.slices[0].corners[kCornerBL] = {20.0f, 700.0f};
     return out;
@@ -215,7 +230,7 @@ int main(int argc, char** argv)
     section("save -> load -> save");
     Composition comp = buildComposition(mediaDir);
     OutputSetup out = buildOutput(comp.width, comp.height);
-    CHECK(countClips(comp) == 11);
+    CHECK(countClips(comp) == 13);
 
     const std::string text1 = project::serialize(comp, out, proj);
     std::string err;
@@ -253,7 +268,7 @@ int main(int argc, char** argv)
     CHECK(comp2.layers[2].blendMode == BlendMode::Difference);
     CHECK(comp2.decks[0].name == "Abertura" && comp2.decks[0].columnCount() == 8);
     CHECK(comp2.decks[1].name == "Segundo ato" && comp2.decks[1].columnCount() == 9);
-    CHECK(countClips(comp2) == 11);
+    CHECK(countClips(comp2) == 13);
     const Clip& v = comp2.clipAt(0, 1, 2);
     CHECK(v.type == Clip::Type::File && v.kind == media::MediaKind::Video && !v.missing);
     CHECK(v.speed == 0.5f && v.loop == media::LoopMode::Once && v.fit == FitMode::Fill);
@@ -284,6 +299,12 @@ int main(int argc, char** argv)
         CHECK(d.params.json().value("format", std::string()) == "1280x720@30:yuyv422");
         const Clip& c = comp2.clipAt(1, 2, 6);
         CHECK(c.generatorId == kSolidColorId && media::ParamSet(c.paramDescs(), c.params).c("color").b == 1.0f);
+        const Clip& n = comp2.clipAt(1, 2, 7);
+        CHECK(n.generatorId == kNdiId && n.isLive() && n.name == "NDI: MAQUINA (BSL Stage - Tela 1)");
+        CHECK(media::ParamSet(n.paramDescs(), n.params).s("source") == "MAQUINA (BSL Stage - Tela 1)");
+        CHECK(media::ParamSet(n.paramDescs(), n.params).b("lowLatency") && !media::ParamSet(n.paramDescs(), n.params).b("lowBandwidth"));
+        const Clip& sp = comp2.clipAt(1, 1, 7);
+        CHECK(sp.generatorId == kSpoutId && sp.isLive() && sp.name == "Spout: Resolume Arena");
     }
     CHECK(text1.find("\"generator\": \"gen:texto\"") != std::string::npos);
     CHECK(text1.find("\"params\"") != std::string::npos);
@@ -302,8 +323,36 @@ int main(int argc, char** argv)
     CHECK(sc.slices[0].edges[kEdgeRight].width == 64.0f && sc.slices[0].edges[kEdgeRight].gamma == 1.8f);
     CHECK(sc.slices[0].gain[0] == 0.9f && sc.slices[0].brightness == -0.1f);
     CHECK(sc.slices[1].flipH && sc.slices[1].flipV && !sc.slices[1].enabled);
+    // Z-Slice: zona e fonte de cada slice sobrevivem; slice sem roteamento nao grava nada e volta com o padrao
+    CHECK(sc.slices[0].zFilter == kZoneFront && sc.slices[0].zSource == 2);
+    CHECK(sc.slices[1].zFilter == kZoneBack && sc.slices[1].zSource == kZoneSourceMaster);
+    CHECK(out2.screens[1].slices[0].zFilter == kZoneAll && out2.screens[1].slices[0].zSource == kZoneSourceMaster);
+    CHECK(text1.find("\"zFilter\": \"front\"") != std::string::npos && text1.find("\"zFilter\": \"back\"") != std::string::npos);
+    {
+        // sem nenhum roteamento o arquivo fica como antes (sem as chaves novas)
+        OutputSetup plain = buildOutput(comp.width, comp.height);
+        for (Screen& s : plain.screens)
+            for (Slice& sl : s.slices) {
+                sl.zFilter = kZoneAll;
+                sl.zSource = kZoneSourceMaster;
+            }
+        const std::string plainText = project::serialize(comp, plain, proj);
+        CHECK(plainText.find("zFilter") == std::string::npos && plainText.find("zSource") == std::string::npos);
+        // e um arquivo com valores invalidos cai no padrao, sem recusar o projeto
+        std::string bad = text1;
+        const size_t at = bad.find("\"zFilter\": \"front\"");
+        if (at != std::string::npos)
+            bad.replace(at, std::string("\"zFilter\": \"front\"").size(), "\"zFilter\": \"inexistente\"");
+        const fs::path badFile = proj / "zinvalido.bslstage";
+        writeAll(badFile, bad);
+        Composition c3;
+        OutputSetup o3;
+        const project::LoadResult r3 = project::loadFile(badFile, c3, o3);
+        CHECK(r3.ok && o3.screens.size() == 2 && o3.screens[0].slices[0].zFilter == kZoneAll);
+    }
     CHECK(out2.screens[1].kind == OutputKind::Spout && out2.screens[1].spoutName == "BSL Stage - Spout A");
     CHECK(!out2.screens[1].enabled);
+    CHECK(out2.screens[1].ndiName == "BSL Stage - NDI A" && out2.screens[1].ndiBgra && !out2.screens[0].ndiBgra);
     CHECK(out2.screens[0].id != out2.screens[1].id);
 
     // ------------------------------------------------------------------ PDF, Office e Web
@@ -467,7 +516,7 @@ int main(int argc, char** argv)
         project::LoadResult fr = project::parse(future, proj, c, o);
         CHECK(fr.ok);
         CHECK(!fr.warnings.empty());
-        CHECK(countClips(c) == 11);
+        CHECK(countClips(c) == 13);
 
         // Campos ausentes recebem o padrao
         Composition d;
@@ -516,7 +565,7 @@ int main(int argc, char** argv)
         CHECK(!m.clipAt(0, 1, 2).missing && !m.clipAt(1, 2, 0).missing);
         CHECK(m.clipAt(0, 0, 0).name == "photo.jpg");   // o nome continua visivel
         CHECK(m.clipAt(0, 0, 0).type == Clip::Type::File);
-        CHECK(countClips(m) == 11);                      // o clip ausente continua na grade
+        CHECK(countClips(m) == 13);                      // o clip ausente continua na grade
         CHECK(!m.trigger(0, 0));                         // disparar nao faz nada
         CHECK(m.layers[0].activeColumn == -1);
         // O ausente sobrevive a um save: nada e perdido
@@ -535,6 +584,142 @@ int main(int argc, char** argv)
         CHECK(!m.clipAt(0, 2, 7).missing);
         CHECK(project::relinkMissingInFolder(m, found) == 0);
         CHECK(!project::relinkClip(m.clipAt(0, 0, 0), found / "arquivo.txt")); // formato nao suportado
+    }
+
+    // ------------------------------------------------------------ efeitos (Fase 4A)
+    {
+        section("efeitos: cadeias de clip, camada e master");
+        Composition fxComp = Composition::createDefault(2, 3);
+        fxComp.setClip(0, 0, Clip::fromFile(media / "photo.jpg"));
+        fx::EffectChain& chain = fxComp.clip(0, 0).effects;
+        chain.add("native:blur").setParam("radius", media::param::floatJson(12.5f));
+        chain.add("native:invert").bypass = true;
+        chain.add("ffgl:plugin-ausente").setParam("x", 0.5); // tipo desconhecido: preservado
+        fxComp.setClip(1, 1, Clip::generator("isf:Gradiente animado.fs"));
+        fxComp.layers[1].effects.add("native:color").setParam("hue", 45.0);
+        fxComp.masterEffects.add("native:vignette");
+        fxComp.masterEffects.add("native:strobe").setParam("mode", "free");
+        const OutputSetup fxOut = buildOutput(fxComp.width, fxComp.height);
+
+        const std::string t = project::serialize(fxComp, fxOut, proj);
+        CHECK(t.find("\"effects\"") != std::string::npos);
+        Composition back;
+        OutputSetup backOut;
+        const project::LoadResult lr = project::parse(t, proj, back, backOut);
+        CHECK(lr.ok && lr.warnings.empty());
+        const fx::EffectChain& bc = back.clipAt(0, 0, 0).effects;
+        CHECK(bc.size() == 3 && bc.items[0].typeId == "native:blur" && !bc.items[0].bypass);
+        CHECK(bc.items[0].params.json().value("radius", 0.0) == 12.5);
+        CHECK(bc.items[1].typeId == "native:invert" && bc.items[1].bypass);
+        CHECK(bc.items[2].typeId == "ffgl:plugin-ausente" && bc.items[2].params.json().value("x", 0.0) == 0.5);
+        CHECK(back.clipAt(0, 1, 1).isGenerator() && back.clipAt(0, 1, 1).generatorId == "isf:Gradiente animado.fs");
+        CHECK(back.clipAt(0, 1, 1).name == "Gradiente animado");
+        CHECK(back.layers[0].effects.empty() && back.layers[1].effects.size() == 1);
+        CHECK(back.layers[1].effects.items[0].params.json().value("hue", 0.0) == 45.0);
+        CHECK(back.masterEffects.size() == 2 && back.masterEffects.items[1].typeId == "native:strobe");
+        CHECK(project::serialize(back, backOut, proj) == t); // ida e volta identica
+        // projeto sem efeitos nao grava a chave
+        Composition plain = Composition::createDefault(1, 1);
+        CHECK(project::serialize(plain, backOut, proj).find("effects") == std::string::npos);
+
+        // entradas de efeito invalidas: ignoradas com aviso, o resto carrega
+        using OJson = nlohmann::ordered_json;
+        OJson j = OJson::parse(t);
+        for (auto& clip : j["decks"][0]["clips"])
+            if (clip.contains("effects"))
+                clip["effects"] = OJson::array({5, OJson{{"type", 7}}, OJson{{"type", "native:invert"}, {"bypass", "x"}, {"params", 3}}});
+        j["layers"][1]["effects"] = "nao e uma lista";
+        Composition odd;
+        OutputSetup oddOut;
+        const project::LoadResult orr = project::parse(j.dump(), proj, odd, oddOut);
+        CHECK(orr.ok && !orr.warnings.empty());
+        CHECK(odd.clipAt(0, 0, 0).effects.size() == 1 && !odd.clipAt(0, 0, 0).effects.items[0].bypass);
+        CHECK(odd.layers[1].effects.empty() && odd.masterEffects.size() == 2);
+
+        // copiar a cadeia copia so os dados (o efeito de execucao nasce de novo na copia)
+        fx::EffectChain copy = fxComp.clipAt(0, 0, 0).effects;
+        CHECK(copy.size() == 3 && copy.items[0].uid != fxComp.clipAt(0, 0, 0).effects.items[0].uid);
+        CHECK(copy.toJson() == fxComp.clipAt(0, 0, 0).effects.toJson());
+    }
+
+    // ------------------------------------------------------------ Pixel Map (aditivo)
+    {
+        section("Pixel Map: configuracao no projeto (aditivo)");
+        Composition pc = Composition::createDefault(2, 3);
+        pc.width = 1920;
+        pc.height = 1080;
+        const OutputSetup pOut = buildOutput(pc.width, pc.height);
+
+        // Intocado: o arquivo nao ganha a chave (projetos antigos continuam identicos) e o input do canvas nao conta
+        const std::string untouched = project::serialize(pc, pOut, proj);
+        CHECK(untouched.find("pixelMap") == std::string::npos);
+        pc.width = 1280;
+        pc.height = 720;
+        CHECK(project::serialize(pc, pOut, proj).find("pixelMap") == std::string::npos);
+        pc.width = 1920;
+        pc.height = 1080;
+
+        pixelmap::Config& cfg = pc.pixelMap;
+        cfg.physW = 2048;
+        cfg.physH = 640;
+        cfg.watermark = pixelmap::Watermark::Image;
+        cfg.watermarkPath = "C:/logos/bsl \xC3\xA7.png";
+        cfg.panels.push_back(pixelmap::makePanel("Testeira Palco", 0, 0, 2048, 128));
+        pixelmap::Panel lat = pixelmap::makePanel("Lateral \xC3\x8D", 0, 128, 512, 512);
+        lat.color = 0x123456;
+        lat.byCabinets = true;
+        lat.cols = 4;
+        lat.rows = 4;
+        lat.cabW = 128;
+        lat.cabH = 128;
+        cfg.panels.push_back(lat);
+        const std::string t = project::serialize(pc, pOut, proj);
+        CHECK(t.find("\"pixelMap\"") != std::string::npos && t.find("\"Testeira Palco\"") != std::string::npos);
+
+        Composition back;
+        OutputSetup backOut;
+        const project::LoadResult lr = project::parse(t, proj, back, backOut);
+        CHECK(lr.ok && lr.warnings.empty());
+        CHECK(back.pixelMap == pc.pixelMap); // nada se perde (paineis, gabinetes, cor, marca, fisico, ligacao ao canvas)
+        CHECK(back.pixelMap.panels.size() == 2 && back.pixelMap.panels[1].color == 0x123456 && back.pixelMap.panels[1].byCabinets);
+        CHECK(back.pixelMap.panels[1].cols == 4 && back.pixelMap.panels[1].w == 512 && back.pixelMap.panels[1].name == "Lateral \xC3\x8D");
+        CHECK(back.pixelMap.watermark == pixelmap::Watermark::Image && back.pixelMap.watermarkPath == cfg.watermarkPath);
+        CHECK(project::serialize(back, backOut, proj) == t); // ida e volta identica
+
+        // Input livre fica como esta; ligado, acompanha o canvas ao abrir
+        cfg.linkCanvas = false;
+        cfg.inW = 3000;
+        cfg.inH = 900;
+        const std::string tFree = project::serialize(pc, pOut, proj);
+        Composition freeIn;
+        OutputSetup freeInOut;
+        CHECK(project::parse(tFree, proj, freeIn, freeInOut).ok);
+        CHECK(!freeIn.pixelMap.linkCanvas && freeIn.pixelMap.inW == 3000 && freeIn.pixelMap.inH == 900);
+        cfg.linkCanvas = true;
+        using OJson = nlohmann::ordered_json;
+        OJson j = OJson::parse(t);
+        j["composition"]["width"] = 1000;
+        j["composition"]["height"] = 500;
+        Composition linked;
+        OutputSetup linkedOut;
+        CHECK(project::parse(j.dump(), proj, linked, linkedOut).ok);
+        CHECK(linked.pixelMap.inW == 1000 && linked.pixelMap.inH == 500);
+
+        // Arquivo adulterado: campos com tipo errado/limites absurdos viram o padrao e o resto carrega
+        j["pixelMap"]["physical"] = {{"w", "x"}, {"h", 99999999}};
+        j["pixelMap"]["watermark"] = {{"kind", "image"}}; // imagem sem caminho: volta ao monograma
+        j["pixelMap"]["panels"] = OJson::array({5, OJson{{"name", 3}, {"w", -4}, {"h", 1e9}, {"x", "a"}}});
+        Composition odd;
+        OutputSetup oddOut;
+        const project::LoadResult orr = project::parse(j.dump(), proj, odd, oddOut);
+        CHECK(orr.ok);
+        CHECK(odd.pixelMap.physW == 2048 && odd.pixelMap.physH == pixelmap::kMaxDim);
+        CHECK(odd.pixelMap.watermark == pixelmap::Watermark::Monogram);
+        CHECK(odd.pixelMap.panels.size() == 2 && odd.pixelMap.panels[1].w == 1 && odd.pixelMap.panels[1].h == pixelmap::kMaxDim);
+        // projeto sem a chave = configuracao padrao
+        Composition none;
+        OutputSetup noneOut;
+        CHECK(project::parse(untouched, proj, none, noneOut).ok && none.pixelMap.panels.empty() && none.pixelMap.linkCanvas);
     }
 
     fs::remove_all(root, ec);

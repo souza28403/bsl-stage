@@ -3,6 +3,9 @@
 #include "app/Log.h"
 #include "app/Paths.h"
 #include "app/Qa.h"
+#include "ffgl/FfglCatalog.h"
+#include "fx/IsfLibrary.h"
+#include "fx/bsl/BslEffects.h"
 #include "media/MediaFormats.h"
 #include "media/WebSource.h"
 #include "ui/Theme.h"
@@ -148,6 +151,8 @@ const char* generatorIcon(const std::string& id)
     if (id == kScreenCaptureId) return ICON_MONITOR;
     if (id == kCaptureDeviceId) return ICON_VIDEO;
     if (id == kWebUrlId) return ICON_GLOBE;
+    if (id == kNdiId) return ICON_CIRCLE_DOT;
+    if (id == kSpoutId) return ICON_LAYERS;
     return ICON_GRID; // padrão de teste
 }
 
@@ -244,6 +249,37 @@ void drawGeneratorsPanel(PanelContext& ctx)
 {
     beginPanel(panel::kGenerators);
 
+    // Fontes BSL Light: nativas, já instaladas, no topo (nada a importar)
+    ImGui::PushStyleColor(ImGuiCol_Header, theme::kPanelRaised);
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, theme::kPanelHover);
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, theme::kPanelActive);
+    ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+    if (brandHeader("BSL Light##fontes_bsl")) {
+        for (const fx::bsllight::BslPluginInfo& p : fx::bsllight::bslPlugins()) {
+            if (!p.generator)
+                continue;
+            ImGui::PushID(p.id);
+            const std::string pid = p.id;
+            const bool needsCef = pid == kBslWebBackgroundsId || pid == kBslWebMotionId;
+            const bool noCef = needsCef && !media::WebSource::available();
+            ImGui::BeginDisabled(noCef);
+            iconRow(p.name, ICON_ZAP, p.name, ImGuiSelectableFlags_AllowDoubleClick);
+            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                loadIntoSelection(ctx, p.id);
+            if (!noCef)
+                dragSource(p.id, p.name);
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+                ImGui::SetTooltip("%s\n\n%s", p.description,
+                                  noCef ? "Web desabilitada: o navegador (CEF) não foi encontrado nesta instalação."
+                                        : "Arraste para uma célula ou dê duplo clique para carregar na célula selecionada");
+            ImGui::PopID();
+        }
+    }
+    ImGui::PopStyleColor(3);
+
+    ImGui::Spacing();
+    ImGui::SeparatorText("Nativas");
     for (const GeneratorInfo& g : allGenerators()) {
         const bool unavailable = std::string(g.id) == kWebUrlId && !media::WebSource::available();
         ImGui::PushID(g.id);
@@ -263,6 +299,60 @@ void drawGeneratorsPanel(PanelContext& ctx)
                                   g.live ? "\nFonte ao vivo: só uma instância (a Prévia mostra a que está tocando)" : "");
         }
         ImGui::PopID();
+    }
+
+    // Geradores ISF (shaders sem entrada de imagem das pastas ISF)
+    {
+        fx::IsfLibrary& lib = fx::IsfLibrary::instance();
+        std::vector<fx::IsfEntry> gens;
+        for (fx::IsfEntry& e : lib.entries())
+            if (e.error.empty() && e.doc && !e.isEffect)
+                gens.push_back(std::move(e));
+        ImGui::Spacing();
+        ImGui::SeparatorText("ISF");
+        for (const fx::IsfEntry& e : gens) {
+            ImGui::PushID(e.id.c_str());
+            iconRow(e.name.c_str(), ICON_FILE_CODE, e.name.c_str(), ImGuiSelectableFlags_AllowDoubleClick);
+            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                loadIntoSelection(ctx, e.id);
+            dragSource(e.id, e.name);
+            if (ImGui::IsItemHovered() && !ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+                ImGui::SetTooltip("%s%sArraste para uma célula ou dê duplo clique para carregar na célula selecionada",
+                                  e.description.c_str(), e.description.empty() ? "" : "\n\n");
+            ImGui::PopID();
+        }
+        if (lib.scanning())
+            ImGui::TextColored(theme::kTextDim, "Procurando shaders…");
+        else if (gens.empty())
+            ImGui::TextColored(theme::kTextDim, "Nenhum gerador ISF nas pastas (veja Efeitos > Pastas ISF).");
+    }
+
+    // Geradores FFGL (plugins do tipo fonte: os seus e, se ligado, os do Resolume)
+    {
+        ffgl::Catalog& catalog = ffgl::Catalog::instance();
+        std::vector<ffgl::EntryPtr> sources;
+        for (const ffgl::EntryPtr& e : catalog.entries())
+            if (e->info.type == ffgl::kTypeSource)
+                sources.push_back(e);
+        ImGui::Spacing();
+        ImGui::SeparatorText("FFGL");
+        for (const ffgl::EntryPtr& e : sources) {
+            const std::string name = ffgl::pluginDisplayName(e->info);
+            ImGui::PushID(e->typeId.c_str());
+            iconRow(name.c_str(), ICON_PLUG, name.c_str(), ImGuiSelectableFlags_AllowDoubleClick);
+            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                loadIntoSelection(ctx, e->typeId);
+            dragSource(e->typeId, name);
+            if (ImGui::IsItemHovered() && !ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+                ImGui::SetTooltip("%s%s%s\n\nArraste para uma célula ou dê duplo clique para carregar na célula selecionada",
+                                  e->info.description.c_str(), e->info.description.empty() ? "" : "\n",
+                                  ("Origem: " + e->origin).c_str());
+            ImGui::PopID();
+        }
+        if (catalog.scanning())
+            ImGui::TextColored(theme::kTextDim, "Procurando plugins…");
+        else if (sources.empty())
+            ImGui::TextColored(theme::kTextDim, "Nenhuma fonte FFGL nas pastas de plugins (veja Ver > Plugins).");
     }
 
     ImGui::Spacing();

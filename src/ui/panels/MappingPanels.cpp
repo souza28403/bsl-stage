@@ -2,12 +2,17 @@
 
 #include "app/Log.h"
 #include "app/Qa.h"
+#include "output/MapEdit.h"
 #include "output/OutputRenderer.h"
-#include "output/Warp.h"
 #include "render/Compositor.h"
+#include "render/ZoneMasks.h"
 #include "ui/Theme.h"
 #include "ui/Ui.h"
 #include "ui/Widgets.h"
+#include "ndi/NdiRuntime.h"
+#include "ui/panels/MapView.h"
+#include "ui/panels/VideoCompat.h"
+#include "ui/panels/ZoneRouting.h"
 
 #include <imgui.h>
 
@@ -24,13 +29,6 @@ namespace bsl::ui {
 
 namespace {
 
-float handleRadius() { return dp(7.0f); } // raio de captura das alças, em px da tela
-
-ImU32 color(const ImVec4& c, float alpha = 1.0f)
-{
-    return ImGui::GetColorU32(ImVec4(c.x, c.y, c.z, c.w * alpha));
-}
-
 Screen* selectedScreen(PanelContext& ctx)
 {
     auto& screens = ctx.output.screens;
@@ -43,163 +41,6 @@ Slice* selectedSlice(PanelContext& ctx)
     Screen* s = selectedScreen(ctx);
     const int i = ctx.mapping.slice;
     return s && i >= 0 && i < static_cast<int>(s->slices.size()) ? &s->slices[static_cast<size_t>(i)] : nullptr;
-}
-
-// Setas: deslocamento em px (Shift = 10). Ignorado enquanto se digita num campo.
-bool arrowDelta(int& dx, int& dy)
-{
-    const ImGuiIO& io = ImGui::GetIO();
-    dx = dy = 0;
-    if (io.WantTextInput)
-        return false;
-    const int step = io.KeyShift ? 10 : 1;
-    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true)) dx -= step;
-    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, true)) dx += step;
-    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true)) dy -= step;
-    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true)) dy += step;
-    return dx != 0 || dy != 0;
-}
-
-void ownArrowKeys()
-{
-    for (ImGuiKey k : {ImGuiKey_LeftArrow, ImGuiKey_RightArrow, ImGuiKey_UpArrow, ImGuiKey_DownArrow})
-        ImGui::SetItemKeyOwner(k);
-}
-
-// Imagem encaixada no espaço livre, mantendo a proporção e deixando uma margem
-struct FitRect
-{
-    ImVec2 min;
-    ImVec2 size;
-    float scale = 1.0f; // px de tela por px do conteúdo
-};
-
-bool fitImage(float aspect, float margin, float captionHeight, FitRect& out, int contentWidth)
-{
-    const ImVec2 avail = ImGui::GetContentRegionAvail();
-    ImVec2 size(avail.x - margin * 2.0f, avail.y - captionHeight - margin * 2.0f);
-    if (size.x < dp(8.0f) || size.y < dp(8.0f))
-        return false;
-    if (size.x / size.y > aspect)
-        size.x = size.y * aspect;
-    else
-        size.y = size.x / aspect;
-
-    ImVec2 cursor = ImGui::GetCursorPos();
-    cursor.x += (avail.x - size.x) * 0.5f;
-    cursor.y += (avail.y - captionHeight - size.y) * 0.5f;
-    ImGui::SetCursorPos(cursor);
-    out.min = ImGui::GetCursorScreenPos();
-    out.size = size;
-    out.scale = size.x / static_cast<float>(std::max(contentWidth, 1));
-    return true;
-}
-
-void caption(const char* fmt, ...) IM_FMTARGS(1);
-void caption(const char* fmt, ...)
-{
-    ImGui::SetCursorPos(ImVec2(ImGui::GetCursorStartPos().x, ImGui::GetWindowHeight()
-                                                                - ImGui::GetTextLineHeightWithSpacing()
-                                                                - padding() * 0.5f));
-    pushMono();
-    va_list args;
-    va_start(args, fmt);
-    ImGui::PushStyleColor(ImGuiCol_Text, theme::kTextDim);
-    ImGui::TextV(fmt, args);
-    ImGui::PopStyleColor();
-    va_end(args);
-    ImGui::PopFont();
-}
-
-float distance(ImVec2 a, ImVec2 b)
-{
-    return std::hypot(a.x - b.x, a.y - b.y);
-}
-
-// --------------------------------------------------------------------------------------------
-// Entrada: retângulos de entrada sobre o canvas
-
-enum class DragMode { None, Move, Resize };
-
-struct InputDrag
-{
-    DragMode mode = DragMode::None;
-    int handle = -1;
-    ImVec2 startMouse;
-    RectI startRect;
-};
-InputDrag g_inDrag;
-
-// Alças: 0 TL, 1 T, 2 TR, 3 R, 4 BR, 5 B, 6 BL, 7 L
-ImVec2 handlePos(ImVec2 a, ImVec2 b, int h)
-{
-    const float cx = (a.x + b.x) * 0.5f, cy = (a.y + b.y) * 0.5f;
-    switch (h) {
-    case 0: return {a.x, a.y};
-    case 1: return {cx, a.y};
-    case 2: return {b.x, a.y};
-    case 3: return {b.x, cy};
-    case 4: return {b.x, b.y};
-    case 5: return {cx, b.y};
-    case 6: return {a.x, b.y};
-    default: return {a.x, cy};
-    }
-}
-
-bool handleLeft(int h) { return h == 0 || h == 6 || h == 7; }
-bool handleRight(int h) { return h == 2 || h == 3 || h == 4; }
-bool handleTop(int h) { return h == 0 || h == 1 || h == 2; }
-bool handleBottom(int h) { return h == 4 || h == 5 || h == 6; }
-
-ImGuiMouseCursor handleCursor(int h)
-{
-    switch (h) {
-    case 0: case 4: return ImGuiMouseCursor_ResizeNWSE;
-    case 2: case 6: return ImGuiMouseCursor_ResizeNESW;
-    case 1: case 5: return ImGuiMouseCursor_ResizeNS;
-    default: return ImGuiMouseCursor_ResizeEW;
-    }
-}
-
-int hitHandle(ImVec2 a, ImVec2 b, ImVec2 mouse)
-{
-    int best = -1;
-    float bestDist = handleRadius() + dp(2.0f);
-    for (int h = 0; h < 8; ++h) {
-        const float d = distance(handlePos(a, b, h), mouse);
-        if (d < bestDist) {
-            bestDist = d;
-            best = h;
-        }
-    }
-    return best;
-}
-
-void clampRectToCanvas(RectI& r, int cw, int ch)
-{
-    r.w = std::clamp(r.w, 1, cw);
-    r.h = std::clamp(r.h, 1, ch);
-    r.x = std::clamp(r.x, 0, cw - r.w);
-    r.y = std::clamp(r.y, 0, ch - r.h);
-}
-
-// --------------------------------------------------------------------------------------------
-// Saída: cantos do slice sobre a Screen
-
-enum class QuadDrag { None, Corner, Move };
-
-struct OutputDrag
-{
-    QuadDrag mode = QuadDrag::None;
-    ImVec2 startMouse;
-    Point2 startCorners[4];
-};
-OutputDrag g_outDrag;
-
-void clampCorner(Point2& p, const Screen& s)
-{
-    p.x = std::clamp(p.x, -0.25f * static_cast<float>(s.width), 1.25f * static_cast<float>(s.width));
-    p.y = std::clamp(p.y, -0.25f * static_cast<float>(s.height), 1.25f * static_cast<float>(s.height));
 }
 
 // --------------------------------------------------------------------------------------------
@@ -276,6 +117,7 @@ std::string destinationLabel(const Screen& s, const std::vector<MonitorInfo>& mo
     }
     case OutputKind::Window: return "Janela";
     case OutputKind::Spout: return "Spout";
+    case OutputKind::Ndi: return "NDI";
     default: return "Desativado";
     }
 }
@@ -313,6 +155,8 @@ void screenProperties(PanelContext& ctx, Screen& screen)
             screen.kind = OutputKind::Window;
         if (ImGui::Selectable("Spout", screen.kind == OutputKind::Spout))
             screen.kind = OutputKind::Spout;
+        if (ImGui::Selectable("NDI", screen.kind == OutputKind::Ndi))
+            screen.kind = OutputKind::Ndi;
         ImGui::EndCombo();
     }
 
@@ -328,6 +172,29 @@ void screenProperties(PanelContext& ctx, Screen& screen)
         ImGui::PushID("spoutNome");
         inputText("##spout", screen.spoutName);
         ImGui::PopID();
+    }
+
+    if (screen.kind == OutputKind::Ndi) {
+        if (!ndi::Runtime::instance().available()) {
+            drawNdiRuntimeNotice();
+        } else {
+            dim("Nome do sender NDI");
+            ImGui::PushID("ndiNome");
+            inputText("##ndi", screen.ndiName);
+            ImGui::PopID();
+            dim("Formato");
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            if (beginCombo("##ndiFormato", screen.ndiBgra ? "BGRA (cheio, com alpha)" : "UYVY (leve)")) {
+                if (ImGui::Selectable("UYVY (leve)", !screen.ndiBgra))
+                    screen.ndiBgra = false;
+                if (ImGui::Selectable("BGRA (cheio, com alpha)", screen.ndiBgra))
+                    screen.ndiBgra = true;
+                ImGui::EndCombo();
+            }
+            const int conns = ctx.outputRenderer.ndiConnections(screen.id);
+            if (conns >= 0)
+                dim((std::to_string(conns) + " receptor(es) conectado(s)").c_str());
+        }
     }
 
     dim("Resolução");
@@ -360,6 +227,43 @@ void screenProperties(PanelContext& ctx, Screen& screen)
     }
 }
 
+// Zona de profundidade do slice (Z-Slice): o slice mostra só os pixels dessa zona
+void zoneProperties(PanelContext& ctx, Slice& slice)
+{
+    // Roteamento por profundidade: o slice mostra só uma zona do efeito Z-Slice (Todas = sem filtro e sem custo)
+    ImGui::SeparatorText("Profundidade (Z-Slice)");
+    dim("Zona de profundidade");
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    if (beginCombo("##zFilter", zoneFilterName(slice.zFilter))) {
+        for (int z = 0; z < kZoneFilterCount; ++z)
+            if (ImGui::Selectable((std::string(zoneFilterName(z)) + "##zona_" + std::to_string(z)).c_str(), slice.zFilter == z))
+                slice.zFilter = z;
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Todas: o slice mostra a imagem inteira. Frente, Meio, Fundo, Zona 4: só os pixels dessa zona de "
+                          "profundidade, calculada pelo efeito Z-Slice da camada ou do master");
+    if (slice.zFilter != kZoneAll) {
+        dim("Fonte das zonas");
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (beginCombo("##zSource", zoneSourceLabel(ctx.composition, slice.zSource).c_str())) {
+            if (ImGui::Selectable("Master##zfonte_master", slice.zSource == kZoneSourceMaster))
+                slice.zSource = kZoneSourceMaster;
+            for (int l = 0; l < ctx.composition.layerCount(); ++l)
+                if (ImGui::Selectable((zoneSourceLabel(ctx.composition, l) + "##zfonte_" + std::to_string(l)).c_str(), slice.zSource == l))
+                    slice.zSource = l;
+            ImGui::EndCombo();
+        }
+        if (!ZoneMasks::instance().available(slice.zSource)) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(theme::kWarning, "Sem Z-Slice ativo em %s: este slice mostra tudo. Adicione o efeito Z-Slice "
+                                                "na cadeia dessa fonte (e use a IA fora do perfil Eco).",
+                               zoneSourceLabel(ctx.composition, slice.zSource).c_str());
+            ImGui::PopTextWrapPos();
+        }
+    }
+}
+
 void sliceProperties(PanelContext& ctx, Screen& screen, Slice& slice)
 {
     (void)screen;
@@ -371,6 +275,8 @@ void sliceProperties(PanelContext& ctx, Screen& screen, Slice& slice)
     inputText("##nome", slice.name);
     ImGui::PopID();
     ImGui::Checkbox("Ativo", &slice.enabled);
+    zoneProperties(ctx, slice);
+    ImGui::SeparatorText("Posição");
 
     ImGui::Spacing();
     dim("Entrada no canvas (px)");
@@ -391,30 +297,72 @@ void sliceProperties(PanelContext& ctx, Screen& screen, Slice& slice)
     }
 
     ImGui::Spacing();
-    dim("Saída: cantos na tela (px)");
-    if (ImGui::BeginTable("##cantos", 3, ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("n", ImGuiTableColumnFlags_WidthFixed, dp(92.0f));
-        ImGui::TableSetupColumn("x", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("y", ImGuiTableColumnFlags_WidthStretch);
-        static const char* const names[4] = {"Sup. esq.", "Sup. dir.", "Inf. dir.", "Inf. esq."};
-        for (int i = 0; i < 4; ++i) {
-            ImGui::PushID(i);
+    if (!ctx.mapping.pointsMode) {
+        // Modo Transformar: o quad como retângulo (posição = canto superior esquerdo antes de girar; gira em volta do centro)
+        dim("Saída: posição, tamanho e rotação (px, graus)");
+        mapedit::Xform xf;
+        bool exact = true;
+        {
+            Point2 c[4] = {slice.corners[0], slice.corners[1], slice.corners[2], slice.corners[3]};
+            exact = mapedit::fromCorners(c, xf);
+        }
+        float px = xf.x(), py = xf.y(), pw = xf.w, ph = xf.h;
+        float deg = mapedit::radToDeg(xf.rot);
+        bool changed = false;
+        if (ImGui::BeginTable("##saidaxf", 4, ImGuiTableFlags_SizingStretchSame)) {
+            tableHeader4("X", "Y", "L", "A");
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
-            ImGui::AlignTextToFramePadding();
-            if (ctx.mapping.corner == i)
-                ImGui::TextColored(theme::kAccent, "%s", names[i]);
-            else
-                dim(names[i]);
+            changed |= inputFloat("##ox", px, -1.0e5f, 1.0e5f, "%.1f", 1.0f);
             ImGui::TableSetColumnIndex(1);
-            if (inputFloat("##cx", slice.corners[i].x, -1.0e5f, 1.0e5f, "%.1f", 1.0f))
-                ctx.mapping.corner = i;
+            changed |= inputFloat("##oy", py, -1.0e5f, 1.0e5f, "%.1f", 1.0f);
             ImGui::TableSetColumnIndex(2);
-            if (inputFloat("##cy", slice.corners[i].y, -1.0e5f, 1.0e5f, "%.1f", 1.0f))
-                ctx.mapping.corner = i;
-            ImGui::PopID();
+            changed |= inputFloat("##ow", pw, 1.0f, 1.0e5f, "%.1f", 1.0f);
+            ImGui::TableSetColumnIndex(3);
+            changed |= inputFloat("##oh", ph, 1.0f, 1.0e5f, "%.1f", 1.0f);
+            ImGui::EndTable();
         }
-        ImGui::EndTable();
+        dim("Rotação");
+        changed |= inputFloat("##orot", deg, -360.0f, 360.0f, "%.1f", 0.5f, 0.0f);
+        if (changed) {
+            xf.w = pw;
+            xf.h = ph;
+            xf.setPosition(px, py);
+            xf.rot = mapedit::degToRad(deg);
+            Point2 out[4];
+            mapedit::toCorners(xf, out);
+            for (int i = 0; i < 4; ++i)
+                slice.corners[i] = out[i];
+        }
+        if (!exact)
+            ImGui::TextColored(theme::kWarning, "Quad deformado: mostrando a caixa dos cantos");
+    } else {
+        // Modo Pontos: os 4 cantos livres
+        dim("Saída: cantos na tela (px)");
+        if (ImGui::BeginTable("##cantos", 3, ImGuiTableFlags_SizingStretchProp)) {
+            ImGui::TableSetupColumn("n", ImGuiTableColumnFlags_WidthFixed, dp(92.0f));
+            ImGui::TableSetupColumn("x", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("y", ImGuiTableColumnFlags_WidthStretch);
+            static const char* const names[4] = {"Sup. esq.", "Sup. dir.", "Inf. dir.", "Inf. esq."};
+            for (int i = 0; i < 4; ++i) {
+                ImGui::PushID(i);
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::AlignTextToFramePadding();
+                if (ctx.mapping.corner == i)
+                    ImGui::TextColored(theme::kAccent, "%s", names[i]);
+                else
+                    dim(names[i]);
+                ImGui::TableSetColumnIndex(1);
+                if (inputFloat("##cx", slice.corners[i].x, -1.0e5f, 1.0e5f, "%.1f", 1.0f))
+                    ctx.mapping.corner = i;
+                ImGui::TableSetColumnIndex(2);
+                if (inputFloat("##cy", slice.corners[i].y, -1.0e5f, 1.0e5f, "%.1f", 1.0f))
+                    ctx.mapping.corner = i;
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
     }
 
     if (ImGui::Button("Ajustar saída ao retângulo de entrada", ImVec2(-FLT_MIN, 0.0f)))
@@ -531,7 +479,9 @@ void validateMappingSelection(PanelContext& ctx)
     MappingSelection& m = ctx.mapping;
     const int screens = static_cast<int>(ctx.output.screens.size());
     if (screens == 0) {
-        m = {-1, -1, -1};
+        m.screen = m.slice = m.corner = -1;
+        m.multi.clear();
+        m.multiScreen = -1;
         return;
     }
     m.screen = std::clamp(m.screen, 0, screens - 1);
@@ -539,6 +489,7 @@ void validateMappingSelection(PanelContext& ctx)
     m.slice = slices == 0 ? -1 : std::clamp(m.slice, -1, slices - 1);
     if (m.slice < 0)
         m.corner = -1;
+    normalizeSelection(m, slices);
 }
 
 void drawMappingListPanel(PanelContext& ctx)
@@ -554,29 +505,27 @@ void drawMappingListPanel(PanelContext& ctx)
     const ImVec2 iconSize((ImGui::GetContentRegionAvail().x - style.ItemSpacing.x * 3.0f) * 0.25f, ImGui::GetFrameHeight());
     if (iconButton(ICON_PLUS ICON_MONITOR, "##map_add_tela", "Nova tela", iconSize)) {
         sel.screen = out.addScreen(cw, ch);
-        sel.slice = 0;
-        sel.corner = -1;
+        selectOnly(sel, 0);
     }
     ImGui::BeginDisabled(!selectedScreen(ctx));
     ImGui::SameLine();
     if (iconButton(ICON_SQUARE_PLUS, "##map_add_slice", "Novo slice na tela selecionada", iconSize)) {
-        sel.slice = out.addSlice(sel.screen, cw, ch);
-        sel.corner = -1;
+        selectOnly(sel, out.addSlice(sel.screen, cw, ch));
     }
     ImGui::SameLine();
-    if (iconButton(ICON_COPY, "##map_duplicar", "Duplicar o slice selecionado (ou a tela, se nenhum slice estiver selecionado)",
-                   iconSize)) {
+    if (iconButton(ICON_COPY, "##map_duplicar",
+                   "Duplicar os slices selecionados (Ctrl+D) ou a tela, se nenhum slice estiver selecionado", iconSize)) {
         if (sel.slice >= 0)
-            sel.slice = out.duplicateSlice(sel.screen, sel.slice);
+            mapDuplicateSelection(ctx);
         else
             sel.screen = out.duplicateScreen(sel.screen);
         sel.corner = -1;
     }
     ImGui::SameLine();
-    if (iconButton(ICON_TRASH, "##map_remover", "Remover o slice selecionado (ou a tela, se nenhum slice estiver selecionado)",
-                   iconSize)) {
+    if (iconButton(ICON_TRASH, "##map_remover",
+                   "Remover os slices selecionados (Delete) ou a tela, se nenhum slice estiver selecionado", iconSize)) {
         if (sel.slice >= 0)
-            out.removeSlice(sel.screen, sel.slice);
+            mapRemoveSelection(ctx);
         else
             out.removeScreen(sel.screen);
         sel.corner = -1;
@@ -630,7 +579,7 @@ void drawMappingListPanel(PanelContext& ctx)
                 ImGui::PushID(j);
                 ImGuiTreeNodeFlags lf = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen
                                         | ImGuiTreeNodeFlags_SpanAvailWidth;
-                if (sel.screen == i && sel.slice == j)
+                if (sel.screen == i && isSliceSelected(sel, j))
                     lf |= ImGuiTreeNodeFlags_Selected;
 
                 if (renaming(i, j)) {
@@ -645,12 +594,26 @@ void drawMappingListPanel(PanelContext& ctx)
                     if (!slice.enabled)
                         ImGui::PopStyleColor();
                     if (ImGui::IsItemClicked()) {
-                        sel.screen = i;
-                        sel.slice = j;
-                        sel.corner = -1;
+                        const ImGuiIO& io = ImGui::GetIO();
+                        if (io.KeyCtrl && sel.screen == i) { // Ctrl+clique: seleção múltipla
+                            toggleSliceSelection(sel, j);
+                        } else {
+                            sel.screen = i;
+                            selectOnly(sel, j);
+                        }
                     }
                     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0))
                         beginRename(i, j, slice.name);
+                    if (slice.zFilter != kZoneAll) { // zona de profundidade à direita (amarelo = sem Z-Slice ativo)
+                        const bool live = ZoneMasks::instance().available(slice.zSource);
+                        const char* tag = zoneFilterName(slice.zFilter);
+                        const float tw = ImGui::CalcTextSize(tag).x;
+                        ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - tw - dp(2.0f));
+                        ImGui::TextColored(live ? theme::kAccent : theme::kWarning, "%s", tag);
+                        if (!live && ImGui::IsItemHovered())
+                            ImGui::SetTooltip("Sem Z-Slice ativo em %s: este slice mostra tudo",
+                                              zoneSourceLabel(ctx.composition, slice.zSource).c_str());
+                    }
                 }
                 ImGui::PopID();
             }
@@ -667,304 +630,12 @@ void drawMappingListPanel(PanelContext& ctx)
 
 void drawMappingInputPanel(PanelContext& ctx)
 {
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padding(), padding()));
-    beginPanel(panel::kMapInput);
-
-    const Compositor& canvas = ctx.canvas;
-    const int cw = canvas.width(), ch = canvas.height();
-    Screen* screen = selectedScreen(ctx);
-    const float lineH = ImGui::GetTextLineHeightWithSpacing();
-
-    FitRect fit;
-    if (screen && fitImage(static_cast<float>(cw) / static_cast<float>(ch), dp(14.0f), lineH, fit, cw)) {
-        // A area clicavel passa um pouco da imagem: as alcas de um slice que cobre o canvas inteiro ficam nas bordas
-        // e a metade de fora delas tambem precisa pegar.
-        ImGui::SetCursorScreenPos(ImVec2(fit.min.x - dp(10.0f), fit.min.y - dp(10.0f)));
-        ImGui::InvisibleButton("##entrada", ImVec2(fit.size.x + dp(20.0f), fit.size.y + dp(20.0f)));
-        ownArrowKeys();
-        const bool hovered = ImGui::IsItemHovered();
-        const bool active = ImGui::IsItemActive();
-        const ImVec2 a = fit.min;
-        const ImVec2 b(a.x + fit.size.x, a.y + fit.size.y);
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-
-        // Canvas ao vivo
-        const float s = canvas.uvMax();
-        const float hx = 0.5f / static_cast<float>(cw), hy = 0.5f / static_cast<float>(ch);
-        dl->AddImage(static_cast<ImTextureID>(canvas.texture()), a, b, ImVec2(hx, s - hy), ImVec2(s - hx, hy));
-        dl->AddRect(a, b, color(theme::kBorder));
-        qa::noteRect("entrada:imagem", a.x, a.y, b.x, b.y);
-
-        auto rectMin = [&](const RectI& r) { return ImVec2(a.x + static_cast<float>(r.x) * fit.scale, a.y + static_cast<float>(r.y) * fit.scale); };
-        auto rectMax = [&](const RectI& r) { return ImVec2(a.x + static_cast<float>(r.x + r.w) * fit.scale, a.y + static_cast<float>(r.y + r.h) * fit.scale); };
-
-        MappingSelection& sel = ctx.mapping;
-        Slice* selected = selectedSlice(ctx);
-        const ImVec2 mouse = ImGui::GetMousePos();
-
-        // --- Interação ---
-        if (ImGui::IsItemActivated()) {
-            g_inDrag = {};
-            bool grabbed = false;
-            if (selected) {
-                const int h = hitHandle(rectMin(selected->input), rectMax(selected->input), mouse);
-                if (h >= 0) {
-                    g_inDrag = {DragMode::Resize, h, mouse, selected->input};
-                    grabbed = true;
-                }
-            }
-            if (!grabbed) {
-                int hit = -1;
-                auto inside = [&](int idx) {
-                    const RectI& r = screen->slices[static_cast<size_t>(idx)].input;
-                    const ImVec2 lo = rectMin(r), hi = rectMax(r);
-                    return mouse.x >= lo.x && mouse.x <= hi.x && mouse.y >= lo.y && mouse.y <= hi.y;
-                };
-                if (selected && sel.slice >= 0 && inside(sel.slice))
-                    hit = sel.slice;
-                for (int j = static_cast<int>(screen->slices.size()) - 1; hit < 0 && j >= 0; --j)
-                    if (inside(j))
-                        hit = j;
-                if (hit >= 0) {
-                    sel.slice = hit;
-                    sel.corner = -1;
-                    selected = &screen->slices[static_cast<size_t>(hit)];
-                    g_inDrag = {DragMode::Move, -1, mouse, selected->input};
-                }
-            }
-        }
-        if (active && g_inDrag.mode != DragMode::None && selected) {
-            const int dx = static_cast<int>(std::lround((mouse.x - g_inDrag.startMouse.x) / fit.scale));
-            const int dy = static_cast<int>(std::lround((mouse.y - g_inDrag.startMouse.y) / fit.scale));
-            const RectI& r0 = g_inDrag.startRect;
-            RectI r = r0;
-            if (g_inDrag.mode == DragMode::Move) {
-                r.x = std::clamp(r0.x + dx, 0, cw - r0.w);
-                r.y = std::clamp(r0.y + dy, 0, ch - r0.h);
-            } else {
-                int x0 = r0.x, x1 = r0.x + r0.w, y0 = r0.y, y1 = r0.y + r0.h;
-                if (handleLeft(g_inDrag.handle)) x0 = std::clamp(r0.x + dx, 0, x1 - 1);
-                if (handleRight(g_inDrag.handle)) x1 = std::clamp(r0.x + r0.w + dx, x0 + 1, cw);
-                if (handleTop(g_inDrag.handle)) y0 = std::clamp(r0.y + dy, 0, y1 - 1);
-                if (handleBottom(g_inDrag.handle)) y1 = std::clamp(r0.y + r0.h + dy, y0 + 1, ch);
-                r = {x0, y0, x1 - x0, y1 - y0};
-            }
-            selected->input = r;
-        }
-        if (!active)
-            g_inDrag.mode = DragMode::None;
-
-        // Cursor de redimensionar nas alças
-        if (selected && (hovered || active)) {
-            const int h = active && g_inDrag.mode == DragMode::Resize ? g_inDrag.handle
-                          : hitHandle(rectMin(selected->input), rectMax(selected->input), mouse);
-            if (h >= 0)
-                ImGui::SetMouseCursor(handleCursor(h));
-        }
-
-        // Setas movem o retângulo (1 px; Shift = 10 px)
-        if (selected && (hovered || ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))) {
-            int dx = 0, dy = 0;
-            if (arrowDelta(dx, dy)) {
-                selected->input.x += dx;
-                selected->input.y += dy;
-                clampRectToCanvas(selected->input, cw, ch);
-            }
-        }
-
-        // --- Desenho: cinza para os demais, vermelho para o selecionado ---
-        ImFont* body = fonts().body;
-        const float line1 = std::max(1.0f, dp(1.5f));
-        const float line2 = std::max(1.0f, dp(2.0f));
-        for (int j = 0; j < static_cast<int>(screen->slices.size()); ++j) {
-            const Slice& sl = screen->slices[static_cast<size_t>(j)];
-            if (j == sel.slice)
-                continue;
-            const ImVec2 lo = rectMin(sl.input), hi = rectMax(sl.input);
-            dl->AddRectFilled(lo, hi, color(theme::kText, 0.05f));
-            dl->AddRect(lo, hi, color(theme::kTextDim, sl.enabled ? 0.9f : 0.4f), 0.0f, 0, line1);
-            dl->PushClipRect(lo, hi, true);
-            dl->AddText(body, fontPx(body), ImVec2(lo.x + dp(6.0f), lo.y + dp(4.0f)), color(theme::kText, 0.8f),
-                        sl.name.c_str());
-            dl->PopClipRect();
-        }
-        if (selected) {
-            const ImVec2 lo = rectMin(selected->input), hi = rectMax(selected->input);
-            dl->AddRectFilled(lo, hi, color(theme::kAccent, 0.14f));
-            dl->AddRect(lo, hi, color(theme::kAccent), 0.0f, 0, line2);
-            dl->PushClipRect(lo, hi, true);
-            dl->AddText(body, fontPx(body), ImVec2(lo.x + dp(6.0f), lo.y + dp(4.0f)), color(theme::kText), selected->name.c_str());
-            dl->PopClipRect();
-            for (int h = 0; h < 8; ++h) {
-                const ImVec2 p = handlePos(lo, hi, h);
-                const float hs = dp(4.0f);
-                dl->AddRectFilled(ImVec2(p.x - hs, p.y - hs), ImVec2(p.x + hs, p.y + hs), color(theme::kText));
-                dl->AddRect(ImVec2(p.x - hs, p.y - hs), ImVec2(p.x + hs, p.y + hs), color(theme::kAccent), 0.0f, 0, line1);
-            }
-        }
-
-        if (selected)
-            caption("%s  |  entrada x=%d y=%d  %dx%d  |  canvas %dx%d", selected->name.c_str(), selected->input.x,
-                    selected->input.y, selected->input.w, selected->input.h, cw, ch);
-        else
-            caption("canvas %dx%d", cw, ch);
-    } else if (!screen) {
-        ImGui::TextColored(theme::kTextDim, "Crie uma tela na Lista.");
-    }
-
-    endPanel();
-    ImGui::PopStyleVar();
+    drawMapView(ctx, MapViewKind::Input);
 }
 
 void drawMappingOutputPanel(PanelContext& ctx)
 {
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padding(), padding()));
-    beginPanel(panel::kMapOutput);
-
-    Screen* screen = selectedScreen(ctx);
-    const float lineH = ImGui::GetTextLineHeightWithSpacing();
-    FitRect fit;
-    if (screen && fitImage(static_cast<float>(screen->width) / static_cast<float>(screen->height), dp(16.0f), lineH, fit,
-                           screen->width)) {
-        ImGui::SetCursorScreenPos(ImVec2(fit.min.x - dp(16.0f), fit.min.y - dp(16.0f)));
-        ImGui::InvisibleButton("##saida", ImVec2(fit.size.x + dp(32.0f), fit.size.y + dp(32.0f)));
-        ownArrowKeys();
-        const bool hovered = ImGui::IsItemHovered();
-        const bool active = ImGui::IsItemActive();
-        const ImVec2 a = fit.min;
-        const ImVec2 b(a.x + fit.size.x, a.y + fit.size.y);
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-
-        ScreenView view;
-        if (ctx.outputRenderer.screenView(screen->id, view))
-            dl->AddImage(static_cast<ImTextureID>(view.texture), a, b, ImVec2(0, 1), ImVec2(1, 0));
-        else
-            dl->AddRectFilled(a, b, color(theme::kBackground));
-        dl->AddRect(a, b, color(theme::kBorder));
-        qa::noteRect("saida:imagem", a.x, a.y, b.x, b.y);
-
-        auto toScreen = [&](Point2 p) { return ImVec2(a.x + p.x * fit.scale, a.y + p.y * fit.scale); };
-        auto toPixels = [&](ImVec2 m) { return Point2{(m.x - a.x) / fit.scale, (m.y - a.y) / fit.scale}; };
-
-        MappingSelection& sel = ctx.mapping;
-        Slice* selected = selectedSlice(ctx);
-        const ImVec2 mouse = ImGui::GetMousePos();
-
-        auto hitCorner = [&](const Slice& sl) {
-            int best = -1;
-            float bestDist = handleRadius() + dp(4.0f);
-            for (int c = 0; c < 4; ++c) {
-                const float d = distance(toScreen(sl.corners[c]), mouse);
-                if (d < bestDist) {
-                    bestDist = d;
-                    best = c;
-                }
-            }
-            return best;
-        };
-
-        if (ImGui::IsItemActivated()) {
-            g_outDrag = {};
-            bool grabbed = false;
-            if (selected) {
-                const int c = hitCorner(*selected);
-                if (c >= 0) {
-                    sel.corner = c;
-                    g_outDrag.mode = QuadDrag::Corner;
-                    grabbed = true;
-                } else if (pointInQuad(selected->corners, toPixels(mouse))) {
-                    g_outDrag.mode = QuadDrag::Move;
-                    grabbed = true;
-                }
-            }
-            if (!grabbed) {
-                for (int j = static_cast<int>(screen->slices.size()) - 1; j >= 0; --j) {
-                    Slice& sl = screen->slices[static_cast<size_t>(j)];
-                    if (pointInQuad(sl.corners, toPixels(mouse))) {
-                        sel.slice = j;
-                        sel.corner = -1;
-                        selected = &sl;
-                        g_outDrag.mode = QuadDrag::Move;
-                        break;
-                    }
-                }
-            }
-            if (selected) {
-                g_outDrag.startMouse = mouse;
-                std::copy(selected->corners, selected->corners + 4, g_outDrag.startCorners);
-            }
-        }
-        if (active && selected && g_outDrag.mode != QuadDrag::None) {
-            if (g_outDrag.mode == QuadDrag::Corner && sel.corner >= 0) {
-                Point2 p = toPixels(mouse);
-                p.x = std::round(p.x);
-                p.y = std::round(p.y);
-                clampCorner(p, *screen);
-                selected->corners[sel.corner] = p;
-            } else if (g_outDrag.mode == QuadDrag::Move) {
-                const float dx = std::round((mouse.x - g_outDrag.startMouse.x) / fit.scale);
-                const float dy = std::round((mouse.y - g_outDrag.startMouse.y) / fit.scale);
-                for (int c = 0; c < 4; ++c) {
-                    Point2 p{g_outDrag.startCorners[c].x + dx, g_outDrag.startCorners[c].y + dy};
-                    clampCorner(p, *screen);
-                    selected->corners[c] = p;
-                }
-            }
-        }
-        if (!active)
-            g_outDrag.mode = QuadDrag::None;
-
-        if (selected && (hovered || active) && hitCorner(*selected) >= 0)
-            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-
-        // Setas: o canto selecionado, ou o quad inteiro se nenhum canto estiver selecionado
-        if (selected && (hovered || ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))) {
-            int dx = 0, dy = 0;
-            if (arrowDelta(dx, dy)) {
-                for (int c = 0; c < 4; ++c) {
-                    if (sel.corner >= 0 && c != sel.corner)
-                        continue;
-                    selected->corners[c].x += static_cast<float>(dx);
-                    selected->corners[c].y += static_cast<float>(dy);
-                    clampCorner(selected->corners[c], *screen);
-                }
-            }
-        }
-
-        // Quads: cinza nos demais, vermelho no selecionado
-        for (int j = 0; j < static_cast<int>(screen->slices.size()); ++j) {
-            if (j == sel.slice)
-                continue;
-            const Slice& sl = screen->slices[static_cast<size_t>(j)];
-            ImVec2 pts[4];
-            for (int c = 0; c < 4; ++c)
-                pts[c] = toScreen(sl.corners[c]);
-            dl->AddPolyline(pts, 4, color(theme::kTextDim, sl.enabled ? 0.9f : 0.4f), ImDrawFlags_Closed,
-                            std::max(1.0f, dp(1.5f)));
-            ImFont* body = fonts().body;
-            dl->AddText(body, fontPx(body), ImVec2(pts[0].x + dp(6.0f), pts[0].y + dp(4.0f)), color(theme::kText, 0.8f),
-                        sl.name.c_str());
-        }
-        if (selected) {
-            ImVec2 pts[4];
-            for (int c = 0; c < 4; ++c)
-                pts[c] = toScreen(selected->corners[c]);
-            dl->AddPolyline(pts, 4, color(theme::kAccent), ImDrawFlags_Closed, std::max(1.0f, dp(2.0f)));
-            for (int c = 0; c < 4; ++c) {
-                const bool on = sel.corner == c;
-                dl->AddCircleFilled(pts[c], dp(6.0f), on ? color(theme::kAccent) : color(theme::kText));
-                dl->AddCircle(pts[c], dp(6.0f), color(theme::kAccent), 0, std::max(1.0f, dp(1.5f)));
-            }
-        }
-
-        const char* tag = screen->kind == OutputKind::Monitor ? screen->monitorName.c_str() : outputKindName(screen->kind);
-        caption("%s  |  %dx%d  |  %s", screen->name.c_str(), screen->width, screen->height, tag);
-    } else if (!screen) {
-        ImGui::TextColored(theme::kTextDim, "Crie uma tela na Lista.");
-    }
-
-    endPanel();
-    ImGui::PopStyleVar();
+    drawMapView(ctx, MapViewKind::Output);
 }
 
 void drawMappingPropertiesPanel(PanelContext& ctx)

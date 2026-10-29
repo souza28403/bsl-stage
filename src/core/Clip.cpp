@@ -49,12 +49,14 @@ bool Clip::isLive() const
 
 bool Clip::isRemote() const
 {
-    return (type == Type::File && media::isRemoteKind(kind)) || generatorId == kWebUrlId;
+    return (type == Type::File && media::isRemoteKind(kind)) || generatorId == kWebUrlId ||
+           generatorId == kBslWebBackgroundsId || generatorId == kBslWebMotionId || generatorId == kBslPptManagerId;
 }
 
 bool Clip::isWeb() const
 {
-    return (type == Type::File && kind == media::MediaKind::Web) || generatorId == kWebUrlId;
+    return (type == Type::File && kind == media::MediaKind::Web) || generatorId == kWebUrlId ||
+           generatorId == kBslWebBackgroundsId || generatorId == kBslWebMotionId;
 }
 
 bool Clip::isPaged() const
@@ -98,7 +100,8 @@ void Clip::setParam(const std::string& id, media::Json value)
 
 Clip Clip::fromId(const std::string& idOrPath)
 {
-    if (idOrPath.rfind("gen:", 0) == 0)
+    if (idOrPath.rfind("gen:", 0) == 0 || isIsfGeneratorId(idOrPath) || isFfglGeneratorId(idOrPath) ||
+        isBslGeneratorId(idOrPath))
         return generator(idOrPath);
     return fromFile(std::filesystem::path(std::u8string(idOrPath.begin(), idOrPath.end())));
 }
