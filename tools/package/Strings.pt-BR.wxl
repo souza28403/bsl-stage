@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WixLocalization Culture="pt-BR" xmlns="http://wixtoolset.org/schemas/v4/wxl">
+  <String Id="SummaryDescription" Value="Instalador do BSL Stage, software de VJ da BSL Light" />
+  <String Id="DowngradeError" Value="Já existe uma versão mais nova do BSL Stage instalada neste computador. Para instalar esta versão, desinstale a atual antes pelo Painel de Controle (Aplicativos instalados)." />
+  <String Id="ShortcutDescription" Value="BSL Stage, software de VJ da BSL Light" />
+  <String Id="ProjectFileDescription" Value="Projeto do BSL Stage" />
+  <String Id="OpenVerb" Value="Abrir" />
+  <String Id="LicenseAgreementDlgTitle" Value="{\WixUI_Font_Title}Aviso e licença" />
+  <String Id="LicenseAgreementDlgDescription" Value="Leia o aviso e a licença do programa antes de continuar" />
+  <String Id="LicenseAgreementDlgLicenseAcceptedCheckBox" Value="Li o aviso e aceito os termos da licença" />
+  <String Id="OptionsDlgTitleBold" Value="{\WixUI_Font_Title}Atalhos" />
+  <String Id="OptionsDlgDescription" Value="Escolha onde criar os atalhos do programa." />
+  <String Id="OptionsDlgDesktopShortcut" Value="Criar um atalho na Área de Trabalho" />
+  <String Id="OptionsDlgStartMenuNote" Value="O atalho no Menu Iniciar é sempre criado. Os arquivos de projeto .bslstage serão associados ao BSL Stage, e seus projetos e configurações nunca são apagados ao desinstalar." />
+</WixLocalization>

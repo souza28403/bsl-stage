@@ -747,6 +747,7 @@ void App::setupUpdates()
 {
     const std::string repo = BSLSTAGE_GITHUB_REPO;
     updates_.configure(BSLSTAGE_VERSION, repo, paths::localDataDir() / L"updates");
+    updates_.setInstalledByMsi(update::installedByMsi());
     const bool offlineRun = qaOn_ || !options_.screenshotPath.empty() || !options_.screenshotOutputPath.empty();
     bool fake = false;
     if (offlineRun) {

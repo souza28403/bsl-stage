@@ -122,8 +122,35 @@ int pickNewest(const std::vector<Release>& releases, bool includeBeta)
     return best;
 }
 
-AssetChoice chooseAsset(const Release& release)
+AssetChoice chooseAsset(const Release& release, bool installedByMsi)
 {
+    if (installedByMsi) {
+        const std::string exactMsi = lower("BSL-Stage-" + (release.version.valid ? release.version.toString() : release.tag) + "-win64.msi");
+        const Asset* bestMsi = nullptr;
+        int bestMsiScore = 0;
+        for (const Asset& a : release.assets) {
+            const std::string n = lower(a.name);
+            if (!endsWith(n, ".msi"))
+                continue;
+            int score = 10;
+            if (contains(n, "source") || contains(n, "src"))
+                score = 0;
+            else if (n == exactMsi)
+                score = 100;
+            else if (contains(n, "win64") || contains(n, "x64"))
+                score = 60;
+            else if (contains(n, "bsl"))
+                score = 20;
+            if (score > bestMsiScore) {
+                bestMsi = &a;
+                bestMsiScore = score;
+            }
+        }
+        if (bestMsi)
+            return {AssetKind::Msi, bestMsi};
+        return {};
+    }
+
     const std::string exact = lower("BSL-Stage-" + (release.version.valid ? release.version.toString() : release.tag) + "-win64.zip");
     const Asset* best = nullptr;
     int bestScore = 0;

@@ -182,6 +182,21 @@ void testRelease()
     CHECK(parseRelease("{\"tag_name\":\"v3.0.0\",\"assets\":[{\"name\":\"BSL-Stage-3.0.0-src.zip\",\"browser_download_url\":\"https://github.com/x/y/t.zip\"}]}", onlySrc));
     CHECK(chooseAsset(onlySrc).kind == AssetKind::None);
 
+    Release withMsi;
+    CHECK(parseRelease("{\"tag_name\":\"v1.4.0\",\"assets\":["
+                       "{\"name\":\"BSL-Stage-1.4.0-win64.zip\",\"browser_download_url\":\"https://github.com/x/y/z.zip\"},"
+                       "{\"name\":\"BSL-Stage-1.4.0-src.msi\",\"browser_download_url\":\"https://github.com/x/y/s.msi\"},"
+                       "{\"name\":\"BSL-Stage-1.4.0-win64.msi\",\"browser_download_url\":\"https://github.com/x/y/m.msi\"}]}", withMsi));
+    const AssetChoice cz = chooseAsset(withMsi, false);
+    CHECK(cz.kind == AssetKind::Zip && cz.asset && cz.asset->name == "BSL-Stage-1.4.0-win64.zip");
+    const AssetChoice cm = chooseAsset(withMsi, true);
+    CHECK(cm.kind == AssetKind::Msi && cm.asset && cm.asset->name == "BSL-Stage-1.4.0-win64.msi");
+    CHECK(chooseAsset(r, true).kind == AssetKind::None);
+    Release onlyMsi;
+    CHECK(parseRelease("{\"tag_name\":\"v1.4.0\",\"assets\":[{\"name\":\"BSL-Stage-1.4.0-win64.msi\",\"browser_download_url\":\"https://github.com/x/y/m.msi\"}]}", onlyMsi));
+    CHECK(chooseAsset(onlyMsi, false).kind == AssetKind::None);
+    CHECK(chooseAsset(onlyMsi, true).kind == AssetKind::Msi);
+
     std::vector<Release> list;
     CHECK(parseReleaseList(readFile(fixture("release-list.json")), list, &err));
     CHECK(list.size() == 5);
@@ -711,6 +726,76 @@ void testService(const fs::path& root)
         sv.startDownload();
         CHECK(waitFor([&] { return !sv.busy(); }));
         CHECK(sv.status().phase == Phase::Available && sv.status().error.find("confiável") != std::string::npos);
+    }
+
+    {
+        const std::string msiBytes = std::string("\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1", 8) + std::string(5000, 'm');
+        const fs::path msiFile = root / "fake-msi" / "BSL-Stage-1.2.0-win64.msi";
+        writeFile(msiFile, msiBytes);
+        const std::string msiName = "BSL-Stage-1.2.0-win64.msi";
+        auto makeHttp = [&](const std::string& body, const std::string& sums) {
+            auto http = std::make_unique<FakeHttp>();
+            http->addBody(TestRepo::api("/latest"),
+                          "{\"tag_name\":\"v1.2.0\",\"assets\":["
+                          "{\"name\":\"BSL-Stage-1.2.0-win64.zip\",\"size\":10,\"browser_download_url\":\"" + TestRepo::asset("BSL-Stage-1.2.0-win64.zip") + "\"},"
+                          "{\"name\":\"" + msiName + "\",\"size\":" + std::to_string(body.size()) + ",\"browser_download_url\":\"" + TestRepo::asset(msiName.c_str()) + "\"},"
+                          "{\"name\":\"SHA256SUMS.txt\",\"size\":200,\"browser_download_url\":\"" + TestRepo::asset("SHA256SUMS.txt") + "\"}]}");
+            http->addFile(TestRepo::asset("BSL-Stage-1.2.0-win64.zip"), fixture("BSL-Stage-1.2.0-win64.zip"));
+            writeFile(root / "fake-msi" / "body.bin", body);
+            http->addFile(TestRepo::asset(msiName.c_str()), root / "fake-msi" / "body.bin");
+            http->addBody(TestRepo::asset("SHA256SUMS.txt"), sums);
+            return http;
+        };
+        const std::string goodSums = sha256Hex(msiBytes) + "  " + msiName + "\n";
+
+        Service sv;
+        sv.configure("1.1.0", TestRepo::kRepo, root / "svc-msi1");
+        sv.setInstalledByMsi(true);
+        sv.setHttp(makeHttp(msiBytes, goodSums));
+        sv.startCheck(prefs, true);
+        CHECK(waitFor([&] { return sv.status().hasUpdate && !sv.busy(); }));
+        CHECK(sv.status().assetKind == AssetKind::Msi && sv.status().assetName == msiName);
+        sv.startDownload();
+        CHECK(waitFor([&] { return sv.status().phase == Phase::Ready; }));
+        CHECK(sv.status().checksumVerified && sv.status().stagedFile.filename() == msiName && sv.readyToInstall());
+        CHECK(readFile(root / "svc-msi1" / "pending.json").find("\"msi\"") != std::string::npos);
+        Service again;
+        again.configure("1.1.0", TestRepo::kRepo, root / "svc-msi1");
+        again.setInstalledByMsi(true);
+        again.loadPersistedState(prefs);
+        CHECK(again.status().phase == Phase::Ready && again.status().assetKind == AssetKind::Msi);
+        Service wrongMode;
+        wrongMode.configure("1.1.0", TestRepo::kRepo, root / "svc-msi1");
+        wrongMode.loadPersistedState(prefs);
+        CHECK(wrongMode.status().phase == Phase::Available && !wrongMode.readyToInstall());
+
+        Service bad;
+        bad.configure("1.1.0", TestRepo::kRepo, root / "svc-msi2");
+        bad.setInstalledByMsi(true);
+        bad.setHttp(makeHttp(msiBytes, std::string(64, 'a') + "  " + msiName + "\n"));
+        bad.startCheck(prefs, true);
+        CHECK(waitFor([&] { return bad.status().hasUpdate && !bad.busy(); }));
+        bad.startDownload();
+        CHECK(waitFor([&] { return !bad.busy(); }));
+        CHECK(bad.status().phase == Phase::Available && bad.status().error.find("SHA-256") != std::string::npos && !bad.readyToInstall());
+
+        const std::string notMsi(5000, 'x');
+        Service fake;
+        fake.configure("1.1.0", TestRepo::kRepo, root / "svc-msi3");
+        fake.setInstalledByMsi(true);
+        fake.setHttp(makeHttp(notMsi, sha256Hex(notMsi) + "  " + msiName + "\n"));
+        fake.startCheck(prefs, true);
+        CHECK(waitFor([&] { return fake.status().hasUpdate && !fake.busy(); }));
+        fake.startDownload();
+        CHECK(waitFor([&] { return !fake.busy(); }));
+        CHECK(fake.status().phase == Phase::Available && fake.status().error.find(".msi") != std::string::npos && !fake.readyToInstall());
+
+        Service zipMode;
+        zipMode.configure("1.1.0", TestRepo::kRepo, root / "svc-msi4");
+        zipMode.setHttp(makeHttp(msiBytes, goodSums));
+        zipMode.startCheck(prefs, true);
+        CHECK(waitFor([&] { return zipMode.status().hasUpdate && !zipMode.busy(); }));
+        CHECK(zipMode.status().assetKind == AssetKind::Zip && zipMode.status().assetName == "BSL-Stage-1.2.0-win64.zip");
     }
 
     {

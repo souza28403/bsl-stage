@@ -13,6 +13,15 @@ include(FetchContent)
 set(BSLSTAGE_GITHUB_REPO "bsl-light/bsl-stage" CACHE STRING "Repositorio do GitHub (dono/nome) usado nas atualizacoes e nos reportes")
 configure_file(src/app/Version.h.in "${CMAKE_BINARY_DIR}/generated/app/Version.h" @ONLY)
 
+set(BSL_ICON_RC "${CMAKE_SOURCE_DIR}/assets/icons/BSLStage.ico")
+function(bsl_add_version_resource target description internal_name)
+    set(BSL_RC_DESCRIPTION "${description}")
+    set(BSL_RC_INTERNAL "${internal_name}")
+    set(_rc "${CMAKE_BINARY_DIR}/generated/app/${internal_name}.rc")
+    configure_file("${CMAKE_SOURCE_DIR}/src/app/BSLStage.rc.in" "${_rc}" @ONLY)
+    target_sources(${target} PRIVATE "${_rc}")
+endfunction()
+
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -396,10 +405,12 @@ target_include_directories(BSLStage PRIVATE src)
 target_compile_definitions(BSLStage PRIVATE GLFW_INCLUDE_NONE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_link_libraries(BSLStage PRIVATE bslsources imgui glfw nlohmann_json::nlohmann_json bslmedia_cpu spoutgl shell32 ole32 uuid winmm psapi)
 add_dependencies(BSLStage bslstage_worker bslstage_updater)
+bsl_add_version_resource(BSLStage "BSL Stage" BSLStage)
 
 add_executable(bslstage_updater WIN32 src/update/updater_main.cpp)
 target_link_libraries(bslstage_updater PRIVATE bslupdate_core comctl32)
 target_link_options(bslstage_updater PRIVATE /ENTRY:wWinMainCRTStartup)
+bsl_add_version_resource(bslstage_updater "BSL Stage - Atualizador" bslstage_updater)
 
 set(BSL_CEF_DIR "C:/Users/GABRIEL - BSL LIGHT/Desktop/ffgl-master/deps/cef" CACHE PATH
     "Distribuicao binaria do CEF para a fonte Web. Vazio ou inexistente = Web desabilitada")
@@ -429,6 +440,7 @@ set(BSL_WORKER_SOURCES
     src/worker/OfficeConverter.cpp
     src/worker/FfglScan.cpp)
 add_executable(bslstage_worker WIN32 ${BSL_WORKER_SOURCES})
+bsl_add_version_resource(bslstage_worker "BSL Stage - Processo auxiliar" bslstage_worker)
 target_include_directories(bslstage_worker PRIVATE src)
 target_include_directories(bslstage_worker SYSTEM PRIVATE "${BSL_PDFIUM_ROOT}/include")
 target_compile_definitions(bslstage_worker PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)

@@ -59,40 +59,30 @@ jobs:
         run: |
           $version = '${{ steps.ver.outputs.version }}'
           $name = "BSL-Stage-$version-win64"
-          $rel = 'build/Release'
-          $stage = "dist/$name"
-          New-Item -ItemType Directory -Force $stage | Out-Null
-          foreach ($exe in 'BSLStage.exe', 'bslstage_worker.exe', 'bslstage_updater.exe', 'bslstage_isfcheck.exe') {
-            if (-not (Test-Path "$rel/$exe")) { throw "Faltou $exe em $rel" }
-            Copy-Item "$rel/$exe" $stage
-          }
-          Copy-Item "$rel/*.dll" $stage
-          Copy-Item "$rel/assets" "$stage/assets" -Recurse
-          if (Test-Path "$rel/cef") {
-            Copy-Item "$rel/cef" "$stage/cef" -Recurse
-          } else {
-            Write-Warning "Sem a pasta cef: este pacote NÃO traz a fonte Web (CEF). Veja docs/RELEASE.md."
-          }
-          Copy-Item LICENSE, README.md, THIRD-PARTY-NOTICES.md, PRIVACIDADE.md, TERMOS-DE-USO.md $stage
-          Copy-Item licenses "$stage/licenses" -Recurse
-          if (Test-Path "$rel/licenses/cef-CREDITS.html") {
-            Copy-Item "$rel/licenses/cef-CREDITS.html" "$stage/licenses"
-          }
-          Copy-Item docs/PATENTES-E-LICENCAS.md $stage
-          Copy-Item docs/plugins "$stage/docs/plugins" -Recurse
-          Copy-Item skills "$stage/skills" -Recurse
-          Copy-Item AGENTS.md $stage
-          foreach ($doc in 'LICENSE', 'THIRD-PARTY-NOTICES.md', 'PRIVACIDADE.md', 'TERMOS-DE-USO.md') {
-            if (-not (Test-Path "$stage/$doc")) { throw "pacote sem $doc" }
-          }
-          if (-not (Get-ChildItem "$stage/licenses" -File)) { throw "pacote sem os textos de licenças (licenses/)" }
-          if (-not (Test-Path "$stage/BSLStage.exe")) { throw "pacote sem BSLStage.exe" }
+          & ./tools/package/stage-dist.ps1 -Destination "dist/$name" -BuildDir 'build/Release'
           New-Item -ItemType Directory -Force out | Out-Null
           Compress-Archive -Path "dist/$name" -DestinationPath "out/$name.zip" -CompressionLevel Optimal
-          $hash = (Get-FileHash "out/$name.zip" -Algorithm SHA256).Hash.ToLower()
-          [System.IO.File]::WriteAllText("$PWD/out/SHA256SUMS.txt", "$hash  $name.zip`n", (New-Object System.Text.UTF8Encoding $false))
-          Get-Content out/SHA256SUMS.txt
           "zip=out/$name.zip" >> $env:GITHUB_OUTPUT
+
+      - name: Gerar o instalador (.msi)
+        id: msi
+        shell: pwsh
+        run: |
+          $version = '${{ steps.ver.outputs.version }}'
+          $name = "BSL-Stage-$version-win64"
+          & ./tools/package/build-msi.ps1 -Version $version -DistDir "dist/$name" -Repo '${{ github.repository }}'
+          if (-not (Test-Path "dist/$name.msi")) { throw "O instalador dist/$name.msi nao foi gerado" }
+          Copy-Item "dist/$name.msi" "out/$name.msi"
+          "msi=out/$name.msi" >> $env:GITHUB_OUTPUT
+
+      - name: Somas de verificação (SHA256SUMS.txt)
+        shell: pwsh
+        run: |
+          $lines = foreach ($f in (Get-ChildItem out -File | Where-Object { $_.Extension -in '.zip', '.msi' } | Sort-Object Name)) {
+            "$((Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLower())  $($f.Name)"
+          }
+          [System.IO.File]::WriteAllText("$PWD/out/SHA256SUMS.txt", (($lines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding $false))
+          Get-Content out/SHA256SUMS.txt
 
       - name: Aviso sobre o FFmpeg
         shell: pwsh
@@ -105,6 +95,7 @@ jobs:
           name: BSL-Stage-${{ steps.ver.outputs.version }}-win64
           path: |
             out/*.zip
+            out/*.msi
             out/SHA256SUMS.txt
 
       - name: Criar o release como rascunho
@@ -113,7 +104,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $ghArgs = @($env:GITHUB_REF_NAME, '${{ steps.pack.outputs.zip }}', 'out/SHA256SUMS.txt',
+          $ghArgs = @($env:GITHUB_REF_NAME, '${{ steps.pack.outputs.zip }}', '${{ steps.msi.outputs.msi }}', 'out/SHA256SUMS.txt',
                     '--title', "BSL Stage ${{ steps.ver.outputs.version }}", '--generate-notes', '--draft')
           if ('${{ steps.ver.outputs.prerelease }}' -eq 'true') { $ghArgs += '--prerelease' }
           gh release create @ghArgs

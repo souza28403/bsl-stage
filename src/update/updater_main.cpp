@@ -20,7 +20,7 @@ namespace {
 struct Args
 {
     DWORD pid = 0;
-    fs::path work, zip, target, restart, installer;
+    fs::path work, zip, target, restart, installer, msi;
     std::string from, to;
 };
 
@@ -58,6 +58,7 @@ Args parseArgs()
         else if (k == L"--target" && hasValue) a.target = argv[++i];
         else if (k == L"--restart" && hasValue) a.restart = argv[++i];
         else if (k == L"--installer" && hasValue) a.installer = argv[++i];
+        else if (k == L"--msi" && hasValue) a.msi = argv[++i];
         else if (k == L"--from" && hasValue) a.from = toUtf8(argv[++i]);
         else if (k == L"--to" && hasValue) a.to = toUtf8(argv[++i]);
     }
@@ -153,6 +154,33 @@ int work(const Args& a)
     }
     Sleep(500);
 
+    if (!a.msi.empty()) {
+        const std::wstring params = L"/i \"" + a.msi.wstring() + L"\"";
+        SHELLEXECUTEINFOW sei{};
+        sei.cbSize = sizeof(sei);
+        sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+        sei.lpVerb = L"open";
+        sei.lpFile = L"msiexec.exe";
+        sei.lpParameters = params.c_str();
+        sei.nShow = SW_SHOWNORMAL;
+        if (!ShellExecuteExW(&sei) || !sei.hProcess) {
+            log("não foi possível iniciar o msiexec");
+            writeResult(a, false, false, "não foi possível iniciar o instalador");
+            return 1;
+        }
+        log("msiexec iniciado");
+        WaitForSingleObject(sei.hProcess, INFINITE);
+        DWORD exitCode = 1;
+        GetExitCodeProcess(sei.hProcess, &exitCode);
+        CloseHandle(sei.hProcess);
+        const bool ok = exitCode == 0 || exitCode == 3010;
+        log("msiexec terminou com o código " + std::to_string(exitCode));
+        writeResult(a, ok, false, ok ? "" : "a instalação foi cancelada ou não terminou (código " + std::to_string(exitCode) + ")");
+        if (!a.restart.empty())
+            launch(a.restart);
+        return ok ? 0 : 1;
+    }
+
     if (!a.installer.empty()) {
         const HINSTANCE r = ShellExecuteW(nullptr, L"open", a.installer.c_str(), nullptr, a.installer.parent_path().c_str(), SW_SHOWNORMAL);
         const bool ok = reinterpret_cast<INT_PTR>(r) > 32;
@@ -189,11 +217,12 @@ int work(const Args& a)
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int)
 {
     const Args a = parseArgs();
-    if (a.work.empty() || (a.zip.empty() && a.installer.empty()) || (a.installer.empty() && a.target.empty()))
+    if (a.work.empty() || (a.zip.empty() && a.installer.empty() && a.msi.empty())
+        || (a.installer.empty() && a.msi.empty() && a.target.empty()))
         return 2;
     std::error_code ec;
     fs::create_directories(a.work, ec);
-    HWND win = makeWindow(inst);
+    HWND win = a.msi.empty() ? makeWindow(inst) : nullptr;
 
     std::atomic<int> code{-1};
     std::thread worker([&] { code = work(a); });

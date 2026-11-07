@@ -1,0 +1,107 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="BSL Stage"
+           Manufacturer="BSL Light"
+           Version="$(var.MsiVersion)"
+           UpgradeCode="7C3F5E8A-4B2D-4F61-9A1E-2D6B8C0F4E73"
+           Language="1046"
+           Codepage="1252"
+           Scope="perMachine"
+           InstallerVersion="500"
+           Compressed="yes">
+
+    <SummaryInformation Description="!(loc.SummaryDescription)" Manufacturer="BSL Light" />
+
+    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="!(loc.DowngradeError)" />
+
+    <MediaTemplate EmbedCab="yes" CompressionLevel="$(var.Compression)" />
+
+    <Icon Id="AppIcon.ico" SourceFile="$(var.IconFile)" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
+    <Property Id="ARPHELPLINK" Value="$(var.RepoUrl)" />
+    <Property Id="ARPURLINFOABOUT" Value="$(var.RepoUrl)" />
+    <Property Id="ARPURLUPDATEINFO" Value="$(var.RepoUrl)/releases" />
+
+    <Property Id="DESKTOP_SHORTCUT" Value="1" />
+
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
+    <WixVariable Id="WixUIBannerBmp" Value="$(var.BannerBmp)" />
+    <WixVariable Id="WixUIDialogBmp" Value="$(var.DialogBmp)" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="BSL Stage" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+    <StandardDirectory Id="DesktopFolder" />
+
+    <Feature Id="Main" Title="BSL Stage" Level="1" AllowAbsent="no" ConfigurableDirectory="INSTALLFOLDER">
+      <ComponentGroupRef Id="MainExe" />
+      <ComponentGroupRef Id="DistFiles" />
+      <ComponentGroupRef Id="Registration" />
+    </Feature>
+
+    <UI Id="BslInstallUI">
+      <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+
+      <Dialog Id="OptionsDlg" Width="370" Height="270" Title="!(loc.InstallDirDlg_Title)">
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="!(loc.OptionsDlgDescription)" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Transparent="yes" NoPrefix="yes" Text="!(loc.OptionsDlgTitleBold)" />
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="373" Height="0" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="373" Height="0" />
+        <Control Id="DesktopShortcutCheck" Type="CheckBox" X="20" Y="62" Width="320" Height="18" Property="DESKTOP_SHORTCUT" CheckBoxValue="1" Text="!(loc.OptionsDlgDesktopShortcut)" />
+        <Control Id="StartMenuNote" Type="Text" X="20" Y="90" Width="320" Height="30" NoPrefix="yes" Text="!(loc.OptionsDlgStartMenuNote)" />
+      </Dialog>
+
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="OptionsDlg" Order="6" Condition="NOT Installed" />
+      <Publish Dialog="OptionsDlg" Control="Back" Event="NewDialog" Value="InstallDirDlg" />
+      <Publish Dialog="OptionsDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="OptionsDlg" Order="3" Condition="NOT Installed" />
+    </UI>
+  </Package>
+
+  <Fragment>
+    <ComponentGroup Id="MainExe" Directory="INSTALLFOLDER">
+      <Component Id="MainExeComponent" Guid="A3D6E1B2-5C47-4E89-8F10-6B2C9D7E4A15">
+        <File Id="BSLStageExe" Source="$(var.DistDir)\BSLStage.exe" KeyPath="yes">
+          <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="BSL Stage" Description="!(loc.ShortcutDescription)" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon.ico" Advertise="no" />
+        </File>
+        <File Id="AppIconFile" Source="$(var.IconFile)" Name="BSLStage.ico" />
+        <ProgId Id="BSLStage.Project" Description="!(loc.ProjectFileDescription)" Icon="AppIconFile" IconIndex="0">
+          <Extension Id="bslstage" ContentType="application/x-bslstage">
+            <Verb Id="open" Command="!(loc.OpenVerb)" TargetFile="BSLStageExe" Argument="&quot;%1&quot;" />
+          </Extension>
+        </ProgId>
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="DistFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.DistDir)\**">
+        <Exclude Files="$(var.DistDir)\BSLStage.exe" />
+      </Files>
+    </ComponentGroup>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="Registration" Directory="INSTALLFOLDER">
+      <Component Id="InstallMarker">
+        <RegistryKey Root="HKLM" Key="Software\BSL Light\BSL Stage">
+          <RegistryValue Name="InstalledBy" Type="string" Value="msi" KeyPath="yes" />
+          <RegistryValue Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" />
+          <RegistryValue Name="Version" Type="string" Value="$(var.MsiVersion)" />
+        </RegistryKey>
+      </Component>
+
+      <Component Id="DesktopShortcutComponent" Condition="DESKTOP_SHORTCUT = &quot;1&quot;">
+        <Shortcut Id="DesktopShortcut" Directory="DesktopFolder" Name="BSL Stage" Description="!(loc.ShortcutDescription)" Target="[INSTALLFOLDER]BSLStage.exe" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon.ico" />
+        <RegistryValue Root="HKLM" Key="Software\BSL Light\BSL Stage" Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>

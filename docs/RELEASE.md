@@ -35,6 +35,7 @@ Nomes que o programa espera nos arquivos do release:
 | Arquivo | Para quê |
 |---|---|
 | `BSL-Stage-<versão>-win64.zip` | o pacote (escolhido pelo nome; um `.zip` sem "src"/"source" no nome também serve). Pode haver uma pasta de topo (`BSL-Stage-1.2.0-win64/`) ou o `BSLStage.exe` na raiz |
+| `BSL-Stage-<versão>-win64.msi` | o instalador (ver `docs/instalador/COMO-GERAR-O-INSTALADOR.md`). É o que o programa baixa quando foi instalado por ele (marca `InstalledBy=msi` no registro); quem usa o `.zip` continua recebendo o `.zip` |
 | `SHA256SUMS.txt` | uma linha `<sha256>  <arquivo>` por arquivo. O programa confere o download contra ele; **sem esse arquivo, avisa e pede confirmação** |
 | `*Setup*.exe` / `*installer*.exe` | alternativa ao `.zip`: o programa baixa e executa o instalador quando o app fechar (sem backup: quem cuida é o instalador) |
 
@@ -48,18 +49,19 @@ Nomes que o programa espera nos arquivos do release:
   `docs/PATENTES-E-LICENCAS.md` recomenda, antes de distribuir publicamente, usar o decodificador do Windows para esses codecs e distribuir um
   FFmpeg compilado com `--disable-decoder=h264,hevc`. Isso ainda não foi feito, e é por esse motivo (além da revisão) que o release nasce como
   **rascunho** e o workflow imprime um aviso. Não publique para o público até decidir isso.
-- **Licenças, privacidade e termos no pacote.** Não há instalador (e não foi criado um): o `.zip` é o pacote, então os documentos vão dentro dele. O workflow
+- **Licenças, privacidade e termos no pacote.** Os documentos vão dentro do `.zip` e do `.msi` (os dois saem da mesma pasta, montada por
+  `tools/package/stage-dist.ps1`). A tela de licença do `.msi` vem de `docs/instalador/AVISO-INSTALADOR.md`. O workflow
   inclui `LICENSE`, `THIRD-PARTY-NOTICES.md`, `PRIVACIDADE.md`, `TERMOS-DE-USO.md`, a pasta `licenses/` (textos das licenças de terceiros, inclusive os do DirectML,
   do ONNX Runtime e do PDFium), `README.md` e `docs/PATENTES-E-LICENCAS.md`, e falha se algum faltar. O CMake também os copia para `build\Release`, de onde o programa
-  os lê (Ajuda > Licenças e avisos…). Se um dia houver instalador (`*Setup*.exe`), ele deve mostrar o `LICENSE` na tela de licença e instalar esses mesmos arquivos.
+  os lê (Ajuda > Licenças e avisos…). O `.msi` instala esses mesmos arquivos e junta o runtime do Visual C++ (app-local).
   Ao mudar uma dependência, atualize `THIRD-PARTY-NOTICES.md` e `licenses/` (o `bslstage_uitest` confere os nomes e as versões do `CMakeLists.txt`) e, se a
   licença, a privacidade ou os termos mudarem, suba `legal::kNoticeVersion` em `src/legal/Notices.h` (aparece no rodapé de Licenças e avisos).
 - **Pendências jurídicas.** `THIRD-PARTY-NOTICES.md` (seção "Pendências") e `TERMOS-DE-USO.md` listam o que precisa de decisão ou revisão de advogado antes da
   1.0: DirectML junto de um programa GPL, licença dos componentes do React Bits no bundle `assets/bsl/web_bg`, build do FFmpeg da BtbN (fixar, avisos das
   bibliotecas embutidas, H.264/HEVC), código-fonte do bundle web, política de marca e e-mail de contato. Resolva-as (ou decida publicar assim) antes de publicar o rascunho.
 - **NDI.** O runtime do NDI **não** é distribuído (o cliente instala o NDI Tools). Nada a fazer.
-- **Assinatura de código.** Os executáveis não são assinados: o Windows SmartScreen pode avisar na primeira execução. Assinar exige um
-  certificado (segredo) que não existe neste repositório.
+- **Assinatura de código.** O CI não assina (o certificado não está no repositório). A assinatura é local: `tools/package/build-msi.ps1 -Sign`
+  assina os executáveis e o `.msi`; o `.msi` assinado substitui o do rascunho (e o `SHA256SUMS.txt` deve ser atualizado). Sem assinatura, o SmartScreen pode avisar.
 - **Versão do Visual Studio do runner.** O preset `windows` usa "Visual Studio 17 2022". Se o `windows-latest` mudar de versão, troque o preset
   (`windows-vs2026` existe no `CMakePresets.json`) no passo "Configurar".
 
@@ -75,6 +77,10 @@ Nomes que o programa espera nos arquivos do release:
   `%LOCALAPPDATA%\BSL Stage\updates\backup\<versão>\`, troca só os arquivos que existem no pacote, **restaura tudo se algo falhar** e reabre o programa.
   Projetos (`.bslstage`), `settings.json`, `imgui.ini` e atalhos nunca são sobrescritos nem apagados. O registro fica em `updates\updater.log` e o
   resultado em `updates\last-result.json` (o programa mostra no log na abertura seguinte).
-- Instalado numa pasta protegida (ex.: `C:\Program Files`), o atualizador pede a elevação do Windows (UAC) no momento de instalar.
+- Instalado pelo `.msi` (marca `HKLM\Software\BSL Light\BSL Stage\InstalledBy=msi`), o programa **não** troca arquivos: ele baixa o asset `.msi` da release
+  (SHA-256 conferido), e quando o programa fecha o `bslstage_updater.exe` roda `msiexec /i <msi>` com a interface do instalador (o próprio Windows pede
+  a permissão de administrador) e reabre o programa se a instalação terminar. Se a release não trouxer `.msi`, o programa avisa e não baixa o `.zip`
+  (trocar arquivos em `Program Files` quebraria o reparo do MSI).
+- Instalado por `.zip` numa pasta protegida (ex.: `C:\Program Files`), o atualizador pede a elevação do Windows (UAC) no momento de instalar.
   Arquivos que existiam na versão antiga e não existem mais no pacote **permanecem** (nada é apagado).
 - Testar o fluxo sem GitHub: `BSLStage.exe --qa <pasta> --fake-release <pasta com release.json e os assets>` (ver `tools/uiqa/updshots.py`).

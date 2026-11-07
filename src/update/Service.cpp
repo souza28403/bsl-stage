@@ -10,7 +10,9 @@
 #include <shellapi.h>
 
 #include <algorithm>
+#include <cstring>
 #include <ctime>
+#include <cwchar>
 #include <fstream>
 #include <sstream>
 
@@ -57,6 +59,19 @@ std::string lowerStr(std::string s)
 
 }
 
+bool installedByMsi()
+{
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"Software\\BSL Light\\BSL Stage", 0, KEY_QUERY_VALUE | KEY_WOW64_64KEY, &key) != ERROR_SUCCESS)
+        return false;
+    wchar_t buf[32]{};
+    DWORD size = sizeof(buf) - sizeof(wchar_t);
+    DWORD type = 0;
+    const LONG r = RegQueryValueExW(key, L"InstalledBy", nullptr, &type, reinterpret_cast<LPBYTE>(buf), &size);
+    RegCloseKey(key);
+    return r == ERROR_SUCCESS && type == REG_SZ && _wcsicmp(buf, L"msi") == 0;
+}
+
 Service::Service() = default;
 
 Service::~Service()
@@ -99,7 +114,7 @@ void Service::adopt(const Release& release, const Prefs& prefs)
     (void)prefs;
     st_.release = release;
     st_.hasUpdate = true;
-    const AssetChoice c = chooseAsset(release);
+    const AssetChoice c = chooseAsset(release, installedByMsi_);
     st_.assetKind = c.kind;
     st_.assetName = c.asset ? c.asset->name : std::string();
     st_.assetSize = c.asset ? c.asset->size : 0;
@@ -138,7 +153,14 @@ void Service::loadPersistedState(const Prefs& prefs)
             st_.stagedFile = file;
             st_.checksumVerified = j.value("verified", false);
             st_.sha256 = j.value("sha256", "");
-            st_.assetKind = j.value("kind", "zip") == "installer" ? AssetKind::Installer : AssetKind::Zip;
+            const std::string kind = j.value("kind", "zip");
+            st_.assetKind = kind == "msi" ? AssetKind::Msi : kind == "installer" ? AssetKind::Installer : AssetKind::Zip;
+            if ((st_.assetKind == AssetKind::Msi) != installedByMsi_) {
+                st_.phase = Phase::Available;
+                st_.stagedFile.clear();
+                fs::remove(dir_ / L"pending.json", ec);
+                return;
+            }
             return;
         }
     } catch (const nlohmann::json::exception&) {
@@ -300,9 +322,10 @@ void Service::startDownload()
         if (st_.phase != Phase::Available || !st_.hasUpdate)
             return;
         rel = st_.release;
-        choice = chooseAsset(rel);
+        choice = chooseAsset(rel, installedByMsi_);
         if (!choice.asset) {
-            st_.error = "Esta versão não traz um arquivo para Windows. Abra a página da versão no GitHub.";
+            st_.error = installedByMsi_ ? "Esta versão não traz o instalador (.msi). Abra a página da versão no GitHub."
+                                        : "Esta versão não traz um arquivo para Windows. Abra a página da versão no GitHub.";
             return;
         }
         st_.phase = Phase::Downloading;
@@ -315,7 +338,7 @@ void Service::startDownload()
     cancel_ = false;
     worker_busy_ = true;
     worker_ = std::thread([this, rel = std::move(rel)]() mutable {
-        const AssetChoice c = chooseAsset(rel);
+        const AssetChoice c = chooseAsset(rel, installedByMsi_);
         runDownload(rel, c);
         worker_busy_ = false;
     });
@@ -414,6 +437,22 @@ void Service::runDownload(Release release, AssetChoice choice)
         }
     }
 
+    if (choice.kind == AssetKind::Msi) {
+        static const unsigned char kOle[8] = {0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1};
+        unsigned char head[8]{};
+        bool valid = false;
+        {
+            std::ifstream in(finalFile, std::ios::binary);
+            in.read(reinterpret_cast<char*>(head), sizeof(head));
+            valid = static_cast<bool>(in) && std::memcmp(head, kOle, sizeof(kOle)) == 0;
+        }
+        if (!valid) {
+            fs::remove(finalFile, ec);
+            setError("O arquivo baixado não parece um instalador do BSL Stage (.msi inválido).");
+            return;
+        }
+    }
+
     std::lock_guard lk(m_);
     st_.verifying = false;
     st_.sha256 = actual;
@@ -437,7 +476,7 @@ void Service::savePending(const Status& st)
     j["size"] = static_cast<int64_t>(fs::file_size(st.stagedFile, ec));
     j["sha256"] = st.sha256;
     j["verified"] = st.checksumVerified;
-    j["kind"] = st.assetKind == AssetKind::Installer ? "installer" : "zip";
+    j["kind"] = st.assetKind == AssetKind::Msi ? "msi" : st.assetKind == AssetKind::Installer ? "installer" : "zip";
     writeText(dir_ / L"pending.json", j.dump(2));
 }
 
@@ -528,7 +567,12 @@ bool Service::launchInstallerOnExit(bool restartAfter, std::string* error)
     std::wstring args = L"--pid " + pid + L" --work \"" + dir_.wstring() + L"\" --to " + fs::path(st.release.version.toString()).wstring();
     args += L" --from " + fs::path(currentText_).wstring();
     fs::path program;
-    if (st.assetKind == AssetKind::Installer) {
+    if (st.assetKind == AssetKind::Msi) {
+        args += L" --msi \"" + st.stagedFile.wstring() + L"\"";
+        if (restartAfter)
+            args += L" --restart \"" + exe.wstring() + L"\"";
+        program = appDir / L"bslstage_updater.exe";
+    } else if (st.assetKind == AssetKind::Installer) {
         args += L" --installer \"" + st.stagedFile.wstring() + L"\"";
         program = appDir / L"bslstage_updater.exe";
     } else {

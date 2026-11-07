@@ -38,7 +38,7 @@ bool parseReleaseList(std::string_view jsonText, std::vector<Release>& out, std:
 
 int pickNewest(const std::vector<Release>& releases, bool includeBeta);
 
-enum class AssetKind { None, Zip, Installer };
+enum class AssetKind { None, Zip, Installer, Msi };
 
 struct AssetChoice
 {
@@ -46,7 +46,7 @@ struct AssetChoice
     const Asset* asset = nullptr;
 };
 
-AssetChoice chooseAsset(const Release& release);
+AssetChoice chooseAsset(const Release& release, bool installedByMsi = false);
 const Asset* findChecksumsAsset(const Release& release);
 
 std::map<std::string, std::string> parseChecksums(std::string_view text);

@@ -63,6 +63,8 @@ struct CheckOutcome
     std::string error;
 };
 
+bool installedByMsi();
+
 class Service
 {
 public:
@@ -73,6 +75,8 @@ public:
 
     void configure(std::string currentVersion, std::string repo, std::filesystem::path updatesDir);
     void setHttp(std::unique_ptr<IHttp> http);
+    void setInstalledByMsi(bool on) { installedByMsi_ = on; }
+    bool installedByMsi() const { return installedByMsi_; }
     const SemVer& current() const { return current_; }
     const std::string& repo() const { return repo_; }
     const std::filesystem::path& updatesDir() const { return dir_; }
@@ -117,6 +121,7 @@ private:
     std::string repo_;
     SemVer current_;
     std::string currentText_;
+    std::atomic<bool> installedByMsi_{false};
 
     std::thread worker_;
     std::atomic<bool> worker_busy_{false};
