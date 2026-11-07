@@ -20,7 +20,7 @@ std::filesystem::path knownFolder(const KNOWNFOLDERID& id)
 
 std::filesystem::path g_appDataOverride;
 
-} // namespace
+}
 
 void setAppDataOverride(const std::filesystem::path& dir)
 {
@@ -69,19 +69,6 @@ std::filesystem::path pluginsDir()
     return documentsDir() / L"Plugins";
 }
 
-std::vector<std::filesystem::path> resolumeEffectDirs()
-{
-    std::vector<std::filesystem::path> out;
-    const std::filesystem::path docs = knownFolder(FOLDERID_Documents);
-    std::error_code ec;
-    for (const wchar_t* product : {L"Resolume Arena", L"Resolume Avenue"}) {
-        const std::filesystem::path dir = docs / product / L"Extra Effects";
-        if (std::filesystem::is_directory(dir, ec))
-            out.push_back(dir);
-    }
-    return out;
-}
-
 std::filesystem::path assetsDir()
 {
     static const std::filesystem::path cached = [] {
@@ -89,7 +76,6 @@ std::filesystem::path assetsDir()
         const DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
         std::filesystem::path dir = std::filesystem::path(std::wstring(buf, n)).parent_path();
         std::error_code ec;
-        // exe em build\Release -> raiz do projeto fica 2 niveis acima
         for (int i = 0; i < 4 && !dir.empty(); ++i) {
             if (std::filesystem::is_directory(dir / L"assets" / L"fonts", ec))
                 return dir / L"assets";
@@ -114,4 +100,4 @@ std::string toUtf8(const std::filesystem::path& p)
     return std::string(s.begin(), s.end());
 }
 
-} // namespace bsl::paths
+}

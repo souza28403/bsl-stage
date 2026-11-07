@@ -16,14 +16,13 @@ enum class LoopMode { Loop, Once, PingPong };
 
 enum class ClockEvent { None, Wrapped, Ended };
 
-// Relogio de transporte de um clip (posicao, velocidade, play/pause, modo de loop).
 struct ClipClock {
-    double duration = 0.0; // 0 = sem duracao (imagem estatica): o relogio nao anda
+    double duration = 0.0;
     double position = 0.0;
     double speed = 1.0;
     bool playing = true;
     LoopMode loop = LoopMode::Loop;
-    int dir = 1; // +1 / -1 (ping-pong)
+    int dir = 1;
 
     ClockEvent advance(double dt)
     {
@@ -64,9 +63,6 @@ struct ClipClock {
     }
 };
 
-// Fonte de midia no lado GPU. Convencao da textura devolvida por texture(): sempre RGBA8 de
-// alpha reta (nao premultiplicada), com v=0 na primeira linha (topo) da imagem.
-// Todos os metodos devem ser chamados na thread do contexto GL.
 class ISource {
 public:
     virtual ~ISource() = default;
@@ -75,7 +71,6 @@ public:
     virtual void close() = 0;
     virtual bool isOpen() const = 0;
 
-    // Avanca o relogio (dt em segundos reais, ja considerando speed/play/pause/loop) e atualiza a textura.
     virtual void update(double dt) = 0;
 
     virtual GLuint texture() const = 0;
@@ -83,12 +78,11 @@ public:
     virtual int height() const = 0;
     virtual bool hasAlpha() const = 0;
 
-    // --- Transporte ---
     double duration() const { return clock_.duration; }
     double position() const { return clock_.position; }
     double speed() const { return clock_.speed; }
     bool isPlaying() const { return clock_.playing; }
-    LoopMode loopMode() const { return clock_.loop; } // modo efetivo (ver supportsReverse)
+    LoopMode loopMode() const { return clock_.loop; }
 
     void seek(double seconds)
     {
@@ -109,13 +103,9 @@ public:
         clock_.dir = 1;
     }
 
-    // false: velocidade negativa e ping-pong nao sao suportados (ping-pong vira Loop).
     virtual bool supportsReverse() const { return true; }
 
-    // --- Parametros genericos (ver SourceParams.h) ---
-    // Lista de parametros que a fonte expoe; pode depender dos valores atuais (ex.: formatos do dispositivo).
     virtual std::vector<ParamDesc> paramDescs() const { return {}; }
-    // Os valores moram no Clip; a fonte recebe uma copia ao abrir (antes do open()) e a cada mudanca.
     void setParams(const ParamValues& values)
     {
         values_ = values;
@@ -123,7 +113,6 @@ public:
     }
     const ParamValues& paramValues() const { return values_; }
 
-    // Tamanho do canvas da composicao e tempo musical; a Composition repassa a cada quadro (so mudancas chamam os ganchos).
     void setCanvasSize(int w, int h)
     {
         const bool first = canvasW_ == 0 && canvasH_ == 0;
@@ -136,25 +125,20 @@ public:
     }
     void setTempo(double beat, float bpm) { onTempo(beat, bpm); }
 
-    // Parametros que a propria fonte mudou (ex.: gerador FFGL cujo plugin tem interface propria). A Composition chama
-    // a cada quadro; grava em 'values' so o que mudou e devolve true (a fonte ja sabe desses valores).
     virtual bool pollParamChanges(ParamValues& values)
     {
         (void)values;
         return false;
     }
 
-    // Fonte ao vivo (dispositivo/captura): exclusiva, a Previa nao abre uma segunda instancia.
     virtual bool isLive() const { return false; }
-    // Situacao para o ClipPanel (ex.: "Sem sinal"). Texto vazio = tudo certo.
     virtual SourceStatus status() const { return {}; }
 
 protected:
-    virtual void onSeek(double /*seconds*/) {}
+    virtual void onSeek(double ) {}
     virtual void onParamsChanged() {}
-    virtual void onCanvasResized(int /*w*/, int /*h*/) {}
-    virtual void onTempo(double /*beat*/, float /*bpm*/) {}
-    // Leitura tipada dos valores atuais, com o padrao dos descritores
+    virtual void onCanvasResized(int , int ) {}
+    virtual void onTempo(double , float ) {}
     ParamSet currentParams() const { return ParamSet(paramDescs(), values_); }
 
     ClipClock clock_;
@@ -162,4 +146,4 @@ protected:
     int canvasW_ = 0, canvasH_ = 0;
 };
 
-} // namespace bsl::media
+}

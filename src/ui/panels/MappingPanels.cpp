@@ -43,9 +43,6 @@ Slice* selectedSlice(PanelContext& ctx)
     return s && i >= 0 && i < static_cast<int>(s->slices.size()) ? &s->slices[static_cast<size_t>(i)] : nullptr;
 }
 
-// --------------------------------------------------------------------------------------------
-// Propriedades
-
 bool inputText(const char* id, std::string& value)
 {
     char buf[256];
@@ -58,8 +55,6 @@ bool inputText(const char* id, std::string& value)
     return false;
 }
 
-// Números arrastáveis (hot text) que ocupam a largura da célula: arrastar muda o valor, clicar abre o campo de
-// digitação e o limite vale ao confirmar (Enter, Tab ou clicar fora).
 bool inputInt(const char* id, int& value, int lo, int hi, float step = 2.0f)
 {
     return hotInt(id, value, lo, hi, step, "%d", nullptr, INT_MIN, -1.0f);
@@ -88,7 +83,6 @@ void tableHeader4(const char* a, const char* b, const char* c, const char* d)
     }
 }
 
-// Resolução nova: os cantos dos slices acompanham (um slice que preenchia a tela continua preenchendo)
 void setScreenResolution(Screen& s, int w, int h)
 {
     w = std::clamp(w, 16, 8192);
@@ -227,10 +221,52 @@ void screenProperties(PanelContext& ctx, Screen& screen)
     }
 }
 
-// Zona de profundidade do slice (Z-Slice): o slice mostra só os pixels dessa zona
+void sourceProperties(PanelContext& ctx, Slice& slice)
+{
+    const Composition& comp = ctx.composition;
+    ImGui::SeparatorText("Fonte");
+    dim("Fonte da imagem");
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    if (beginCombo("##sliceFonte", sliceSourceLabel(comp, slice).c_str())) {
+        if (ImGui::Selectable("Composição##fonte_comp", slice.source == kSliceFromComposition))
+            setSliceSource(comp, slice, -1);
+        for (int l = 0; l < comp.layerCount(); ++l) {
+            const bool selected = slice.source == kSliceFromLayer && slice.layerId == comp.layers[static_cast<size_t>(l)].id;
+            if (ImGui::Selectable((zoneSourceLabel(comp, l) + "##fonte_camada_" + std::to_string(l + 1)).c_str(), selected))
+                setSliceSource(comp, slice, l);
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Composição: o canvas inteiro, como sempre. Camada: só aquela camada (com os efeitos do clip e "
+                          "da camada), sem as outras camadas, para que efeitos de uma não afetem as demais");
+    if (slice.source != kSliceFromLayer)
+        return;
+
+    ImGui::Checkbox("Incluir efeitos do master##sliceMaster", &slice.includeMaster);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Desligado (padrão): o slice mostra só a camada, sem os efeitos e o fade do master. Ligado: aplica "
+                          "também o master a esta camada isolada");
+    ImGui::Checkbox("Aplicar transform da camada##sliceTransform", &slice.applyLayerTransform);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Desligado (padrão): o slice recebe a camada sem posição, tamanho, rotação nem recorte, porque ele "
+                          "mesmo faz o enquadramento (entrada e quad de saída). Ligado: usa também o Transform da camada");
+    const int li = comp.findLayerById(slice.layerId);
+    ImGui::PushTextWrapPos(0.0f);
+    if (li < 0) {
+        ImGui::TextColored(theme::kWarning, "A camada vinculada não existe mais: este slice mostra preto. Escolha outra "
+                                            "fonte acima.");
+    } else if (comp.layers[static_cast<size_t>(li)].bypass) {
+        ImGui::TextColored(theme::kWarning, "A camada está em bypass: este slice mostra preto.");
+    } else if (!comp.layers[static_cast<size_t>(li)].sliceOnly) {
+        dim("Esta camada também aparece no canvas principal. Use o ícone de link no cabeçalho dela (modo Composição) para "
+            "deixá-la só nos slices vinculados.");
+    }
+    ImGui::PopTextWrapPos();
+}
+
 void zoneProperties(PanelContext& ctx, Slice& slice)
 {
-    // Roteamento por profundidade: o slice mostra só uma zona do efeito Z-Slice (Todas = sem filtro e sem custo)
     ImGui::SeparatorText("Profundidade (Z-Slice)");
     dim("Zona de profundidade");
     ImGui::SetNextItemWidth(-FLT_MIN);
@@ -275,6 +311,7 @@ void sliceProperties(PanelContext& ctx, Screen& screen, Slice& slice)
     inputText("##nome", slice.name);
     ImGui::PopID();
     ImGui::Checkbox("Ativo", &slice.enabled);
+    sourceProperties(ctx, slice);
     zoneProperties(ctx, slice);
     ImGui::SeparatorText("Posição");
 
@@ -285,7 +322,6 @@ void sliceProperties(PanelContext& ctx, Screen& screen, Slice& slice)
         ImGui::TableNextRow();
         RectI& r = slice.input;
         ImGui::TableSetColumnIndex(0);
-        // O retangulo precisa continuar dentro do canvas: X/Y ate (canvas - tamanho), L/A ate (canvas - posicao)
         inputInt("##x", r.x, 0, std::max(0, cw - r.w));
         ImGui::TableSetColumnIndex(1);
         inputInt("##y", r.y, 0, std::max(0, ch - r.h));
@@ -298,7 +334,6 @@ void sliceProperties(PanelContext& ctx, Screen& screen, Slice& slice)
 
     ImGui::Spacing();
     if (!ctx.mapping.pointsMode) {
-        // Modo Transformar: o quad como retângulo (posição = canto superior esquerdo antes de girar; gira em volta do centro)
         dim("Saída: posição, tamanho e rotação (px, graus)");
         mapedit::Xform xf;
         bool exact = true;
@@ -337,7 +372,6 @@ void sliceProperties(PanelContext& ctx, Screen& screen, Slice& slice)
         if (!exact)
             ImGui::TextColored(theme::kWarning, "Quad deformado: mostrando a caixa dos cantos");
     } else {
-        // Modo Pontos: os 4 cantos livres
         dim("Saída: cantos na tela (px)");
         if (ImGui::BeginTable("##cantos", 3, ImGuiTableFlags_SizingStretchProp)) {
             ImGui::TableSetupColumn("n", ImGuiTableColumnFlags_WidthFixed, dp(92.0f));
@@ -426,13 +460,10 @@ void sliceProperties(PanelContext& ctx, Screen& screen, Slice& slice)
     }
 }
 
-// --------------------------------------------------------------------------------------------
-// Lista
-
 struct RenameState
 {
     int screen = -1;
-    int slice = -2; // -1 = renomeando a Screen; >= 0 = um slice dela; -2 = ninguém
+    int slice = -2;
     bool focus = false;
     char buffer[128] = {};
 };
@@ -451,7 +482,6 @@ bool renaming(int screen, int slice)
     return g_rename.screen == screen && g_rename.slice == slice;
 }
 
-// Campo de texto no lugar do nome. true quando terminou (Enter ou perdeu o foco); 'apply' diz se vale.
 bool renameField(std::string& name, bool& apply)
 {
     if (g_rename.focus) {
@@ -472,7 +502,44 @@ bool renameField(std::string& name, bool& apply)
     return false;
 }
 
-} // namespace
+}
+
+bool sliceLayerMissing(const Composition& comp, const Slice& slice)
+{
+    return slice.source == kSliceFromLayer && comp.findLayerById(slice.layerId) < 0;
+}
+
+std::string sliceSourceLabel(const Composition& comp, const Slice& slice)
+{
+    if (slice.source != kSliceFromLayer)
+        return "Composição";
+    const int li = comp.findLayerById(slice.layerId);
+    return li < 0 ? "Camada removida" : zoneSourceLabel(comp, li);
+}
+
+std::string sliceLayerName(const Composition& comp, const Slice& slice)
+{
+    if (slice.source != kSliceFromLayer)
+        return {};
+    const int li = comp.findLayerById(slice.layerId);
+    if (li < 0)
+        return "Camada removida";
+    const std::string& name = comp.layers[static_cast<size_t>(li)].name;
+    return name.empty() ? "Camada " + std::to_string(li + 1) : name;
+}
+
+void setSliceSource(const Composition& comp, Slice& slice, int layerIndex)
+{
+    if (layerIndex < 0 || layerIndex >= comp.layerCount()) {
+        slice.source = kSliceFromComposition;
+        slice.layerId = 0;
+        slice.includeMaster = false;
+        slice.applyLayerTransform = false;
+        return;
+    }
+    slice.source = kSliceFromLayer;
+    slice.layerId = comp.layers[static_cast<size_t>(layerIndex)].id;
+}
 
 void validateMappingSelection(PanelContext& ctx)
 {
@@ -500,7 +567,6 @@ void drawMappingListPanel(PanelContext& ctx)
     MappingSelection& sel = ctx.mapping;
     const int cw = ctx.composition.width, ch = ctx.composition.height;
 
-    // Quatro botões de ícone na largura da lista: + Tela, + Slice, Duplicar, Remover
     const ImGuiStyle& style = ImGui::GetStyle();
     const ImVec2 iconSize((ImGui::GetContentRegionAvail().x - style.ItemSpacing.x * 3.0f) * 0.25f, ImGui::GetFrameHeight());
     if (iconButton(ICON_PLUS ICON_MONITOR, "##map_add_tela", "Nova tela", iconSize)) {
@@ -562,7 +628,6 @@ void drawMappingListPanel(PanelContext& ctx)
             if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0))
                 beginRename(i, -1, screen.name);
 
-            // destino à direita
             const ScreenStatus st = ctx.outputRenderer.status(screen.id);
             const char* tag = outputKindName(screen.kind);
             const float w = ImGui::CalcTextSize(tag).x;
@@ -595,7 +660,7 @@ void drawMappingListPanel(PanelContext& ctx)
                         ImGui::PopStyleColor();
                     if (ImGui::IsItemClicked()) {
                         const ImGuiIO& io = ImGui::GetIO();
-                        if (io.KeyCtrl && sel.screen == i) { // Ctrl+clique: seleção múltipla
+                        if (io.KeyCtrl && sel.screen == i) {
                             toggleSliceSelection(sel, j);
                         } else {
                             sel.screen = i;
@@ -604,11 +669,27 @@ void drawMappingListPanel(PanelContext& ctx)
                     }
                     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0))
                         beginRename(i, j, slice.name);
-                    if (slice.zFilter != kZoneAll) { // zona de profundidade à direita (amarelo = sem Z-Slice ativo)
+                    float tagRight = ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - dp(2.0f);
+                    if (slice.source == kSliceFromLayer) {
+                        const bool gone = sliceLayerMissing(ctx.composition, slice);
+                        const std::string layerTag = std::string(ICON_LINK " ") + sliceLayerName(ctx.composition, slice);
+                        const float tw = ImGui::CalcTextSize(layerTag.c_str()).x;
+                        ImGui::SameLine(tagRight - tw);
+                        ImGui::TextColored(gone ? theme::kWarning : theme::kAccent, "%s", layerTag.c_str());
+                        if (ImGui::IsItemHovered()) {
+                            if (gone)
+                                ImGui::SetTooltip("A camada vinculada não existe mais: este slice mostra preto");
+                            else
+                                ImGui::SetTooltip("Fonte: só a camada \"%s\"%s", sliceLayerName(ctx.composition, slice).c_str(),
+                                                  slice.includeMaster ? ", com os efeitos do master" : "");
+                        }
+                        tagRight -= tw + dp(8.0f);
+                    }
+                    if (slice.zFilter != kZoneAll) {
                         const bool live = ZoneMasks::instance().available(slice.zSource);
                         const char* tag = zoneFilterName(slice.zFilter);
                         const float tw = ImGui::CalcTextSize(tag).x;
-                        ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - tw - dp(2.0f));
+                        ImGui::SameLine(tagRight - tw);
                         ImGui::TextColored(live ? theme::kAccent : theme::kWarning, "%s", tag);
                         if (!live && ImGui::IsItemHovered())
                             ImGui::SetTooltip("Sem Z-Slice ativo em %s: este slice mostra tudo",
@@ -664,4 +745,4 @@ void drawMappingPropertiesPanel(PanelContext& ctx)
     endPanel();
 }
 
-} // namespace bsl::ui
+}

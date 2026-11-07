@@ -15,7 +15,7 @@ std::string utf8(const std::filesystem::path& p)
     return std::string(s.begin(), s.end());
 }
 
-} // namespace
+}
 
 WebSource::WebSource(int canvasWidth, int canvasHeight) : RemoteSource(canvasWidth, canvasHeight) {}
 
@@ -61,7 +61,6 @@ std::string WebSource::label(const ParamValues& values)
     std::string url;
     if (const Json* v = values.find("url"); v && v->is_string())
         url = v->get<std::string>();
-    // Mostra so o host
     const size_t scheme = url.find("://");
     if (scheme != std::string::npos)
         url.erase(0, scheme + 3);
@@ -87,7 +86,7 @@ std::string WebSource::fileUrl(const std::filesystem::path& file)
 {
     std::error_code ec;
     const std::filesystem::path abs = std::filesystem::absolute(file, ec);
-    const std::string s = utf8(abs); // barras normais
+    const std::string s = utf8(abs);
     std::string out = "file:///";
     static const char* hex = "0123456789ABCDEF";
     for (unsigned char c : s) {
@@ -112,7 +111,6 @@ std::string WebSource::currentUrl() const
     if (fileMode_)
         return fileUrl(path());
     std::string url = currentParams().s("url");
-    // Tira espacos nas pontas
     while (!url.empty() && std::isspace(static_cast<unsigned char>(url.back())))
         url.pop_back();
     size_t i = 0;
@@ -203,4 +201,4 @@ void WebSource::onCanvasResized(int, int)
     sendToWorker(WorkerJson{{"t", "resize"}, {"w", w}, {"h", h}});
 }
 
-} // namespace bsl::media
+}

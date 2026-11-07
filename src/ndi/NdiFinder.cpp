@@ -9,7 +9,7 @@ namespace bsl::ndi {
 namespace {
 std::mutex g_sharedMutex;
 Finder* g_shared = nullptr;
-} // namespace
+}
 
 Finder::Finder(Runtime& runtime) : rt_(runtime) {}
 
@@ -42,7 +42,7 @@ void Finder::start()
     if (!rt_.available() || running_.load())
         return;
     if (thread_.joinable())
-        thread_.join(); // thread anterior que terminou sozinha (falha ao criar a busca)
+        thread_.join();
     stop_ = false;
     running_ = true;
     thread_ = std::thread([this] { loop(); });
@@ -66,7 +66,7 @@ void Finder::loop()
 {
     const NDIlib_v5_t* api = rt_.api();
     NDIlib_find_create_t settings{};
-    settings.show_local_sources = true; // inclui as fontes desta máquina (o loopback do próprio app)
+    settings.show_local_sources = true;
     NDIlib_find_instance_t find = api->find_create_v2(&settings);
     if (!find) {
         log::warn("NDI: não foi possível criar a busca de fontes");
@@ -74,7 +74,6 @@ void Finder::loop()
         return;
     }
     while (!stop_.load()) {
-        // Retorna quando a lista muda ou ao fim do tempo; fatias curtas para o stop() ser rápido
         api->find_wait_for_sources(find, 400);
         uint32_t count = 0;
         const NDIlib_source_t* list = api->find_get_current_sources(find, &count);
@@ -95,4 +94,4 @@ void Finder::loop()
     api->find_destroy(find);
 }
 
-} // namespace bsl::ndi
+}

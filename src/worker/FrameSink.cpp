@@ -18,7 +18,6 @@ using Microsoft::WRL::ComPtr;
 
 namespace {
 
-// Duplica um handle para o processo do app. Devolve o valor do handle no app (0 se falhou).
 std::uint64_t duplicateToApp(HANDLE appProcess, HANDLE local)
 {
     HANDLE remote = nullptr;
@@ -27,7 +26,6 @@ std::uint64_t duplicateToApp(HANDLE appProcess, HANDLE local)
     return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(remote));
 }
 
-// Alpha premultiplicado -> alpha reta (in-place nao: le de src, escreve em dst)
 void unpremultiplyRow(const std::uint8_t* src, std::uint8_t* dst, int pixels)
 {
     for (int x = 0; x < pixels; ++x) {
@@ -46,8 +44,6 @@ void unpremultiplyRow(const std::uint8_t* src, std::uint8_t* dst, int pixels)
         d[3] = static_cast<std::uint8_t>(a);
     }
 }
-
-// ----------------------------------------------------------------------------- memoria compartilhada
 
 class ShmSink final : public FrameSink
 {
@@ -107,7 +103,7 @@ public:
         auto* hdr = static_cast<wp::ShmHeader*>(view_);
         const LONG latest = hdr->latest;
         const int idx = latest == 0 ? 1 : 0;
-        InterlockedIncrement64(&hdr->seq[idx]); // impar: escrevendo
+        InterlockedIncrement64(&hdr->seq[idx]);
         std::uint8_t* dst = wp::shmBuffer(view_, width_, height_, idx);
         for (int y = 0; y < height_; ++y) {
             const std::uint8_t* s = bgra + static_cast<std::size_t>(y) * static_cast<std::size_t>(stride);
@@ -117,11 +113,10 @@ public:
             } else {
                 std::memcpy(d, s, static_cast<std::size_t>(width_) * 4u);
             }
-            // BGRA -> RGBA
             for (int x = 0; x < width_; ++x)
                 std::swap(d[x * 4], d[x * 4 + 2]);
         }
-        const LONG64 seq = InterlockedIncrement64(&hdr->seq[idx]); // par: pronto
+        const LONG64 seq = InterlockedIncrement64(&hdr->seq[idx]);
         InterlockedExchange(&hdr->latest, idx);
         ch_->send(Json{{"t", "frame"}, {"i", idx}, {"seq", static_cast<long long>(seq)}, {"page", page}});
         return true;
@@ -146,8 +141,6 @@ private:
     void* view_ = nullptr;
 };
 
-// ----------------------------------------------------------------------------- textura D3D11 compartilhada
-
 const char* kBlitShader = R"(
 Texture2D src : register(t0);
 SamplerState smp : register(s0);
@@ -162,7 +155,7 @@ VSOut vs(uint id : SV_VertexID)
 float4 ps(VSOut i) : SV_Target
 {
     float4 c = src.Sample(smp, i.uv);
-    if (c.a > 0.0001) c.rgb = saturate(c.rgb / c.a); // premultiplicado -> reto
+    if (c.a > 0.0001) c.rgb = saturate(c.rgb / c.a);
     return c;
 }
 )";
@@ -204,7 +197,6 @@ public:
         ComPtr<IDXGIAdapter1> adapter;
         wchar_t forced[16];
         if (GetEnvironmentVariableW(L"BSLSTAGE_WORKER_ADAPTER_INDEX", forced, 16) > 0) {
-            // Diagnostico: simula Optimus com o worker no adaptador errado (testa os caminhos de reserva)
             ComPtr<IDXGIFactory1> f1;
             factory.As(&f1);
             if (!f1 || FAILED(f1->EnumAdapters1(static_cast<UINT>(_wtoi(forced)), &adapter))) {
@@ -310,7 +302,7 @@ public:
     bool submitSharedHandle(HANDLE sharedHandle, int page, std::string* error) override
     {
         if (error)
-            error->clear(); // erro vazio com retorno false = buffers do app ocupados (tente de novo)
+            error->clear();
         ComPtr<ID3D11Texture2D> src;
         HRESULT hr = dev1_->OpenSharedResource1(sharedHandle, IID_PPV_ARGS(&src));
         if (FAILED(hr)) {
@@ -332,7 +324,6 @@ public:
 
         ComPtr<ID3D11ShaderResourceView> srv;
         if (FAILED(dev_->CreateShaderResourceView(src.Get(), nullptr, &srv))) {
-            // Textura sem bind de SRV: copia para uma intermediaria
             D3D11_TEXTURE2D_DESC id = sd;
             id.Usage = D3D11_USAGE_DEFAULT;
             id.BindFlags = D3D11_BIND_SHADER_RESOURCE;
@@ -386,7 +377,6 @@ private:
         return buf;
     }
 
-    // Pega um dos dois buffers que o app ja devolveu (chave 0)
     Slot* acquire()
     {
         for (int k = 0; k < 2; ++k) {
@@ -401,7 +391,7 @@ private:
 
     void publish(Slot& s, int page)
     {
-        s.mutex->ReleaseSync(1); // o app pega com a chave 1
+        s.mutex->ReleaseSync(1);
         ch_->send(Json{{"t", "frame"}, {"i", held_}, {"seq", ++seq_}, {"page", page}});
         next_ = (held_ + 1) & 1;
     }
@@ -448,7 +438,7 @@ private:
     std::vector<std::uint8_t> scratch_;
 };
 
-} // namespace
+}
 
 std::unique_ptr<FrameSink> createShmSink(const SinkRequest& request)
 {
@@ -480,4 +470,4 @@ std::unique_ptr<FrameSink> createFrameSink(const SinkRequest& request)
     return shm;
 }
 
-} // namespace bsl::worker
+}

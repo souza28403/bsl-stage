@@ -9,16 +9,16 @@ enum ParamType : FFUInt32
 };
 
 static CFFGLPluginInfo PluginInfo(
-	PluginFactory< AddSubtract >,// Create method
-	"RE01",                      // Plugin unique ID of maximum length 4.
-	"AddSub Example",            // Plugin name
-	2,                           // API major version number
-	1,                           // API minor version number
-	1,                           // Plugin major version number
-	0,                           // Plugin minor version number
-	FF_EFFECT,                   // Plugin type
-	"Add and Subtract colours",  // Plugin description
-	"Resolume FFGL Example"      // About
+	PluginFactory< AddSubtract >,
+	"RE01",
+	"AddSub Example",
+	2,
+	1,
+	1,
+	0,
+	FF_EFFECT,
+	"Add and Subtract colours",
+	"FFGL Example"
 );
 
 static const char _vertexShaderCode[] = R"(#version 410 core
@@ -47,14 +47,11 @@ out vec4 fragColor;
 void main()
 {
 	vec4 color = texture( InputTexture, uv );
-	//The InputTexture contains premultiplied colors, so we need to unpremultiply first to apply our effect on straight colors.
 	if( color.a > 0.0 )
 		color.rgb /= color.a;
 
 	color.rgb += Brightness * 2. - 1.;
 
-	//The plugin has to output premultiplied colors, this is how we're premultiplying our straight color while also
-	//ensuring we aren't going out of the LDR the video engine is working in.
 	color.rgb = clamp( color.rgb * color.a, vec3( 0.0 ), vec3( color.a ) );
 	fragColor = color;
 }
@@ -89,7 +86,6 @@ FFResult AddSubtract::InitGL( const FFGLViewportStruct* vp )
 		return FF_FAIL;
 	}
 
-	//Use base-class init as success result so that it retains the viewport.
 	return CFFGLPlugin::InitGL( vp );
 }
 FFResult AddSubtract::ProcessOpenGL( ProcessOpenGLStruct* pGL )
@@ -100,17 +96,12 @@ FFResult AddSubtract::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 	if( pGL->inputTextures[ 0 ] == NULL )
 		return FF_FAIL;
 
-	//FFGL requires us to leave the context in a default state on return, so use this scoped binding to help us do that.
 	ScopedShaderBinding shaderBinding( shader.GetGLID() );
-	//The shader's sampler is always bound to sampler index 0 so that's where we need to bind the texture.
-	//Again, we're using the scoped bindings to help us keep the context in a default state.
 	ScopedSamplerActivation activateSampler( 0 );
 	Scoped2DTextureBinding textureBinding( pGL->inputTextures[ 0 ]->Handle );
 
 	shader.Set( "InputTexture", 0 );
 
-	//The input texture's dimension might change each frame and so might the content area.
-	//We're adopting the texture's maxUV using a uniform because that way we dont have to update our vertex buffer each frame.
 	FFGLTexCoords maxCoords = GetMaxGLTexCoords( *pGL->inputTextures[ 0 ] );
 	shader.Set( "MaxUV", maxCoords.s, maxCoords.t );
 

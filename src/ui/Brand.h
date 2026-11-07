@@ -4,15 +4,14 @@
 
 namespace bsl::ui {
 
-// Imagens da marca BSL Light (assets/brand), carregadas uma vez com o contexto GL ativo.
 struct Brand
 {
-    Texture horizontal; // bsl-horizontal-white.png
-    Texture monogram;   // bsl-monogram.png
+    Texture horizontal;
+    Texture monogram;
 };
 
 void loadBrand();
-void unloadBrand(); // antes de destruir o contexto GL
+void unloadBrand();
 const Brand& brand();
 
-} // namespace bsl::ui
+}

@@ -71,7 +71,6 @@ void orientedFromVerts(const float vx[4], const float vy[4], float& cx, float& c
     double w = std::sqrt(e1x * e1x + e1y * e1y);
     double h = std::sqrt(e2x * e2x + e2y * e2y);
     double ang = std::atan2(e1y, e1x) * 180.0 / 3.14159265358979323846;
-    // Normaliza para (-45, 45]: girar 90 graus troca largura e altura
     for (int k = 0; k < 4 && ang > 45.0; ++k) {
         ang -= 90.0;
         std::swap(w, h);
@@ -80,7 +79,7 @@ void orientedFromVerts(const float vx[4], const float vy[4], float& cx, float& c
         ang += 90.0;
         std::swap(w, h);
     }
-    if (std::fabs(ang) > 135.0) // ~180 graus (espelhado): a mesma caixa
+    if (std::fabs(ang) > 135.0)
         ang = 0.0;
     cx = static_cast<float>(mx);
     cy = static_cast<float>(my);
@@ -120,19 +119,17 @@ std::vector<FeedSlice> sliceFeedFromOutput(const OutputSetup& output)
 
 namespace {
 
-// Numero com ponto ou virgula decimal, sem depender da localidade
 bool parseNumber(std::string s, float& out)
 {
     std::replace(s.begin(), s.end(), ',', '.');
     double v = 0.0;
-    const auto r = std::from_chars(s.data(), s.data() + s.size(), v); // sem depender da localidade
+    const auto r = std::from_chars(s.data(), s.data() + s.size(), v);
     if (r.ec != std::errc())
         return false;
     out = static_cast<float>(v);
     return true;
 }
 
-// Valor do atributo name="..." a partir de 'pos' (ate 'limit'); false se nao achar
 bool attribute(const std::string& text, size_t pos, size_t limit, const char* name, std::string& out)
 {
     const std::string key = std::string(name) + "=\"";
@@ -147,7 +144,6 @@ bool attribute(const std::string& text, size_t pos, size_t limit, const char* na
     return true;
 }
 
-// Entidades XML basicas dos nomes
 std::string decodeEntities(std::string s)
 {
     struct Pair
@@ -166,7 +162,6 @@ std::string decodeEntities(std::string s)
     return s;
 }
 
-// Nome da Screen que contem a posicao 'at': o <Param name="Name"> logo depois do <Screen ...> mais proximo antes dela
 std::string screenNameAt(const std::string& xml, size_t at)
 {
     size_t pos = at;
@@ -175,7 +170,7 @@ std::string screenNameAt(const std::string& xml, size_t at)
         if (s == std::string::npos)
             return "Screen";
         const char after = s + 7 < xml.size() ? xml[s + 7] : '\0';
-        if (after != ' ' && after != '>' && after != '\t' && after != '\n' && after != '\r') { // <ScreenSetup>, <Screens>...
+        if (after != ' ' && after != '>' && after != '\t' && after != '\n' && after != '\r') {
             if (s == 0)
                 break;
             pos = s;
@@ -194,9 +189,9 @@ std::string screenNameAt(const std::string& xml, size_t at)
     return "Screen";
 }
 
-} // namespace
+}
 
-std::vector<FeedSlice> parseResolumeSlices(const std::string& xml, int* compW, int* compH)
+std::vector<FeedSlice> parseSliceXml(const std::string& xml, int* compW, int* compH)
 {
     std::vector<FeedSlice> out;
     if (compW)
@@ -225,7 +220,7 @@ std::vector<FeedSlice> parseResolumeSlices(const std::string& xml, int* compW, i
         if (at == std::string::npos)
             break;
         const char after = at + 6 < xml.size() ? xml[at + 6] : '\0';
-        if (after != ' ' && after != '>' && after != '\t' && after != '\n' && after != '\r') { // <SliceXyz>: outra tag
+        if (after != ' ' && after != '>' && after != '\t' && after != '\n' && after != '\r') {
             pos = at + 6;
             continue;
         }
@@ -298,28 +293,4 @@ std::vector<FeedSlice> parseResolumeSlices(const std::string& xml, int* compW, i
     return out;
 }
 
-std::string defaultResolumeSliceXmlPath()
-{
-    // Pasta Documentos de verdade (pode estar no OneDrive), com o USERPROFILE\Documents como segunda opcao
-    std::wstring docs;
-    PWSTR known = nullptr;
-    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &known)) && known)
-        docs = known;
-    if (known)
-        CoTaskMemFree(known);
-    if (!docs.empty()) {
-        std::filesystem::path p = std::filesystem::path(docs) / L"Resolume Arena" / L"Preferences" / L"AdvancedOutput.xml";
-        std::error_code ec;
-        if (std::filesystem::exists(p, ec))
-            return paths::toUtf8(p);
-    }
-    char* home = nullptr;
-    size_t len = 0;
-    if (_dupenv_s(&home, &len, "USERPROFILE") != 0 || !home)
-        return {};
-    const std::string path = std::string(home) + "\\Documents\\Resolume Arena\\Preferences\\AdvancedOutput.xml";
-    std::free(home);
-    return path;
 }
-
-} // namespace bsl::fx::bsllight

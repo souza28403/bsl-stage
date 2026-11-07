@@ -29,16 +29,11 @@ void main()
 }
 )";
 
-// Textura da Screen (origem embaixo) -> buffer "de cima para baixo" que o NDI espera.
-//  uMode 0: cópia com as linhas invertidas (lida depois como BGRA)
-//  uMode 1: UYVY. Cada pixel de saída cobre 2 pixels da imagem e guarda (Cb, Y0, Cr, Y1) = bytes U Y0 V Y1.
-//           Faixa limitada e BT.709 em qualquer altura: é a matriz que o decodificador do runtime do NDI usa
-//           (conferido no bslstage_ndittest, de 32 a 1080 linhas).
 const char* const kFragment = R"(#version 330 core
 out vec4 fragColor;
 uniform sampler2D uSrc;
 uniform int uMode;
-uniform ivec2 uImage; // tamanho da imagem enviada (largura par no UYVY)
+uniform ivec2 uImage;
 
 vec3 toYcc(vec3 c)
 {
@@ -86,27 +81,25 @@ void frameRateRational(float fps, int& n, int& d)
     d /= g;
 }
 
-} // namespace
+}
 
 struct NdiOutput::Impl
 {
     NDIlib_send_instance_t sender = nullptr;
-    std::string created;    // nome pedido na criação
-    std::string actual;     // nome real
+    std::string created;
+    std::string actual;
 
-    // Recursos GL
     std::unique_ptr<Shader> shader;
     unsigned int vao = 0;
     std::unique_ptr<Fbo> conv;
     unsigned int pbo[2] = {0, 0};
     bool pending[2] = {false, false};
     int cur = 0;
-    int imageW = 0, imageH = 0;   // imagem enviada (largura par)
-    int outW = 0;                 // largura do FBO de conversão (imageW ou imageW/2)
+    int imageW = 0, imageH = 0;
+    int outW = 0;
     bool resBgra = false;
     size_t pboBytes = 0;
 
-    // Buffers da CPU entregues ao NDI (o assíncrono mantém o último até a chamada seguinte)
     std::vector<unsigned char> cpu[2];
     int cpuIndex = 0;
 
@@ -154,10 +147,10 @@ std::string NdiOutput::actualName() const
 void NdiOutput::release()
 {
     Impl& s = *impl_;
-    if (s.sender) { // só então o runtime está carregado (não força a carga no destrutor)
+    if (s.sender) {
         const NDIlib_v5_t* api = (runtime_ ? *runtime_ : ndi::Runtime::instance()).api();
         if (api) {
-            api->send_send_video_async_v2(s.sender, nullptr); // libera o último buffer
+            api->send_send_video_async_v2(s.sender, nullptr);
             api->send_destroy(s.sender);
         }
     }
@@ -196,7 +189,7 @@ bool NdiOutput::send(unsigned int texture, int width, int height)
         s.created = name_.empty() ? "BSL Stage" : name_;
         c.p_ndi_name = s.created.c_str();
         c.p_groups = nullptr;
-        c.clock_video = false; // o ritmo é nosso (frame rate da composição)
+        c.clock_video = false;
         c.clock_audio = false;
         s.sender = api->send_create(&c);
         if (!s.sender)
@@ -206,14 +199,12 @@ bool NdiOutput::send(unsigned int texture, int width, int height)
         log::info("NDI: sender \"" + s.actual + "\" aberto");
     }
 
-    // Sem receptor não há o que enviar: poupa a conversão e o readback
     connections_ = api->send_get_no_connections(s.sender, 0);
     if (connections_ <= 0) {
         s.pending[0] = s.pending[1] = false;
         return true;
     }
 
-    // Ritmo: um quadro por período do frame rate (margem de 15% para o jitter do vsync)
     const auto now = Clock::now();
     const double fps = fps_ > 0.0f ? static_cast<double>(fps_) : 30.0;
     const auto period = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / fps));
@@ -265,7 +256,6 @@ bool NdiOutput::send(unsigned int texture, int width, int height)
         glGenVertexArrays(1, &s.vao);
     }
 
-    // 1) conversão na GPU
     s.conv->bind();
     glViewport(0, 0, outW, height);
     glDisable(GL_BLEND);
@@ -281,14 +271,12 @@ bool NdiOutput::send(unsigned int texture, int width, int height)
     glBindVertexArray(s.vao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
 
-    // 2) readback assíncrono para o PBO corrente
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glPixelStorei(GL_PACK_ROW_LENGTH, 0);
     glBindBuffer(GL_PIXEL_PACK_BUFFER, s.pbo[s.cur]);
     glReadPixels(0, 0, outW, height, bgra_ ? GL_BGRA : GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     s.pending[s.cur] = true;
 
-    // 3) o PBO do quadro anterior já terminou: copia e entrega ao NDI
     const int prev = s.cur ^ 1;
     if (s.pending[prev]) {
         glBindBuffer(GL_PIXEL_PACK_BUFFER, s.pbo[prev]);
@@ -315,8 +303,7 @@ bool NdiOutput::send(unsigned int texture, int width, int height)
         s.pending[prev] = false;
     }
     s.cur ^= 1;
-    // ~GlStateGuard devolve FBO, viewport, programa, VAO, texturas e buffers
     return true;
 }
 
-} // namespace bsl
+}

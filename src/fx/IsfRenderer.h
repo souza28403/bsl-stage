@@ -1,9 +1,5 @@
 #pragma once
 
-// Execucao de um shader ISF em GL 3.3 core: compila (preambulo + reescrita das macros), mantem os buffers dos passes
-// (TARGET / PERSISTENT / FLOAT), entrega os inputs como uniforms e desenha cada passe. Usado pelo efeito ISF (com
-// textura de entrada) e pelo gerador ISF (sem entrada).
-
 #include "fx/IEffect.h"
 #include "fx/FxGl.h"
 #include "fx/IsfDoc.h"
@@ -30,21 +26,17 @@ public:
     const IsfDoc& doc() const { return *doc_; }
     const std::shared_ptr<const IsfDoc>& docPtr() const { return doc_; }
 
-    // Valores dos inputs (descritores de isfParamDescs)
     void setParams(const media::ParamSet& params);
 
-    // Compila agora (senao compila no primeiro render). true se o shader esta utilizavel.
     bool compile();
     bool ready() const { return compiled_ && error_.empty(); }
-    const std::string& error() const { return error_; }     // log do driver com a numeracao do arquivo do usuario
-    int firstErrorLine() const { return firstErrorLine_; }  // 0 = desconhecida
+    bool compiledOnce() const { return compiled_; }
+    const std::string& error() const { return error_; }
+    int firstErrorLine() const { return firstErrorLine_; }
     const std::vector<std::string>& warnings() const { return warnings_; }
 
-    // Desenha um quadro em 'output' (w x h). inputTex = 0 para geradores. Devolve false se o shader nao compilou
-    // (a saida nao e tocada).
     bool render(const EffectContext& ctx, GLuint inputTex, int inW, int inH, int w, int h, Fbo& output);
 
-    // Zera TIME/FRAMEINDEX e limpa os buffers persistentes
     void reset();
 
 private:
@@ -63,7 +55,7 @@ private:
         bool isFloat = false;
         int w = 0, h = 0;
         std::unique_ptr<Fbo> fbo[2];
-        int front = 0; // textura com o resultado mais recente
+        int front = 0;
         bool dual = false;
     };
 
@@ -84,6 +76,7 @@ private:
     Fbo& scratch(int w, int h);
     bool evalSize(const std::string& expr, int fallback, int renderW, int renderH, int& out) const;
     GLuint blank();
+    GLuint audioTexture(const EffectContext& ctx);
 
     std::shared_ptr<const IsfDoc> doc_;
     std::filesystem::path baseDir_;
@@ -94,12 +87,13 @@ private:
     int firstErrorLine_ = 0;
     std::vector<std::string> warnings_;
 
-    std::vector<InputValue> values_; // um por doc_->inputs
+    std::vector<InputValue> values_;
     bool haveValues_ = false;
     std::vector<Buffer> buffers_;
     std::vector<std::pair<std::string, Texture>> imported_;
     std::unique_ptr<Fbo> scratch_;
     GLuint blank_ = 0;
+    GLuint audioTex_ = 0;
     ScreenVao vao_;
     TexBlitter blit_;
 
@@ -107,4 +101,4 @@ private:
     std::uint64_t frames_ = 0;
 };
 
-} // namespace bsl::fx
+}

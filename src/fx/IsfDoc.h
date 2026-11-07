@@ -1,9 +1,5 @@
 #pragma once
 
-// ISF (Interactive Shader Format, especificacao aberta da Vidvox): leitura do cabecalho JSON, expressoes dos passes
-// e geracao do codigo GLSL 3.30 core a partir do shader ISF (preambulo + reescrita das macros IMG_*). Sem GL: testavel
-// isoladamente. A execucao fica em fx/IsfRenderer.
-
 #include "media/SourceParams.h"
 
 #include <functional>
@@ -20,45 +16,44 @@ struct IsfInput
     std::string name;
     std::string label;
     IsfInputType type = IsfInputType::Unknown;
-    double minV = 0.0, maxV = 1.0, defV = 0.0; // float; long usa defV como valor padrao
+    double minV = 0.0, maxV = 1.0, defV = 0.0;
     bool defBool = false;
-    std::vector<long long> values;             // long: VALUES
-    std::vector<std::string> labels;           // long: LABELS
+    std::vector<long long> values;
+    std::vector<std::string> labels;
     float defColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
     float defPoint[2] = {0.0f, 0.0f};
     float minPoint[2] = {0.0f, 0.0f};
-    float maxPoint[2] = {0.0f, 0.0f};          // 0,0 = nao informado
+    float maxPoint[2] = {0.0f, 0.0f};
 };
 
 struct IsfPass
 {
-    std::string target;     // vazio = renderiza na saida
+    std::string target;
     bool persistent = false;
     bool isFloat = false;
-    std::string widthExpr;  // vazio = tamanho da saida
+    std::string widthExpr;
     std::string heightExpr;
 };
 
 struct IsfImported
 {
     std::string name;
-    std::string path; // relativo ao shader
+    std::string path;
 };
 
 struct IsfDoc
 {
-    std::string name;        // nome do arquivo sem extensao
+    std::string name;
     std::string description;
     std::string credit;
     std::vector<std::string> categories;
     std::vector<IsfInput> inputs;
     std::vector<IsfPass> passes;
     std::vector<IsfImported> imported;
-    std::string fragmentSource; // arquivo .fs inteiro (inclui o comentario JSON)
-    std::string vertexSource;   // arquivo .vs, se existir
-    std::vector<std::string> warnings; // ex.: audio/cube ignorados
+    std::string fragmentSource;
+    std::string vertexSource;
+    std::vector<std::string> warnings;
 
-    // Efeito = tem uma entrada de imagem chamada inputImage; senao e um gerador
     bool isEffect() const;
     int passCount() const { return passes.empty() ? 1 : static_cast<int>(passes.size()); }
 };
@@ -66,43 +61,34 @@ struct IsfDoc
 struct IsfParseResult
 {
     bool ok = false;
-    std::string error; // PT, com a linha do JSON quando possivel
+    std::string error;
     std::shared_ptr<IsfDoc> doc;
 };
 
-// 'fragment' = conteudo do .fs; 'vertex' = conteudo do .vs (vazio se nao ha); 'name' = nome do arquivo sem extensao
 IsfParseResult parseIsf(const std::string& fragment, const std::string& vertex, const std::string& name);
 
-// Descritores de parametros (ParamDesc) dos inputs: float, bool, long (Enum), color, point2D (Custom "point2d",
-// valor [x, y]) e event (Custom "event", contador inteiro). A imagem inputImage e as demais imagens/audio nao viram parametro.
 std::vector<media::ParamDesc> isfParamDescs(const IsfDoc& doc);
 
-// Expressao de largura/altura dos passes: numeros, $WIDTH, $HEIGHT, $<input>, + - * /, parenteses e
-// floor/ceil/round/min/max/abs/sqrt/pow. 'variable' devolve false para nomes desconhecidos.
 using IsfVariableLookup = std::function<bool(const std::string& name, double& out)>;
 bool evalIsfExpression(const std::string& expr, const IsfVariableLookup& variable, double& result);
 
-// Codigo GLSL pronto para compilar
 struct IsfSources
 {
     std::string vertex;
     std::string fragment;
-    int vertexPreambleLines = 0;   // linhas antes do codigo do usuario (para corrigir a linha dos erros)
+    int vertexPreambleLines = 0;
     int fragmentPreambleLines = 0;
-    std::vector<std::string> imageNames; // samplers declarados: inputs de imagem, imported e TARGET dos passes
+    std::vector<std::string> imageNames;
 };
 IsfSources buildIsfSources(const IsfDoc& doc);
 
-// Reescreve a sintaxe ISF/GLSL antigo para o GLSL 3.30 (IMG_*, gl_FragColor, texture2D, varying...). Mantem o numero
-// de linhas. Exposto para teste.
 std::string rewriteIsfSource(const std::string& source, bool fragmentStage);
 
 struct IsfCompileLog
 {
-    std::string text;  // pronto para mostrar: "Linha N: mensagem" (numeracao do arquivo do usuario)
-    int firstLine = 0; // primeira linha de erro no arquivo do usuario (0 = nao identificada)
+    std::string text;
+    int firstLine = 0;
 };
-// Corrige a numeracao do log do driver (NVIDIA "0(12)", Mesa/AMD "0:12:") descontando as linhas do preambulo
 IsfCompileLog remapGlslLog(const std::string& log, int preambleLines, const char* stage);
 
-} // namespace bsl::fx
+}

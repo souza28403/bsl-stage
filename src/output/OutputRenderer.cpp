@@ -2,6 +2,7 @@
 
 #include "app/Log.h"
 #include "output/NdiOutput.h"
+#include "output/OutputPresenter.h"
 #include "output/SpoutOutput.h"
 #include "output/TextLabel.h"
 #include "output/Warp.h"
@@ -22,8 +23,9 @@ namespace {
 
 constexpr int kMinScreenSize = 16;
 constexpr int kMaxScreenSize = 8192;
+constexpr long long kFirstStallLogMs = 3000;
+constexpr long long kStallLogStepMs = 10000;
 
-// Triângulo de tela cheia a partir de gl_VertexID
 const char* const kFullscreenVertex = R"(#version 330 core
 out vec2 vUv;
 void main()
@@ -34,24 +36,21 @@ void main()
 }
 )";
 
-// Um slice: desenha o quad de saída inteiro (triângulo de tela cheia + scissor) e, para cada pixel,
-// inverte a homografia para achar o ponto do quadrado unitário e daí o texel do canvas.
-// Isso dá o warp perspectivo correto (sem a dobra de dois triângulos afins).
 const char* const kSliceFragment = R"(#version 330 core
 in vec2 vUv;
 out vec4 fragColor;
 
 uniform sampler2D uCanvas;
-uniform sampler2D uZoneMask; // mascara de zonas do Z-Slice (RGBA = Frente, Meio, Fundo, Zona 4), espaco do canvas
-uniform int uZone;           // -1 = sem filtro de profundidade; 0..3 = canal da zona que o slice mostra
-uniform vec2 uScreen;        // tamanho da Screen em px
-uniform mat3 uInv;           // px da tela (y para baixo) -> quadrado unitário (homogêneo)
-uniform vec3 uLine[4];       // lados topo, direita, base, esquerda: dist = dot(n, p) + c, >= 0 dentro
-uniform vec4 uEdgeW;         // soft edge (px): esquerda, topo, direita, base
-uniform vec4 uEdgeG;         // gamma por lado
-uniform vec4 uInput;         // retângulo de entrada no canvas (px, y para baixo)
+uniform sampler2D uZoneMask;
+uniform int uZone;
+uniform vec2 uScreen;
+uniform mat3 uInv;
+uniform vec3 uLine[4];
+uniform vec4 uEdgeW;
+uniform vec4 uEdgeG;
+uniform vec4 uInput;
 uniform vec2 uCanvasSize;
-uniform float uCanvasScale;  // fração do FBO do canvas que contém a imagem
+uniform float uCanvasScale;
 uniform vec2 uFlip;
 uniform float uOpacity;
 uniform vec3 uGain;
@@ -60,7 +59,6 @@ uniform int uIdentify;
 uniform vec3 uIdColor;
 uniform vec2 uGridCells;
 
-// Rampa simétrica: ramp(t) + ramp(1 - t) = 1 para qualquer gamma (mistura de projetores)
 float ramp(float d, float w, float g)
 {
     if (w <= 0.0)
@@ -83,7 +81,7 @@ void main()
     vec2 grid = uv * uGridCells;
     vec2 gridWidth = max(fwidth(grid), vec2(1e-4));
 
-    float cover = clamp(dMin + 0.5, 0.0, 1.0);   // borda do quad com ~1 px de antialias
+    float cover = clamp(dMin + 0.5, 0.0, 1.0);
     if (cover <= 0.0)
         discard;
 
@@ -103,14 +101,14 @@ void main()
                * ramp(dRight, uEdgeW.z, uEdgeG.z) * ramp(dBottom, uEdgeW.w, uEdgeG.w);
 
     if (uIdentify != 0) {
-        vec2 gd = abs(fract(grid + 0.5) - 0.5) / gridWidth;       // distância (px) até a linha da grade
+        vec2 gd = abs(fract(grid + 0.5) - 0.5) / gridWidth;
         float line = 1.0 - clamp(min(gd.x, gd.y) - 0.5, 0.0, 1.0);
         float border = 1.0 - clamp(dMin - 5.0, 0.0, 1.0);
         vec3 id = rgb * 0.30;
         id = mix(id, vec3(1.0), line * 0.55);
         id = mix(id, uIdColor, border);
         if (uv.x + uv.y < 0.06)
-            id = vec3(1.0);                                         // marca o canto superior esquerdo
+            id = vec3(1.0);
         rgb = id;
     }
 
@@ -120,7 +118,7 @@ void main()
 
 const char* const kLabelVertex = R"(#version 330 core
 out vec2 vUv;
-uniform vec4 uRect;     // x, y, w, h em px da tela (y para baixo)
+uniform vec4 uRect;
 uniform vec2 uScreen;
 void main()
 {
@@ -154,22 +152,21 @@ void main()
 OutputRenderer* g_instance = nullptr;
 GLFWmonitorfun g_previousMonitorCallback = nullptr;
 
-// Cores dos slices no modo Identificar
 const float kIdColors[6][3] = {{0.925f, 0.200f, 0.216f}, {0.184f, 0.498f, 0.878f}, {0.118f, 0.655f, 0.353f},
                                {0.961f, 0.647f, 0.141f}, {0.180f, 0.800f, 0.800f}, {0.800f, 0.300f, 0.800f}};
 
-} // namespace
+}
 
 struct OutputRenderer::Runtime
 {
     std::unique_ptr<Fbo> fbo;
-    bool rendered = false; // renderizada neste frame
+    bool rendered = false;
 
     GLFWwindow* window = nullptr;
-    unsigned int windowVao = 0;
+    std::unique_ptr<OutputPresenter> presenter;
+    long long stallLogMs = kFirstStallLogMs;
     OutputKind windowKind = OutputKind::Disabled;
     int monitorX = 0, monitorY = 0, monitorW = 0, monitorH = 0;
-    int swapInterval = -1;
     std::string windowTitle;
 
     std::unique_ptr<SpoutOutput> spout;
@@ -180,7 +177,7 @@ struct OutputRenderer::Runtime
 
     ScreenStatus status = ScreenStatus::Idle;
     bool missingWarned = false;
-    std::string failedSignature; // evita tentar recriar a janela a cada frame depois de falhar
+    std::string failedSignature;
 };
 
 OutputRenderer::OutputRenderer(GLFWwindow* mainWindow) : mainWindow_(mainWindow)
@@ -203,7 +200,7 @@ OutputRenderer::~OutputRenderer()
 
     for (auto& [id, rt] : runtimes_)
         destroyWindow(*rt);
-    runtimes_.clear(); // FBOs e senders Spout com o contexto principal atual
+    runtimes_.clear();
     labels_.clear();
     if (vao_)
         glDeleteVertexArrays(1, &vao_);
@@ -316,9 +313,6 @@ bool OutputRenderer::readScreen(int screenId, std::vector<unsigned char>& rgba, 
     return true;
 }
 
-// ---------------------------------------------------------------------------------------------
-// Janelas de saída
-
 bool OutputRenderer::createWindow(const Screen& screen, Runtime& rt, const MonitorInfo* monitor)
 {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -326,10 +320,10 @@ bool OutputRenderer::createWindow(const Screen& screen, Runtime& rt, const Monit
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_VISIBLE, GLFW_TRUE);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-    glfwWindowHint(GLFW_DECORATED, monitor ? GLFW_FALSE : GLFW_TRUE); // monitor: sem borda (borderless fullscreen)
+    glfwWindowHint(GLFW_DECORATED, monitor ? GLFW_FALSE : GLFW_TRUE);
     glfwWindowHint(GLFW_FLOATING, monitor ? GLFW_TRUE : GLFW_FALSE);
     glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_FALSE);
-    glfwWindowHint(GLFW_FOCUSED, GLFW_FALSE);       // não rouba o foco da interface
+    glfwWindowHint(GLFW_FOCUSED, GLFW_FALSE);
     glfwWindowHint(GLFW_FOCUS_ON_SHOW, GLFW_FALSE);
 
     int w = 0, h = 0;
@@ -339,7 +333,6 @@ bool OutputRenderer::createWindow(const Screen& screen, Runtime& rt, const Monit
         glfwWindowHint(GLFW_POSITION_X, monitor->x);
         glfwWindowHint(GLFW_POSITION_Y, monitor->y);
     } else {
-        // Janela de teste: resolução da Screen reduzida para caber em 1280x720 (o conteúdo escala)
         const double k = std::min(1.0, std::min(1280.0 / screen.width, 720.0 / screen.height));
         w = std::max(160, static_cast<int>(screen.width * k));
         h = std::max(90, static_cast<int>(screen.height * k));
@@ -349,7 +342,6 @@ bool OutputRenderer::createWindow(const Screen& screen, Runtime& rt, const Monit
 
     rt.windowTitle = "BSL Stage — Saída: " + screen.name;
     GLFWwindow* win = glfwCreateWindow(w, h, rt.windowTitle.c_str(), nullptr, mainWindow_);
-    // Restaura o padrão para não vazar dicas para outras janelas
     glfwWindowHint(GLFW_DECORATED, GLFW_TRUE);
     glfwWindowHint(GLFW_FLOATING, GLFW_FALSE);
     glfwWindowHint(GLFW_FOCUSED, GLFW_TRUE);
@@ -366,15 +358,10 @@ bool OutputRenderer::createWindow(const Screen& screen, Runtime& rt, const Monit
     }
     glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
 
-    // O VAO é do contexto desta janela (VAOs não são compartilhados)
-    glfwMakeContextCurrent(win);
-    glGenVertexArrays(1, &rt.windowVao);
-    glfwSwapInterval(0);
-    glfwMakeContextCurrent(mainWindow_);
-
     rt.window = win;
     rt.windowKind = monitor ? OutputKind::Monitor : OutputKind::Window;
-    rt.swapInterval = 0;
+    rt.presenter = std::make_unique<OutputPresenter>(win, blitShader_->id(), !monitor);
+    rt.stallLogMs = kFirstStallLogMs;
     if (monitor) {
         rt.monitorX = monitor->x;
         rt.monitorY = monitor->y;
@@ -388,11 +375,7 @@ void OutputRenderer::destroyWindow(Runtime& rt)
 {
     if (!rt.window)
         return;
-    glfwMakeContextCurrent(rt.window);
-    if (rt.windowVao)
-        glDeleteVertexArrays(1, &rt.windowVao);
-    rt.windowVao = 0;
-    glfwMakeContextCurrent(mainWindow_);
+    rt.presenter.reset();
     glfwDestroyWindow(rt.window);
     rt.window = nullptr;
     rt.windowKind = OutputKind::Disabled;
@@ -447,7 +430,7 @@ void OutputRenderer::syncTarget(Screen& screen, Runtime& rt, std::vector<bool>& 
                       + std::to_string(m.height) + ")");
         }
         if (glfwWindowShouldClose(rt.window))
-            glfwSetWindowShouldClose(rt.window, GLFW_FALSE); // Alt+F4 / Esc não fecham a saída no meio do show
+            glfwSetWindowShouldClose(rt.window, GLFW_FALSE);
         rt.status = ScreenStatus::Active;
         break;
     }
@@ -470,7 +453,7 @@ void OutputRenderer::syncTarget(Screen& screen, Runtime& rt, std::vector<bool>& 
             }
             rt.failedSignature.clear();
         }
-        if (glfwWindowShouldClose(rt.window)) { // o usuário fechou a janela de teste
+        if (glfwWindowShouldClose(rt.window)) {
             log::info("Janela de saída \"" + screen.name + "\" fechada: destino desativado");
             destroyWindow(rt);
             screen.kind = OutputKind::Disabled;
@@ -498,7 +481,7 @@ void OutputRenderer::syncTarget(Screen& screen, Runtime& rt, std::vector<bool>& 
         rt.spout.reset();
         if (!rt.ndi)
             rt.ndi = std::make_unique<NdiOutput>();
-        if (!rt.ndi->runtimeAvailable()) { // sem o runtime do NDI: a Screen não sai (o resto do app segue)
+        if (!rt.ndi->runtimeAvailable()) {
             rt.status = ScreenStatus::Error;
             if (!rt.ndiWarned) {
                 rt.ndiWarned = true;
@@ -515,9 +498,6 @@ void OutputRenderer::syncTarget(Screen& screen, Runtime& rt, std::vector<bool>& 
         break;
     }
 }
-
-// ---------------------------------------------------------------------------------------------
-// Render
 
 unsigned int OutputRenderer::labelTexture(const std::string& line1, float px1, const std::string& line2, float px2,
                                           int& width, int& height)
@@ -571,7 +551,6 @@ void OutputRenderer::renderScreen(const Screen& screen, Runtime& rt, const Compo
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
-    // Mistura aditiva (RGB); o alpha do FBO fica opaco
     glEnable(GL_BLEND);
     glBlendFuncSeparate(GL_ONE, GL_ONE, GL_ZERO, GL_ONE);
     glBlendEquation(GL_FUNC_ADD);
@@ -607,9 +586,8 @@ void OutputRenderer::renderScreen(const Screen& screen, Runtime& rt, const Compo
 
         Mat3 forward, inverse;
         if (!squareToQuad(slice.corners, forward) || !invert(forward, inverse))
-            continue; // quad degenerado
+            continue;
 
-        // Lados (topo, direita, base, esquerda) como retas com distância assinada positiva por dentro
         Point2 centroid{0.0f, 0.0f};
         for (const Point2& c : slice.corners) {
             centroid.x += c.x * 0.25f;
@@ -653,9 +631,22 @@ void OutputRenderer::renderScreen(const Screen& screen, Runtime& rt, const Compo
                     static_cast<float>(slice.input.w), static_cast<float>(slice.input.h));
         sh_.setVec2("uFlip", slice.flipH ? 1.0f : 0.0f, slice.flipV ? 1.0f : 0.0f);
         sh_.setFloat("uOpacity", std::clamp(slice.opacity, 0.0f, 1.0f));
-        sh_.setVec3("uGain", slice.gain[0], slice.gain[1], slice.gain[2]);
-        sh_.setFloat("uBright", slice.brightness);
-        // Filtro de profundidade: so com Z-Slice ativo na fonte escolhida; senao o slice mostra tudo (e a interface avisa)
+        GLuint sourceTex = canvas.texture();
+        bool blackSource = false;
+        if (slice.source == kSliceFromLayer) {
+            GLuint layerTex = 0;
+            if (canvas.layerView(slice.layerId, slice.includeMaster, layerTex, slice.applyLayerTransform) && layerTex != 0)
+                sourceTex = layerTex;
+            else
+                blackSource = true;
+        }
+        if (blackSource && !identify_)
+            continue;
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, sourceTex);
+        sh_.setVec3("uGain", blackSource ? 0.0f : slice.gain[0], blackSource ? 0.0f : slice.gain[1],
+                    blackSource ? 0.0f : slice.gain[2]);
+        sh_.setFloat("uBright", blackSource ? 0.0f : slice.brightness);
         int zone = -1;
         if (slice.zFilter > kZoneAll && slice.zFilter < kZoneFilterCount) {
             ZoneMask zm;
@@ -670,7 +661,6 @@ void OutputRenderer::renderScreen(const Screen& screen, Runtime& rt, const Compo
         const float* idc = kIdColors[sliceNumber % 6];
         sh_.setVec3("uIdColor", idc[0], idc[1], idc[2]);
 
-        // Grade de teste: células de ~100 px na saída
         auto dist = [](Point2 a, Point2 b) { return std::hypot(b.x - a.x, b.y - a.y); };
         const float outW = 0.5f * (dist(slice.corners[kCornerTL], slice.corners[kCornerTR])
                                    + dist(slice.corners[kCornerBL], slice.corners[kCornerBR]));
@@ -678,7 +668,6 @@ void OutputRenderer::renderScreen(const Screen& screen, Runtime& rt, const Compo
                                    + dist(slice.corners[kCornerTR], slice.corners[kCornerBR]));
         sh_.setVec2("uGridCells", std::max(2.0f, std::round(outW / 100.0f)), std::max(2.0f, std::round(outH / 100.0f)));
 
-        // Scissor = caixa do quad (o triângulo de tela cheia só gasta fragmentos aí)
         float minX = slice.corners[0].x, maxX = minX, minY = slice.corners[0].y, maxY = minY;
         for (const Point2& c : slice.corners) {
             minX = std::min(minX, c.x);
@@ -702,7 +691,6 @@ void OutputRenderer::renderScreen(const Screen& screen, Runtime& rt, const Compo
     glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE0);
 
-    // Nomes dos slices por cima (só no modo Identificar)
     if (identify_ && !placed.empty()) {
         glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
         labelShader_->use();
@@ -731,52 +719,20 @@ void OutputRenderer::renderScreen(const Screen& screen, Runtime& rt, const Compo
     rt.rendered = true;
 }
 
-void OutputRenderer::present(Runtime& rt, const Screen& screen, bool vsync)
+void OutputRenderer::watchStall(Runtime& rt, const Screen& screen)
 {
-    // Contexto da janela de saída (a textura do FBO é compartilhada)
-    glfwMakeContextCurrent(rt.window);
-
-    int fw = 0, fh = 0;
-    glfwGetFramebufferSize(rt.window, &fw, &fh);
-    if (fw <= 0 || fh <= 0 || !rt.fbo)
-        return; // minimizada
-
-    const int interval = vsync ? 1 : 0;
-    if (rt.swapInterval != interval) {
-        glfwSwapInterval(interval);
-        rt.swapInterval = interval;
+    const long long stalled = rt.presenter->stalledMs();
+    if (stalled < kFirstStallLogMs) {
+        if (rt.stallLogMs != kFirstStallLogMs) {
+            log::info("Saída \"" + screen.name + "\": apresentação retomada");
+            rt.stallLogMs = kFirstStallLogMs;
+        }
+        return;
     }
-
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glDisable(GL_BLEND);
-    glDisable(GL_SCISSOR_TEST);
-    glDisable(GL_DEPTH_TEST);
-    glViewport(0, 0, fw, fh);
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-
-    // Monitor: 1:1. Janela comum: a imagem inteira, mantendo a proporção (barras pretas)
-    int vx = 0, vy = 0, vw = fw, vh = fh;
-    if (rt.windowKind == OutputKind::Window) {
-        const double k = std::min(static_cast<double>(fw) / screen.width, static_cast<double>(fh) / screen.height);
-        vw = std::max(1, static_cast<int>(screen.width * k));
-        vh = std::max(1, static_cast<int>(screen.height * k));
-        vx = (fw - vw) / 2;
-        vy = (fh - vh) / 2;
+    if (stalled >= rt.stallLogMs) {
+        log::warn("Saída \"" + screen.name + "\": apresentação parada há " + std::to_string(stalled / 1000) + " s");
+        rt.stallLogMs = (stalled / kStallLogStepMs + 1) * kStallLogStepMs;
     }
-    glViewport(vx, vy, vw, vh);
-
-    blitShader_->use();
-    blitShader_->setInt("uTex", 0);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, rt.fbo->texture());
-    glBindVertexArray(rt.windowVao);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
-    glBindVertexArray(0);
-    glBindTexture(GL_TEXTURE_2D, 0);
-    glUseProgram(0);
-
-    glfwSwapBuffers(rt.window);
 }
 
 void OutputRenderer::render(OutputSetup& setup, const Compositor& canvas, int previewScreenId)
@@ -786,7 +742,6 @@ void OutputRenderer::render(OutputSetup& setup, const Compositor& canvas, int pr
         refreshMonitors();
     }
 
-    // Remove o que sobrou de Screens apagadas
     for (auto it = runtimes_.begin(); it != runtimes_.end();) {
         if (setup.findScreenIndex(it->first) < 0) {
             destroyWindow(*it->second);
@@ -800,12 +755,7 @@ void OutputRenderer::render(OutputSetup& setup, const Compositor& canvas, int pr
     glGetIntegerv(GL_VIEWPORT, prevViewport);
 
     std::vector<bool> claimed(monitors_.size(), false);
-    struct Present
-    {
-        Runtime* rt;
-        const Screen* screen;
-    };
-    std::vector<Present> presents;
+    bool anyWindow = false;
 
     for (Screen& screen : setup.screens) {
         Runtime& rt = runtimeFor(screen.id);
@@ -824,7 +774,6 @@ void OutputRenderer::render(OutputSetup& setup, const Compositor& canvas, int pr
             rt.missingWarned = false;
             rt.failedSignature.clear();
         }
-        // syncTarget pode ter desativado a Screen (janela fechada) e clampado a resolução do monitor
         screen.width = std::clamp(screen.width, kMinScreenSize, kMaxScreenSize);
         screen.height = std::clamp(screen.height, kMinScreenSize, kMaxScreenSize);
 
@@ -832,7 +781,7 @@ void OutputRenderer::render(OutputSetup& setup, const Compositor& canvas, int pr
         if (output || screen.id == previewScreenId) {
             renderScreen(screen, rt, canvas);
         } else {
-            rt.fbo.reset(); // não ocupa VRAM sem uso
+            rt.fbo.reset();
         }
 
         if (output && rt.rendered) {
@@ -846,47 +795,22 @@ void OutputRenderer::render(OutputSetup& setup, const Compositor& canvas, int pr
                 rt.ndiWarned = true;
                 log::warn("NDI: não foi possível enviar \"" + screen.ndiName + "\"");
             }
-            if (rt.window)
-                presents.push_back({&rt, &screen});
-        }
-    }
-
-    // Janelas de saída: espera a GPU terminar de escrever as texturas compartilhadas (fence)
-    // antes de ler no outro contexto, e depois devolve o contexto principal.
-    // Só uma janela fica com vsync (a primeira em Monitor, senão a primeira Janela); as demais
-    // trocam buffers sem esperar, para as janelas não se atrasarem umas às outras.
-    vsyncWindow_ = !presents.empty();
-    if (!presents.empty()) {
-        GLsync fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-        glFlush();
-
-        size_t vsyncIndex = 0;
-        for (size_t i = 0; i < presents.size(); ++i) {
-            if (presents[i].rt->windowKind == OutputKind::Monitor) {
-                vsyncIndex = i;
-                break;
+            if (rt.window && rt.presenter) {
+                int fw = 0, fh = 0;
+                glfwGetFramebufferSize(rt.window, &fw, &fh);
+                rt.presenter->submit(*rt.fbo, fw, fh);
             }
         }
-        std::vector<GLsync> done;
-        for (size_t i = 0; i < presents.size(); ++i) {
-            Runtime& rt = *presents[i].rt;
-            glfwMakeContextCurrent(rt.window);
-            glWaitSync(fence, 0, GL_TIMEOUT_IGNORED);
-            present(rt, *presents[i].screen, i == vsyncIndex);
-            done.push_back(glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0));
-            glFlush();
+        if (rt.window && rt.presenter) {
+            anyWindow = true;
+            watchStall(rt, screen);
         }
-        glfwMakeContextCurrent(mainWindow_);
-        // A GPU só reescreve os FBOs no próximo frame depois que as janelas terminaram de ler
-        for (GLsync d : done) {
-            glWaitSync(d, 0, GL_TIMEOUT_IGNORED);
-            glDeleteSync(d);
-        }
-        glDeleteSync(fence);
     }
+
+    windowOutput_ = anyWindow;
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
 }
 
-} // namespace bsl
+}

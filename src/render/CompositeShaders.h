@@ -1,7 +1,5 @@
 #pragma once
 
-// Trechos de GLSL compartilhados pelo Compositor (saida) e pela Previa de camada (um passe de blend sobre preto).
-
 #include <string>
 
 namespace bsl::shaders {
@@ -14,9 +12,6 @@ void main()
 }
 )";
 
-// Amostra a fonte encaixada no canvas: 'cuv' = posicao no canvas (y para cima), 'size' = tamanho da fonte na tela em
-// fracao do canvas (fit mode). 'top' = 1 quando a linha 0 da textura e o topo da imagem (fontes e cadeias de clip);
-// 0 quando e a base (FBOs do canvas e da cadeia de camada).
 inline constexpr const char* const kSampleSource = R"(
 vec4 sampleSource(sampler2D tex, vec2 cuv, vec2 size, int top)
 {
@@ -27,38 +22,56 @@ vec4 sampleSource(sampler2D tex, vec2 cuv, vec2 size, int top)
 }
 )";
 
-// Um passe por camada: base (acumulado) + fonte -> novo acumulado.
-// Alpha da fonte e reto; resultado = mix(base, blend(base, src.rgb), src.a * opacidade).
 inline constexpr const char* const kBlendBody = R"(
 uniform sampler2D uBase;
 uniform sampler2D uSrc;
-uniform vec2 uRegion;   // tamanho em pixels da area renderizada (previa em escala)
-uniform vec2 uSize;     // tamanho da fonte na tela, em fracao do canvas (fit mode)
+uniform vec2 uRegion;
+uniform vec2 uSize;
 uniform int uSrcTop;
 uniform float uOpacity;
 uniform int uBlend;
+uniform int uXf;
+uniform vec4 uXfBox;
+uniform vec4 uXfPivot;
+uniform vec4 uXfCrop;
+uniform vec2 uCanvas;
+
+vec2 transformedUv(vec2 cuv, out float coverage)
+{
+    vec2 p = vec2(cuv.x * uCanvas.x, (1.0 - cuv.y) * uCanvas.y);
+    vec2 d = p - uXfPivot.xy;
+    vec2 l = uXfPivot.xy + vec2(uXfPivot.z * d.x + uXfPivot.w * d.y, -uXfPivot.w * d.x + uXfPivot.z * d.y) - uXfBox.xy;
+    float edge = min(min(l.x - uXfCrop.x, uXfBox.z - uXfCrop.z - l.x), min(l.y - uXfCrop.y, uXfBox.w - uXfCrop.w - l.y));
+    coverage = clamp(edge + 0.5, 0.0, 1.0);
+    vec2 uv = clamp(l / uXfBox.zw, 0.0, 1.0);
+    return vec2(uv.x, 1.0 - uv.y);
+}
 
 vec3 blendColors(vec3 b, vec3 s)
 {
     switch (uBlend) {
-    case 1: return min(b + s, 1.0);                       // Adicionar
-    case 2: return max(b - s, 0.0);                       // Subtrair
-    case 3: return b * s;                                 // Multiplicar
-    case 4: return 1.0 - (1.0 - b) * (1.0 - s);          // Tela
-    case 5: return mix(2.0 * b * s,                       // Sobrepor
+    case 1: return min(b + s, 1.0);
+    case 2: return max(b - s, 0.0);
+    case 3: return b * s;
+    case 4: return 1.0 - (1.0 - b) * (1.0 - s);
+    case 5: return mix(2.0 * b * s,
                        1.0 - 2.0 * (1.0 - b) * (1.0 - s), step(0.5, b));
-    case 6: return max(b, s);                             // Clarear
-    case 7: return min(b, s);                             // Escurecer
-    case 8: return abs(b - s);                            // Diferenca
-    default: return s;                                    // Normal
+    case 6: return max(b, s);
+    case 7: return min(b, s);
+    case 8: return abs(b - s);
+    default: return s;
     }
 }
 
 void main()
 {
     vec4 base = texelFetch(uBase, ivec2(gl_FragCoord.xy), 0);
-    vec4 src = sampleSource(uSrc, gl_FragCoord.xy / uRegion, uSize, uSrcTop);
-    float a = src.a * uOpacity;
+    vec2 cuv = gl_FragCoord.xy / uRegion;
+    float coverage = 1.0;
+    if (uXf != 0)
+        cuv = transformedUv(cuv, coverage);
+    vec4 src = sampleSource(uSrc, cuv, uSize, uSrcTop);
+    float a = src.a * uOpacity * coverage;
     vec3 rgb = mix(base.rgb, blendColors(base.rgb, src.rgb), a);
     fragColor = vec4(rgb, 1.0);
 }
@@ -73,4 +86,4 @@ inline std::string fragment(const char* body, bool withSample)
     return s;
 }
 
-} // namespace bsl::shaders
+}

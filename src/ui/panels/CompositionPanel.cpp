@@ -5,11 +5,14 @@
 #include "app/ProjectSession.h"
 #include "app/Qa.h"
 #include "media/DocInfo.h"
+#include "output/OutputSetup.h"
 #include "render/ThumbnailCache.h"
 #include "ui/Theme.h"
+#include "ui/KeysUi.h"
 #include "ui/Ui.h"
 #include "ui/Widgets.h"
 #include "ui/panels/CaptureTargetChooser.h"
+#include "ui/panels/DmxWindow.h"
 #include "ui/panels/EffectChainWidget.h"
 #include "ui/panels/TransportBar.h"
 
@@ -26,16 +29,15 @@ namespace bsl::ui {
 
 namespace {
 
-// Medidas da grade em dp (px a 100%); tudo passa por dp() para acompanhar a escala da interface.
 float cellW() { return dp(104.0f); }
-float thumbH() { return dp(58.0f); } // ~16:9, igual as miniaturas (160x90)
+float thumbH() { return dp(58.0f); }
 float labelH() { return dp(20.0f); }
 float cellH() { return thumbH() + labelH(); }
 float gap() { return dp(6.0f); }
-float headerH() { return dp(24.0f); }    // faixa de cabeçalho (master / colunas)
-float controlsW() { return dp(240.0f); } // bloco fixo de controles da camada
-float nameH() { return dp(22.0f); }      // faixa do nome da camada
-float ctrlH() { return dp(23.0f); }      // altura dos controles dentro do bloco
+float headerH() { return dp(24.0f); }
+float controlsW() { return dp(240.0f); }
+float nameH() { return dp(22.0f); }
+float ctrlH() { return dp(23.0f); }
 float deckBarH() { return dp(26.0f); }
 float addLayerH() { return dp(26.0f); }
 
@@ -52,7 +54,6 @@ bool contains(ImVec2 a, ImVec2 b, float x, float y)
     return x >= a.x && x < b.x && y >= a.y && y < b.y;
 }
 
-// Texto numa linha só que nunca passa de maxW: corta com reticências (sem partir UTF-8)
 void drawEllipsized(ImDrawList* dl, ImVec2 pos, float maxW, ImU32 color, const std::string& text)
 {
     ImFont* font = ImGui::GetFont();
@@ -65,7 +66,7 @@ void drawEllipsized(ImDrawList* dl, ImVec2 pos, float maxW, ImU32 color, const s
     while (!cut.empty()) {
         cut.pop_back();
         while (!cut.empty() && (static_cast<unsigned char>(cut.back()) & 0xC0) == 0x80)
-            cut.pop_back(); // continuacao de UTF-8: volta ate o inicio do caractere
+            cut.pop_back();
         const std::string candidate = cut + "...";
         if (font->CalcTextSizeA(size, FLT_MAX, 0.0f, candidate.c_str()).x <= maxW) {
             dl->AddText(font, size, pos, color, candidate.c_str());
@@ -74,7 +75,6 @@ void drawEllipsized(ImDrawList* dl, ImVec2 pos, float maxW, ImU32 color, const s
     }
 }
 
-// Estado de edição de nomes (um por vez) e do pedido de exclusão de deck
 int g_renameLayer = -1;
 int g_renameDeck = -1;
 bool g_renameFocus = false;
@@ -89,7 +89,6 @@ void beginRename(int& target, int index, const std::string& current)
     std::snprintf(g_renameBuf, sizeof(g_renameBuf), "%s", current.c_str());
 }
 
-// Campo de edição de nome no lugar. Devolve true quando confirmou (Enter ou perdeu o foco com texto).
 bool renameField(float width, std::string& name)
 {
     if (g_renameFocus) {
@@ -114,20 +113,18 @@ void switchDeck(PanelContext& ctx, int deck)
     Composition& comp = ctx.composition;
     if (!comp.validDeck(deck) || deck == comp.currentDeck)
         return;
-    comp.currentDeck = deck; // o que está tocando continua tocando
+    comp.currentDeck = deck;
     if (ctx.selection.kind == Selection::Kind::Clip)
         ctx.selection = {};
 }
 
-// Célula de clip cujo arquivo não existe: fundo escuro, borda tracejada âmbar e "não encontrado"
-void drawMissingCell(ImDrawList* dl, ImVec2 a, ImVec2 thumbMax, ImVec2 b, const std::string& name)
+void drawMissingCell(ImDrawList* dl, ImVec2 a, ImVec2 thumbMax, ImVec2 b, const std::string& name, const char* text)
 {
     const ImU32 amber = ImGui::GetColorU32(theme::kWarning);
     dl->AddRectFilled(a, b, IM_COL32(18, 18, 19, 255), rounding());
     drawDashedRect(dl, ImVec2(a.x + dp(1.5f), a.y + dp(1.5f)), ImVec2(b.x - dp(1.5f), b.y - dp(1.5f)), amber, dp(5.0f),
                    dp(3.0f));
 
-    const char* text = "não encontrado";
     ImFont* font = ImGui::GetFont();
     float size = ImGui::GetFontSize();
     const float maxW = (b.x - a.x) - dp(12.0f);
@@ -144,7 +141,6 @@ void drawMissingCell(ImDrawList* dl, ImVec2 a, ImVec2 thumbMax, ImVec2 b, const 
     dl->PopClipRect();
 }
 
-// Preenche as celulas a partir de (layer, column) com os arquivos soltos
 void applyFileDrop(Composition& comp, Selection& selection, int layer, int column,
                    const std::vector<std::filesystem::path>& files)
 {
@@ -168,7 +164,6 @@ void applyFileDrop(Composition& comp, Selection& selection, int layer, int colum
     }
 }
 
-// --- Cabeçalho do bloco de camadas: X (limpar todas), B (bypass master), opacidade master ---
 void drawMasterHeader(PanelContext& ctx, ImVec2 pos, Deferred& deferred)
 {
     Composition& comp = ctx.composition;
@@ -189,13 +184,13 @@ void drawMasterHeader(PanelContext& ctx, ImVec2 pos, Deferred& deferred)
     dimLabel("Master");
     ImGui::SameLine();
     const float room = pos.x + controlsW() - ImGui::GetCursorScreenPos().x - dp(2.0f);
+    hotDmx({dmx::ParamKind::MasterOpacity});
     hotPercent("##master_opacidade", comp.masterOpacity, 1.0f, room / uiScale());
 
     ImGui::PopID();
     ImGui::PopStyleVar(2);
 }
 
-// --- Bloco de controles de uma camada (fixo à esquerda) ---
 void drawLayerControls(PanelContext& ctx, int li, ImVec2 pos, Deferred& deferred)
 {
     Composition& comp = ctx.composition;
@@ -204,7 +199,7 @@ void drawLayerControls(PanelContext& ctx, int li, ImVec2 pos, Deferred& deferred
     const bool selected = ctx.selection.kind != Selection::Kind::None && ctx.selection.layer == li;
     const bool playing = layer.activeColumn >= 0;
     const std::string tag = "camada " + std::to_string(li + 1);
-    const std::string ids = "##camada_" + std::to_string(li + 1) + "_"; // IDs estaveis dos controles (uiqa clica por eles)
+    const std::string ids = "##camada_" + std::to_string(li + 1) + "_";
 
     ImGui::PushID(li);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, dp(6.0f, 3.0f));
@@ -213,7 +208,6 @@ void drawLayerControls(PanelContext& ctx, int li, ImVec2 pos, Deferred& deferred
     const ImVec2 end(pos.x + controlsW(), pos.y + cellH());
     dl->AddRectFilled(pos, end, ImGui::GetColorU32(theme::kBackground), rounding());
 
-    // Faixa do nome: vermelha quando a camada está selecionada
     const ImVec2 nameEnd(pos.x + controlsW(), pos.y + nameH());
     dl->AddRectFilled(pos, nameEnd, ImGui::GetColorU32(selected ? theme::kAccent : theme::kPanelRaised), rounding(),
                       ImDrawFlags_RoundCornersTop);
@@ -224,7 +218,6 @@ void drawLayerControls(PanelContext& ctx, int li, ImVec2 pos, Deferred& deferred
             g_renameLayer = -1;
         qa::note(tag + " renomear");
     } else {
-        // Olho (bypass): aberto = camada ativa, riscado = em bypass; clicar alterna
         const ImU32 eyeCol = ImGui::GetColorU32(layer.bypass ? ImVec4(1, 1, 1, selected ? 0.55f : 0.35f)
                                                              : (selected ? theme::kOnAccent : theme::kText));
         if (iconButton(layer.bypass ? ICON_EYE_OFF : ICON_EYE, (ids + "visivel").c_str(),
@@ -232,31 +225,74 @@ void drawLayerControls(PanelContext& ctx, int li, ImVec2 pos, Deferred& deferred
                        ImVec2(nameH(), nameH()), IconButton_Flat, eyeCol))
             layer.bypass = !layer.bypass;
         ImGui::SameLine(0.0f, 0.0f);
-        ImGui::InvisibleButton("##nome", ImVec2(controlsW() - nameH(), nameH()));
+        const float linkRight = nameEnd.x - dp(52.0f);
+        ImGui::InvisibleButton("##nome", ImVec2(linkRight - nameH() - ImGui::GetCursorScreenPos().x, nameH()));
         qa::note(tag + " nome");
         if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
             ctx.selection = {Selection::Kind::Layer, li, -1};
-        if (const std::string dropped = acceptEffectDrop(); !dropped.empty()) { // efeito solto no cabeçalho: vai para a camada
+        if (const std::string dropped = acceptEffectDrop(); !dropped.empty()) {
             layer.effects.add(dropped);
             ctx.selection = {Selection::Kind::Layer, li, -1};
         }
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
             beginRename(g_renameLayer, li, layer.name);
-        if (ImGui::IsItemHovered())
+        if (ImGui::IsItemHovered() && !ImGui::IsPopupOpen("##layerctx"))
             ImGui::SetTooltip("Clique para selecionar, duplo clique para renomear");
+        if (ImGui::BeginPopupContextItem("##layerctx")) {
+            keyAssignMenu(control::Target::layerOf(li), false);
+            dmxActionMenu(control::Target::layerOf(li));
+            ImGui::EndPopup();
+        }
 
-        dl->PushClipRect(pos, ImVec2(nameEnd.x - dp(24.0f), nameEnd.y), true);
+        const std::vector<std::string> linked = slicesLinkedToLayer(ctx.output, layer.id);
+        const float sealW = layer.sliceOnly ? ImGui::CalcTextSize("SLICE").x + dp(10.0f) : 0.0f;
+        std::string linkTip = layer.sliceOnly ? "Só nos slices vinculados: a camada não aparece no canvas principal. Clique para "
+                                                "voltar a compor no canvas"
+                                              : "Clique para usar esta camada só nos slices vinculados (ela sai do canvas "
+                                                "principal). Vincule o slice no Mapeamento";
+        if (linked.empty()) {
+            linkTip += "\n\nNenhum slice vinculado a esta camada ainda.";
+        } else {
+            linkTip += "\n\nSlices vinculados:";
+            for (const std::string& n : linked)
+                linkTip += "\n  " + n;
+        }
+        ImGui::SameLine(0.0f, 0.0f);
+        const bool hasLink = layer.sliceOnly || !linked.empty();
+        const ImU32 linkCol = ImGui::GetColorU32(
+            layer.sliceOnly ? (selected ? theme::kOnAccent : theme::kAccent)
+                            : (hasLink ? (selected ? theme::kOnAccent : theme::kText)
+                                       : ImVec4(1, 1, 1, selected ? 0.55f : 0.30f)));
+        if (iconButton(ICON_LINK, (ids + "slice").c_str(), linkTip.c_str(), ImVec2(nameH(), nameH()), IconButton_Flat, linkCol))
+            layer.sliceOnly = !layer.sliceOnly;
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::InvisibleButton("##nome_dir", ImVec2(nameEnd.x - ImGui::GetCursorScreenPos().x, nameH()));
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+            ctx.selection = {Selection::Kind::Layer, li, -1};
+
+        const std::string layerHint = keyHint(control::Target::layerOf(li));
+        const float hintW = layerHint.empty() ? 0.0f : keyHintWidth(layerHint) + dp(3.0f);
+        dl->PushClipRect(pos, ImVec2(linkRight - nameH() - sealW - hintW, nameEnd.y), true);
         drawEllipsized(dl, ImVec2(pos.x + nameH() + dp(2.0f), pos.y + (nameH() - ImGui::GetFontSize()) * 0.5f),
-                       controlsW() - nameH() - dp(30.0f), ImGui::GetColorU32(selected ? theme::kOnAccent : theme::kText),
-                       layer.name);
+                       linkRight - nameH() - sealW - hintW - (pos.x + nameH() + dp(2.0f)) - dp(2.0f),
+                       ImGui::GetColorU32(selected ? theme::kOnAccent : theme::kText), layer.name);
         dl->PopClipRect();
+        if (!layerHint.empty())
+            drawKeyHint(dl, ImVec2(linkRight - nameH() - sealW - hintW + dp(1.0f), pos.y + dp(3.0f)), layerHint);
+        if (layer.sliceOnly) {
+            const ImVec2 ts = ImGui::CalcTextSize("SLICE");
+            const ImVec2 a(linkRight - nameH() - sealW, pos.y + (nameH() - ts.y) * 0.5f - dp(1.0f));
+            const ImVec2 b(a.x + sealW - dp(2.0f), a.y + ts.y + dp(2.0f));
+            dl->AddRectFilled(a, b, ImGui::GetColorU32(selected ? theme::kOnAccent : theme::kAccent), dp(3.0f));
+            dl->AddText(ImVec2(a.x + dp(4.0f), a.y + dp(1.0f)),
+                        ImGui::GetColorU32(selected ? theme::kAccent : theme::kOnAccent), "SLICE");
+        }
         if (playing)
             drawPlayTriangle(dl, ImVec2(nameEnd.x - dp(13.0f), pos.y + nameH() * 0.5f), dp(9.0f),
                              ImGui::GetColorU32(selected ? theme::kOnAccent : theme::kAccent));
         drawEffectsBadge(dl, ImVec2(nameEnd.x - dp(36.0f), pos.y + nameH() * 0.5f), layer.effects);
     }
 
-    // X / B / S + blend
     const float rowY = pos.y + nameH() + dp(4.0f);
     ImGui::SetCursorScreenPos(ImVec2(pos.x + dp(4.0f), rowY));
     const std::string stopTip = "Parar " + layer.name;
@@ -279,20 +315,24 @@ void drawLayerControls(PanelContext& ctx, int li, ImVec2 pos, Deferred& deferred
         ImGui::EndCombo();
     }
     qa::note(tag + " blend");
+    if (ImGui::BeginPopupContextItem("##blendctx")) {
+        dmxParamMenu({dmx::ParamKind::LayerBlend, layer.id});
+        ImGui::EndPopup();
+    }
+    drawKeyFlash(dl, pos, end, keyFlash(control::Target::layerOf(li)), rounding());
 
-    // Opacidade
     ImGui::SetCursorScreenPos(ImVec2(pos.x + dp(8.0f), rowY + ctrlH() + dp(4.0f)));
     ImGui::AlignTextToFramePadding();
     dimLabel("Opacidade");
     ImGui::SameLine();
     const float roomX = end.x - dp(8.0f) - ImGui::GetCursorScreenPos().x;
+    hotDmx({dmx::ParamKind::LayerOpacity, layer.id});
     hotPercent((ids + "opacidade").c_str(), layer.opacity, 1.0f, roomX / uiScale());
 
     ImGui::PopStyleVar(2);
     ImGui::PopID();
 }
 
-// --- Abas de deck ---
 void drawDeckBar(PanelContext& ctx, Deferred& deferred)
 {
     Composition& comp = ctx.composition;
@@ -361,7 +401,6 @@ void drawDeckBar(PanelContext& ctx, Deferred& deferred)
 
     ImGui::PopStyleVar(2);
 
-    // Confirmação para excluir deck que tem clips
     if (g_openDeleteConfirm) {
         ImGui::OpenPopup("Excluir deck?");
         g_openDeleteConfirm = false;
@@ -394,7 +433,6 @@ void drawDeckBar(PanelContext& ctx, Deferred& deferred)
     }
 }
 
-// --- Células de clip + cabeçalhos de coluna (dentro do child que rola na horizontal) ---
 void drawCells(PanelContext& ctx, Deferred& deferred, bool& addColumnRequested, float contentH)
 {
     Composition& comp = ctx.composition;
@@ -412,7 +450,6 @@ void drawCells(PanelContext& ctx, Deferred& deferred, bool& addColumnRequested, 
     const bool dropInWindow = drop.pending && contains(winMin, winMax, drop.x, drop.y);
     CellRef dropCell{-1, -1};
 
-    // Cabeçalhos: clique dispara a coluna inteira
     for (int col = 0; col < columns; ++col) {
         bool colActive = false;
         for (int l = 0; l < layers; ++l)
@@ -425,15 +462,25 @@ void drawCells(PanelContext& ctx, Deferred& deferred, bool& addColumnRequested, 
             deferred.push_back([&comp, col] { comp.triggerColumn(col); });
         qa::note("coluna " + std::to_string(col + 1));
         const bool hovered = ImGui::IsItemHovered();
+        const control::Target colTarget = control::Target::columnOf(deckIndex, col);
+        if (ImGui::BeginPopupContextItem("##colctx")) {
+            keyAssignMenu(colTarget, false);
+            dmxActionMenu(colTarget);
+            ImGui::EndPopup();
+        }
         const ImVec2 b(a.x + cw, a.y + headerH());
         dl->AddRectFilled(a, b, ImGui::GetColorU32(hovered ? theme::kPanelHover : theme::kPanelRaised), rounding());
         const ImU32 fg = ImGui::GetColorU32(colActive ? theme::kAccent : theme::kText);
         drawPlayTriangle(dl, ImVec2(a.x + dp(14.0f), (a.y + b.y) * 0.5f), dp(10.0f), fg);
         const std::string label = "Coluna " + std::to_string(col + 1);
         const ImVec2 ts = ImGui::CalcTextSize(label.c_str());
-        dl->AddText(ImVec2(a.x + dp(26.0f) + (cw - dp(26.0f) - ts.x) * 0.5f, a.y + (headerH() - ts.y) * 0.5f), fg,
-                    label.c_str());
-        if (hovered)
+        const std::string colHint = keyHint(colTarget);
+        const float labelX = colHint.empty() ? a.x + dp(26.0f) + (cw - dp(26.0f) - ts.x) * 0.5f : a.x + dp(26.0f);
+        dl->AddText(ImVec2(labelX, a.y + (headerH() - ts.y) * 0.5f), fg, label.c_str());
+        if (!colHint.empty())
+            drawKeyHint(dl, ImVec2(b.x - keyHintWidth(colHint) - dp(3.0f), a.y + dp(3.0f)), colHint);
+        drawKeyFlash(dl, a, b, keyFlash(colTarget), rounding());
+        if (hovered && !ImGui::IsPopupOpen("##colctx"))
             ImGui::SetTooltip("Disparar coluna %d", col + 1);
         ImGui::PopID();
     }
@@ -441,7 +488,6 @@ void drawCells(PanelContext& ctx, Deferred& deferred, bool& addColumnRequested, 
     if (iconButton(ICON_PLUS, "##coluna_nova", "Adicionar coluna", ImVec2(headerH() + dp(8.0f), headerH())))
         addColumnRequested = true;
 
-    // Linhas: camada de cima no topo
     for (int vr = 0; vr < layers; ++vr) {
         const int li = layers - 1 - vr;
         const float y = rowsY + static_cast<float>(vr) * (ch + gp);
@@ -460,7 +506,6 @@ void drawCells(PanelContext& ctx, Deferred& deferred, bool& addColumnRequested, 
             const std::string cellTag = "celula L" + std::to_string(li + 1) + " C" + std::to_string(col + 1);
             qa::note(cellTag);
             const bool hovered = ImGui::IsItemHovered();
-            // A célula tem duas áreas, como no Resolume: a miniatura (vai para a saída) e a faixa do nome (só ver na prévia)
             const bool overName = hovered && ImGui::GetIO().MousePos.y >= thumbMax.y;
             const bool overThumb = hovered && !overName;
             qa::noteRect(cellTag + " nome", a.x, thumbMax.y, b.x, b.y);
@@ -468,8 +513,6 @@ void drawCells(PanelContext& ctx, Deferred& deferred, bool& addColumnRequested, 
             if (dropInWindow && contains(a, b, drop.x, drop.y))
                 dropCell = {li, col};
 
-            // Soltar o clique (sem arrastar) na miniatura dispara e seleciona; na faixa do nome só seleciona (a
-            // Prévia carrega o clip, a saída não muda). Pressionar já seleciona nos dois casos.
             if (pressed) {
                 const bool onName = ImGui::GetIO().MouseClickedPos[ImGuiMouseButton_Left].y >= thumbMax.y;
                 deferred.push_back([&comp, &ctx, li, col, onName] {
@@ -481,7 +524,6 @@ void drawCells(PanelContext& ctx, Deferred& deferred, bool& addColumnRequested, 
                 ctx.selection = {Selection::Kind::Clip, li, col};
             }
 
-            // Arrastar para mover/trocar
             if (!clip.empty() && ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
                 const CellRef ref{li, col};
                 ImGui::SetDragDropPayload("BSL_CLIP_CELL", &ref, sizeof(ref));
@@ -502,7 +544,6 @@ void drawCells(PanelContext& ctx, Deferred& deferred, bool& addColumnRequested, 
                         afterClipPlaced(comp, li, col);
                     });
                 } else if (const ImGuiPayload* fxp = ImGui::AcceptDragDropPayload(kEffectPayload)) {
-                    // Efeito solto na célula: entra na cadeia do clip (célula vazia não tem onde recebê-lo)
                     const std::string type(static_cast<const char*>(fxp->Data));
                     if (!clip.empty()) {
                         deferred.push_back([&comp, &ctx, li, col, type] {
@@ -516,18 +557,17 @@ void drawCells(PanelContext& ctx, Deferred& deferred, bool& addColumnRequested, 
                     CellRef from{};
                     std::memcpy(&from, q->Data, sizeof(from));
                     deferred.push_back([&comp, &ctx, from, li, col] {
-                        comp.swapClips(from.layer, from.column, li, col); // clip tocando continua tocando
+                        comp.swapClips(from.layer, from.column, li, col);
                         ctx.selection = {Selection::Kind::Clip, li, col};
                     });
                 }
                 ImGui::EndDragDropTarget();
             }
 
-            // Menu de contexto
-            if (!clip.empty() && ImGui::BeginPopupContextItem("##ctx")) {
-                if (ImGui::MenuItem("Limpar"))
+            if (ImGui::BeginPopupContextItem("##ctx")) {
+                if (!clip.empty() && ImGui::MenuItem("Limpar"))
                     deferred.push_back([&comp, li, col] { comp.clearClip(li, col); });
-                if (clip.missing && ImGui::MenuItem("Localizar…")) {
+                if (clip.missing && !clip.missingPlugin && ImGui::MenuItem("Localizar…")) {
                     const int deck = deckIndex;
                     deferred.push_back([&ctx, deck, li, col] { ctx.project.requestLocate(deck, li, col); });
                 }
@@ -542,15 +582,16 @@ void drawCells(PanelContext& ctx, Deferred& deferred, bool& addColumnRequested, 
                     if (!known && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                         ImGui::SetTooltip("O número de páginas ainda não é conhecido: aguarde a miniatura ou dispare o clip.");
                 }
-                if (ImGui::MenuItem("Abrir local do arquivo", nullptr, false,
-                                    clip.type == Clip::Type::File && !clip.missing)) {
+                if (!clip.empty() && ImGui::MenuItem("Abrir local do arquivo", nullptr, false,
+                                                     clip.type == Clip::Type::File && !clip.missing)) {
                     const std::filesystem::path file = clip.path;
                     deferred.push_back([file] { paths::revealInExplorer(file); });
                 }
+                keyAssignMenu(control::Target::cell(deckIndex, li, col), !clip.empty());
+                dmxActionMenu(control::Target::cell(deckIndex, li, col), false);
                 ImGui::EndPopup();
             }
 
-            // --- Desenho da celula ---
             const bool selected = ctx.selection.kind == Selection::Kind::Clip && ctx.selection.layer == li
                                   && ctx.selection.column == col;
             const bool active = comp.isActiveCell(deckIndex, li, col) && clip.isOpen();
@@ -559,7 +600,7 @@ void drawCells(PanelContext& ctx, Deferred& deferred, bool& addColumnRequested, 
                 dl->AddRectFilled(a, b, ImGui::GetColorU32(theme::kPanelRaised), rounding());
                 drawCenteredMono(dl, a, b, std::to_string(col + 1).c_str(), ImGui::GetColorU32(theme::kPanelActive));
             } else if (clip.missing) {
-                drawMissingCell(dl, a, thumbMax, b, clip.name);
+                drawMissingCell(dl, a, thumbMax, b, clip.name, clip.missingPlugin ? "plugin ausente" : "não encontrado");
             } else {
                 dl->AddRectFilled(a, b, ImGui::GetColorU32(theme::kBackground), rounding());
                 bool drewThumb = false;
@@ -568,8 +609,6 @@ void drawCells(PanelContext& ctx, Deferred& deferred, bool& addColumnRequested, 
                     drawPatternThumb(dl, ImVec2(a.x + px, a.y + px), ImVec2(thumbMax.x - px, thumbMax.y));
                     drewThumb = true;
                 } else if (clip.isGenerator() || clip.isWeb()) {
-                    // Gerador/fonte ao vivo/página web: miniatura vinda da fonte (atualizada 1x/s enquanto ativa);
-                    // sem ela, a cor (cor solida) ou o nome do tipo
                     const ImVec2 t0(a.x + px, a.y + px), t1(thumbMax.x - px, thumbMax.y);
                     if (clip.liveThumb.id) {
                         dl->AddImage(static_cast<ImTextureID>(clip.liveThumb.id), t0, t1);
@@ -588,13 +627,11 @@ void drawCells(PanelContext& ctx, Deferred& deferred, bool& addColumnRequested, 
                 if (!drewThumb)
                     drawCenteredMono(dl, a, thumbMax, "...", ImGui::GetColorU32(theme::kTextDim));
 
-                // Nome embaixo (reticências se não couber na célula; com o mouse na faixa, sobra espaço para o olho)
                 dl->PushClipRect(ImVec2(a.x + dp(2.0f), thumbMax.y), ImVec2(b.x - dp(2.0f), b.y), true);
                 drawEllipsized(dl, ImVec2(a.x + dp(5.0f), thumbMax.y + dp(2.0f)), cw - dp(overName ? 28.0f : 10.0f),
                                ImGui::GetColorU32(theme::kText), clip.name);
                 dl->PopClipRect();
 
-                // PDF/Office/Web: situação do processo auxiliar sobre a miniatura ("Convertendo…", "Reiniciando…", "Falhou")
                 if (active && clip.isRemote()) {
                     const media::SourceStatus st = clip.source->status();
                     if (!st.text.empty()) {
@@ -607,7 +644,6 @@ void drawCells(PanelContext& ctx, Deferred& deferred, bool& addColumnRequested, 
                     }
                 }
 
-                // Progresso do clip ativo
                 if (active && clip.source->duration() > 0.0) {
                     const float f = static_cast<float>(clip.source->position() / clip.source->duration());
                     dl->AddRectFilled(ImVec2(a.x, thumbMax.y - dp(3.0f)),
@@ -618,8 +654,10 @@ void drawCells(PanelContext& ctx, Deferred& deferred, bool& addColumnRequested, 
 
             if (!clip.empty() && !clip.missing)
                 drawEffectsBadge(dl, ImVec2(b.x - dp(13.0f), a.y + dp(13.0f)), clip.effects);
+            const control::Target cellTarget = control::Target::cell(deckIndex, li, col);
+            if (const std::string cellHint = keyHint(cellTarget); !cellHint.empty())
+                drawKeyHint(dl, ImVec2(a.x + dp(4.0f), a.y + dp(4.0f)), cellHint);
 
-            // Hover por área: play sobre a miniatura (toca na saída), olho sobre o nome (ver na prévia)
             const bool usable = !clip.empty() && !clip.missing && !ImGui::IsMouseDragging(ImGuiMouseButton_Left);
             if (overThumb) {
                 dl->AddRectFilled(a, thumbMax, IM_COL32(255, 255, 255, 14), rounding(), ImDrawFlags_RoundCornersTop);
@@ -641,10 +679,14 @@ void drawCells(PanelContext& ctx, Deferred& deferred, bool& addColumnRequested, 
             if (active)
                 dl->AddRect(ImVec2(a.x + dp(1.5f), a.y + dp(1.5f)), ImVec2(b.x - dp(1.5f), b.y - dp(1.5f)),
                             ImGui::GetColorU32(theme::kAccent), rounding(), 0, dp(3.0f));
+            drawKeyFlash(dl, a, b, keyFlash(cellTarget), rounding());
 
             if (hovered && !clip.empty() && !ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
                 const std::string where = layer.name + " - coluna " + std::to_string(col + 1);
-                if (clip.missing)
+                if (clip.missingPlugin)
+                    ImGui::SetTooltip("%s\n%s\nPlugin ausente: %s\nA célula não toca, mas o projeto guarda o plugin e os parâmetros.",
+                                      clip.name.c_str(), where.c_str(), clip.generatorId.c_str());
+                else if (clip.missing)
                     ImGui::SetTooltip("%s\n%s\nArquivo não encontrado: %s\nBotão direito: Localizar…", clip.name.c_str(),
                                       where.c_str(), paths::toUtf8(clip.path).c_str());
                 else
@@ -656,18 +698,15 @@ void drawCells(PanelContext& ctx, Deferred& deferred, bool& addColumnRequested, 
         ImGui::PopID();
     }
 
-    // Extensao da area rolavel
     ImGui::SetCursorScreenPos(ImVec2(origin.x, origin.y + contentH - 1.0f));
     ImGui::Dummy(ImVec2((cw + gp) * static_cast<float>(columns) + headerH() + dp(8.0f), 1.0f));
 
-    // Tecla Delete limpa a celula selecionada
     if (ctx.selection.kind == Selection::Kind::Clip && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)
-        && !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
+        && !ImGui::GetIO().WantTextInput && ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
         const Selection sel = ctx.selection;
         deferred.push_back([&comp, sel] { comp.clearClip(sel.layer, sel.column); });
     }
 
-    // Arquivos soltos do Explorer sobre as celulas
     if (dropInWindow) {
         if (dropCell.layer >= 0)
             applyFileDrop(comp, ctx.selection, dropCell.layer, dropCell.column, drop.files);
@@ -678,7 +717,7 @@ void drawCells(PanelContext& ctx, Deferred& deferred, bool& addColumnRequested, 
     }
 }
 
-} // namespace
+}
 
 void drawCompositionPanel(PanelContext& ctx)
 {
@@ -692,18 +731,14 @@ void drawCompositionPanel(PanelContext& ctx)
     const int transportLines = transportRows(ImGui::GetContentRegionAvail().x);
     const float footerH = deckBarH() + static_cast<float>(transportLines) * (transportBarHeight() + spacingY) + spacingY + dp(4.0f);
 
-    // Mutacoes ficam para o fim do painel: nada invalida as referencias usadas no desenho
     Deferred deferred;
     bool addColumnRequested = false;
     bool addLayerRequested = false;
 
-    // Altura do corpo (grade): o que o conteudo precisa, no maximo o que cabe acima do rodape. Assim a barra de
-    // Deck + transporte fica logo abaixo das camadas quando ha poucas, sem o vao enorme no meio do painel.
     const float contentH = headerH() + gap() + static_cast<float>(layers) * (cellH() + gap());
     const float neededH = contentH + std::max(ImGui::GetStyle().ScrollbarSize + dp(2.0f), addLayerH()) + dp(4.0f);
     const float bodyH = std::clamp(ImGui::GetContentRegionAvail().y - footerH, dp(40.0f), neededH);
 
-    // --- Corpo: controles das camadas (fixos) + células (rolam na horizontal) ---
     if (ImGui::BeginChild("##corpo", ImVec2(0.0f, bodyH), ImGuiChildFlags_None)) {
         const ImVec2 origin = ImGui::GetCursorScreenPos();
         const float availW = ImGui::GetContentRegionAvail().x;
@@ -722,7 +757,6 @@ void drawCompositionPanel(PanelContext& ctx)
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Adicionar camada");
 
-        // Células: child com barra de rolagem horizontal; a altura inclui a barra
         const float cellsX = origin.x + controlsW() + gap();
         const float childW = std::max(dp(60.0f), availW - controlsW() - gap() - 1.0f);
         ImGui::SetCursorScreenPos(ImVec2(cellsX, origin.y));
@@ -731,13 +765,11 @@ void drawCompositionPanel(PanelContext& ctx)
             drawCells(ctx, deferred, addColumnRequested, contentH);
         ImGui::EndChild();
 
-        // Garante a altura rolavel do corpo (camadas + botao)
         ImGui::SetCursorScreenPos(ImVec2(origin.x, belowY + addLayerH()));
         ImGui::Dummy(ImVec2(1.0f, 1.0f));
     }
     ImGui::EndChild();
 
-    // --- Decks e transporte ---
     drawDeckBar(ctx, deferred);
     drawTransportBar(ctx);
 
@@ -751,4 +783,4 @@ void drawCompositionPanel(PanelContext& ctx)
     endPanel();
 }
 
-} // namespace bsl::ui
+}

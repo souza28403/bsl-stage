@@ -1,7 +1,3 @@
-// Efeitos nativos (shaders proprios). Cada efeito de um passe e um fragment shader sobre o prelúdio abaixo; os
-// uniforms "u_<id>" vêm dos descritores de parâmetros (Float/Int -> float, Bool -> bool, Cor -> vec4, Enum -> int,
-// o índice da opção). O desfoque é a exceção: vários passes (downsample + gaussiano separável).
-
 #include "fx/EffectRegistry.h"
 #include "fx/FxGl.h"
 #include "ui/Icons.h"
@@ -24,8 +20,6 @@ using media::ParamSet;
 using media::ParamType;
 using namespace media::param;
 
-// Espaço de imagem dos shaders: P em 0..1, x para a direita e y para BAIXO (topo = 0), seja qual for a orientação
-// da textura (uTop). Os helpers cuidam da conversão.
 const char* const kPrelude = R"(#version 330 core
 in vec2 vUv;
 out vec4 fragColor;
@@ -49,10 +43,6 @@ vec4 sampC(vec2 p)
 )";
 
 const char* const kPercentFmt = "%.0f %%";
-
-// ---------------------------------------------------------------------------------------------------------------
-// Descritores
-// ---------------------------------------------------------------------------------------------------------------
 
 std::vector<ParamDesc> descTransform()
 {
@@ -189,10 +179,6 @@ std::vector<ParamDesc> descRgbSplit()
             makeFloat("angle", "Ângulo", 0.0f, -180.0f, 180.0f, "%.0f °")};
 }
 
-// ---------------------------------------------------------------------------------------------------------------
-// Corpos dos shaders (depois do prelúdio e dos uniforms gerados)
-// ---------------------------------------------------------------------------------------------------------------
-
 const char* const kGlslTransform = R"(
 void main()
 {
@@ -201,7 +187,7 @@ void main()
     vec2 d = px - anchor - vec2(u_posX, u_posY) * 0.01 * uSize;
     float r = radians(u_rotation);
     float c = cos(r), s = sin(r);
-    vec2 q = vec2(c * d.x + s * d.y, -s * d.x + c * d.y);   // rotacao inversa (horaria na tela, y para baixo)
+    vec2 q = vec2(c * d.x + s * d.y, -s * d.x + c * d.y);
     vec2 sc = max(vec2(u_scale * u_scaleX, u_scale * u_scaleY) * 0.0001, vec2(1.0e-4));
     vec2 src = (anchor + q / sc) / uSize;
     vec4 col = sampC(src);
@@ -249,7 +235,6 @@ void main()
     vec4 c = samp(imgPos());
     float d = length(cbcr(c.rgb) - cbcr(u_color.rgb));
     float keep = smoothstep(u_tolerance, u_tolerance + max(u_softness, 1.0e-4), d);
-    // Spill: perto da chave, dessatura em direcao ao cinza
     float nearKey = 1.0 - smoothstep(u_tolerance, u_tolerance + u_softness + 0.3, d);
     vec3 rgb = mix(c.rgb, vec3(dot(c.rgb, kLuma)), u_spill * nearKey);
     fragColor = vec4(rgb, c.a * keep);
@@ -295,7 +280,7 @@ void main()
 {
     vec4 c = samp(imgPos());
     vec2 px = imgPos() * uSize;
-    vec4 e = vec4(u_left, u_top, u_right, u_bottom);          // esquerda, topo, direita, base
+    vec4 e = vec4(u_left, u_top, u_right, u_bottom);
     if (u_unit == 1)
         e *= vec4(uSize.x, uSize.y, uSize.x, uSize.y) * 0.01;
     bool inside = px.x >= e.x && px.x <= uSize.x - e.z && px.y >= e.y && px.y <= uSize.y - e.w;
@@ -331,7 +316,7 @@ void main()
     a = abs(a - seg * 0.5) + rot;
     vec2 q = r * vec2(cos(a), sin(a)) / max(u_zoom, 0.01);
     q = vec2(q.x / aspect, q.y) + 0.5;
-    q = 1.0 - abs(mod(q, 2.0) - 1.0);                         // espelha nas bordas
+    q = 1.0 - abs(mod(q, 2.0) - 1.0);
     fragColor = samp(q);
 }
 )";
@@ -400,10 +385,6 @@ void main()
 }
 )";
 
-// ---------------------------------------------------------------------------------------------------------------
-// Tabela dos efeitos
-// ---------------------------------------------------------------------------------------------------------------
-
 struct Def
 {
     const char* id;
@@ -412,7 +393,7 @@ struct Def
     const char* icon;
     const char* description;
     std::vector<ParamDesc> (*describe)();
-    const char* glsl; // nullptr = classe própria (desfoque)
+    const char* glsl;
 };
 
 const Def kDefs[] = {
@@ -451,11 +432,6 @@ const Def* findDef(const std::string& id)
     return nullptr;
 }
 
-// ---------------------------------------------------------------------------------------------------------------
-// Efeito de um passe
-// ---------------------------------------------------------------------------------------------------------------
-
-// Valor de um parâmetro já convertido para o uniform
 struct UniformValue
 {
     ParamType type = ParamType::Float;
@@ -613,19 +589,15 @@ private:
     TexBlitter blit_;
 };
 
-// ---------------------------------------------------------------------------------------------------------------
-// Desfoque: (downsample por metades) -> gaussiano horizontal -> gaussiano vertical -> (volta ao tamanho)
-// ---------------------------------------------------------------------------------------------------------------
-
 const char* const kBlurFragment = R"(#version 330 core
 in vec2 vUv;
 out vec4 fragColor;
 uniform sampler2D uTex;
-uniform vec2 uDir;      // passo de um texel da origem, na direcao do passe
-uniform float uSigma;   // em texels da origem
-uniform int uN;         // 0 = uma amostra so (copia com filtro bilinear)
-uniform int uPre;       // 1: multiplica o rgb pelo alpha ao ler (a origem e a imagem do usuario)
-uniform int uUnpre;     // 1: desfaz a multiplicacao ao escrever (o destino e a imagem do usuario)
+uniform vec2 uDir;
+uniform float uSigma;
+uniform int uN;
+uniform int uPre;
+uniform int uUnpre;
 vec4 fetch(vec2 uv)
 {
     vec4 c = texture(uTex, uv);
@@ -686,12 +658,11 @@ public:
         }
 
         const float sigma = std::max(radius_ * 0.5f, 0.1f);
-        // Fator de redução (potência de 2) para que o núcleo caiba em maxTaps_ amostras de cada lado
         int down = 1;
         while (std::ceil(3.0f * sigma / static_cast<float>(down)) > static_cast<float>(maxTaps_) && down < 64)
             down *= 2;
         if (ctx.eco && down < 2)
-            down = 2; // perfil Eco: sempre em meia resolução
+            down = 2;
         const float sigmaDown = sigma / static_cast<float>(down);
         const int taps = std::clamp(static_cast<int>(std::ceil(3.0f * sigmaDown)), 1, maxTaps_ + 2);
 
@@ -700,7 +671,6 @@ public:
         bool fromUser = true;
         FboPool::Lease held;
 
-        // Reduz por metades (o filtro bilinear faz a média de 2x2 a cada passo)
         for (int scale = 1; scale < down;) {
             scale *= 2;
             const int nw = std::max(1, w / scale), nh = std::max(1, h / scale);
@@ -713,7 +683,7 @@ public:
             ch = nh;
         }
 
-        const bool direct = down == 1; // sem redução: o passe vertical já escreve na saída
+        const bool direct = down == 1;
         FboPool::Lease mid = pool.acquire(cw, ch);
         runPass(cur, cw, ch, *mid, 1.0f / static_cast<float>(cw), 0.0f, sigmaDown, taps, fromUser, false);
         if (direct) {
@@ -721,7 +691,7 @@ public:
         } else {
             FboPool::Lease blurred = pool.acquire(cw, ch);
             runPass(mid->texture(), cw, ch, *blurred, 0.0f, 1.0f / static_cast<float>(ch), sigmaDown, taps, false, false);
-            runPass(blurred->texture(), cw, ch, output, 0.0f, 0.0f, 0.0f, 0, false, true); // volta ao tamanho (bilinear)
+            runPass(blurred->texture(), cw, ch, output, 0.0f, 0.0f, 0.0f, 0, false, true);
         }
         glBindTexture(GL_TEXTURE_2D, 0);
         glUseProgram(0);
@@ -746,7 +716,7 @@ private:
         }
     }
 
-    void runPass(GLuint src, int /*srcW*/, int /*srcH*/, const Fbo& dst, float dx, float dy, float sigma, int taps,
+    void runPass(GLuint src, int , int , const Fbo& dst, float dx, float dy, float sigma, int taps,
                  bool pre, bool unpre)
     {
         bindOutput(dst, dst.width(), dst.height());
@@ -773,10 +743,6 @@ private:
     TexBlitter blit_;
     FboPool fallbackPool_;
 };
-
-// ---------------------------------------------------------------------------------------------------------------
-// Provedor
-// ---------------------------------------------------------------------------------------------------------------
 
 class NativeProvider final : public IEffectProvider
 {
@@ -831,11 +797,11 @@ public:
     }
 };
 
-} // namespace
+}
 
 std::shared_ptr<IEffectProvider> makeNativeProvider()
 {
     return std::make_shared<NativeProvider>();
 }
 
-} // namespace bsl::fx
+}

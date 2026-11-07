@@ -2,7 +2,6 @@
 
 #include <windows.h>
 
-// O Spout define seu próprio acesso ao GL (SpoutGLextensions) e emite avisos nos headers
 #pragma warning(push, 0)
 #include <SpoutReceiver.h>
 #include <SpoutSenderNames.h>
@@ -41,7 +40,7 @@ bool SpoutInput::receive()
     if (!impl_->named)
         setSender(sender_);
 
-    if (!texture_) { // só o nome; o espaço é alocado quando o tamanho do sender é conhecido (como no bslstage_spouttest)
+    if (!texture_) {
         glGenTextures(1, &texture_);
         glBindTexture(GL_TEXTURE_2D, texture_);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -49,7 +48,6 @@ bool SpoutInput::receive()
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     }
-    // Mesma ordem do bslstage_spouttest: IsUpdated (tamanho do sender mudou / primeira conexão) -> ReceiveTexture
     if (rx.IsUpdated()) {
         const int w = static_cast<int>(rx.GetSenderWidth());
         const int h = static_cast<int>(rx.GetSenderHeight());
@@ -60,7 +58,6 @@ bool SpoutInput::receive()
             height_ = h;
         }
     }
-    // bInvert = false: o compartilhamento tem a origem em cima (DirectX), igual à convenção das fontes (v=0 = topo)
     const bool ok = rx.ReceiveTexture(texture_, GL_TEXTURE_2D, false);
     connected_ = ok && rx.IsConnected() && width_ > 0 && width_ == static_cast<int>(rx.GetSenderWidth())
                  && height_ == static_cast<int>(rx.GetSenderHeight());
@@ -100,4 +97,4 @@ std::vector<std::string> SpoutInput::listSenders()
     return out;
 }
 
-} // namespace bsl
+}

@@ -13,7 +13,6 @@
 
 namespace bsl::ffgl {
 
-// Os codigos de ffgl::fn tem que bater com o cabecalho do SDK
 static_assert(fn::GetInfo == FF_GET_INFO && fn::InitialiseV2 == FF_INITIALISE_V2 && fn::Deinitialise == FF_DEINITIALISE
               && fn::GetNumParameters == FF_GET_NUM_PARAMETERS && fn::GetParameterName == FF_GET_PARAMETER_NAME
               && fn::GetParameterDefault == FF_GET_PARAMETER_DEFAULT && fn::GetParameterDisplay == FF_GET_PARAMETER_DISPLAY
@@ -67,8 +66,6 @@ std::string exceptionText(unsigned long code)
     return buf;
 }
 
-// ----------------------------------------------------------------------------------------------- Plugin
-
 namespace {
 
 Plugin::LogSink g_logSink = nullptr;
@@ -88,7 +85,7 @@ void __stdcall pluginLogTrampoline(char* text)
         g_logSink(msg);
 }
 
-} // namespace
+}
 
 void Plugin::setLogSink(LogSink sink)
 {
@@ -107,12 +104,12 @@ std::shared_ptr<Plugin> Plugin::open(const std::filesystem::path& file, std::str
     }
     void* mainFn = reinterpret_cast<void*>(GetProcAddress(module, "plugMain"));
     if (!mainFn) {
-        FreeLibrary(module); // o filtro de PE ja deveria ter barrado
+        FreeLibrary(module);
         if (error)
             *error = "a DLL não exporta plugMain";
         return nullptr;
     }
-    if (g_logSink) { // SetLogCallback e opcional
+    if (g_logSink) {
         if (void* setLog = reinterpret_cast<void*>(GetProcAddress(module, "SetLogCallback"))) {
             unsigned long exc = 0;
             rawSetLogCallback(setLog, reinterpret_cast<void*>(&pluginLogTrampoline), &exc);
@@ -180,7 +177,7 @@ bool Plugin::readMemory(Word ptr, void* dst, std::size_t n)
 
 std::string Plugin::readString(Word ptr, std::size_t maxLen)
 {
-    if (ptr == 0 || ptr == 0xFFFFFFFFull) // nulo ou (char*)FF_FAIL
+    if (ptr == 0 || ptr == 0xFFFFFFFFull)
         return {};
     std::string buf(maxLen + 1, '\0');
     unsigned long exc = 0;
@@ -189,11 +186,8 @@ std::string Plugin::readString(Word ptr, std::size_t maxLen)
     return buf;
 }
 
-// ----------------------------------------------------------------------------------------------- varredura
-
 namespace {
 
-// UTF-8 valido sempre (o JSON nao aceita bytes soltos); o que nao for ASCII/UTF-8 vira '?'
 std::string cleanText(const std::string& in)
 {
     std::string out;
@@ -236,7 +230,7 @@ std::string utf8Path(const std::filesystem::path& p)
     return std::string(u.begin(), u.end());
 }
 
-} // namespace
+}
 
 ScanResult scanPluginFile(const std::filesystem::path& file, std::shared_ptr<Plugin>* loaded)
 {
@@ -269,7 +263,6 @@ ScanResult scanPluginFile(const std::filesystem::path& file, std::shared_ptr<Plu
         }
     }
 
-    // --- FF_GET_INFO ---
     const CallResult gi = plugin->call(fn::GetInfo);
     if (!gi.ok)
         return failCall("FF_GET_INFO", gi);
@@ -285,7 +278,6 @@ ScanResult scanPluginFile(const std::filesystem::path& file, std::shared_ptr<Plu
         return fail("plugin FFGL " + std::to_string(info.apiMajor) + "." + std::to_string(info.apiMinor)
                     + " (só FFGL 2.x é suportado)");
 
-    // --- FF_GET_EXTENDED_INFO (opcional) ---
     const CallResult ei = plugin->call(fn::GetExtendedInfo);
     if (!ei.ok)
         return failCall("FF_GET_EXTENDED_INFO", ei);
@@ -297,11 +289,9 @@ ScanResult scanPluginFile(const std::filesystem::path& file, std::shared_ptr<Plu
         info.about = cleanText(plugin->readString(reinterpret_cast<Word>(pei.About), 2048));
     }
 
-    // --- FF_INITIALISE_V2 ---
     if (!plugin->initialise(&error))
         return fail(error);
 
-    // --- capacidades ---
     {
         const CallResult c = plugin->call(fn::GetPluginCaps, FF_CAP_SET_TIME);
         if (!c.ok)
@@ -315,7 +305,6 @@ ScanResult scanPluginFile(const std::filesystem::path& file, std::shared_ptr<Plu
         info.maxInputs = (mx.ok && mx.u32() != FF_FAIL && mx.u32() < 64) ? static_cast<int>(mx.u32()) : -1;
     }
 
-    // --- parametros ---
     const CallResult np = plugin->call(fn::GetNumParameters);
     if (!np.ok)
         return failCall("FF_GET_NUM_PARAMETERS", np);
@@ -413,9 +402,8 @@ ScanResult scanPluginFile(const std::filesystem::path& file, std::shared_ptr<Plu
         info.params.push_back(std::move(p));
     }
 
-    // FF_DEINITIALISE e o descarregamento ficam para o chamador, depois de gravar o resultado (o plugin pode travar ali)
     res.ok = true;
     return res;
 }
 
-} // namespace bsl::ffgl
+}

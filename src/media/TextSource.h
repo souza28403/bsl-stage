@@ -8,14 +8,10 @@
 namespace bsl {
 class Fbo;
 class Shader;
-} // namespace bsl
+}
 
 namespace bsl::media {
 
-// Gerador "Texto" (cartelas, letreiros, letras de musica). O texto e rasterizado em CPU (TextRaster) so
-// quando um parametro muda e vai para uma textura "faixa"; a cada quadro a faixa e desenhada na textura da
-// fonte (tamanho do canvas) com um deslocamento de UV. No letreiro a faixa tem exatamente um periodo da
-// rolagem e repete (GL_REPEAT): loop continuo sem emenda e sem re-rasterizar.
 class TextSource final : public ISource
 {
 public:
@@ -38,12 +34,11 @@ public:
     static std::vector<ParamDesc> describe(const ParamValues& values);
     static std::string label(const ParamValues& values);
 
-    // Estado para testes
     bool scrolling() const { return period_ > 0; }
     double scrollOffset() const { return scroll_; }
     int stripWidth() const { return stripW_; }
     int stripHeight() const { return stripH_; }
-    int rasterCount() const { return rasterCount_; } // quantas vezes o texto foi rasterizado
+    int rasterCount() const { return rasterCount_; }
 
 protected:
     void onSeek(double seconds) override;
@@ -65,9 +60,9 @@ private:
     GLuint strip_ = 0;
     int stripW_ = 0;
     int stripH_ = 0;
-    int period_ = 0; // 0 = sem letreiro
+    int period_ = 0;
     TextMarquee marquee_ = TextMarquee::None;
-    float speed_ = 0.0f; // px/s do letreiro (sinal = sentido)
+    float speed_ = 0.0f;
     double scroll_ = 0.0;
     bool needsDraw_ = true;
     int rasterCount_ = 0;
@@ -78,4 +73,4 @@ private:
     std::string fontName_;
 };
 
-} // namespace bsl::media
+}

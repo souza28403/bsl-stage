@@ -1,11 +1,3 @@
-// bslstage_aitest: IA local (ONNX Runtime + DirectML, fallback de CPU), com janela oculta (GL 3.3 core).
-// Uso: bslstage_aitest [--bench]      (rode da raiz do projeto: usa testmedia/person.jpg e assets/models)
-//
-// Cobre: o ONNX Runtime inicia (DirectML e CPU), escolha do adaptador, profundidade e mascara de pessoa numa foto de
-// pessoa (testmedia/person.jpg: foto da NASA em dominio publico; sem ela, so o formato de saida), GPU x CPU coerentes, ms
-// por inferencia, o AiEngine com GL (PBO, thread propria, cache por fonte, taxa, orientacao topOrigin), perfil Eco (a IA
-// nao roda e os efeitos passam a imagem), modelo ausente sem crash, o botao "Testar" e os efeitos de IA com a IA de verdade.
-
 #include "ai/AiEngine.h"
 #include "ai/AiRuntime.h"
 #include "fx/EffectRegistry.h"
@@ -64,12 +56,10 @@ void sleepMs(int ms)
     std::this_thread::sleep_for(std::chrono::milliseconds(ms));
 }
 
-// ---------------------------------------------------------------------------------------------------- imagens
-
 struct Rgb
 {
     int w = 0, h = 0;
-    std::vector<std::uint8_t> px; // RGB, linha 0 = topo
+    std::vector<std::uint8_t> px;
     bool empty() const { return px.empty(); }
 };
 
@@ -107,7 +97,6 @@ Rgb resizeTo(const Rgb& s, int w, int h)
     return o;
 }
 
-// Cena sintetica: fundo com degrade e uma caixa clara em primeiro plano
 Rgb syntheticScene(int w, int h)
 {
     Rgb o;
@@ -126,7 +115,6 @@ Rgb syntheticScene(int w, int h)
     return o;
 }
 
-// Media de uma regiao (fracoes da imagem)
 double regionMean(const std::vector<float>& v, int w, int h, double x0, double x1, double y0, double y1)
 {
     double sum = 0.0;
@@ -139,7 +127,6 @@ double regionMean(const std::vector<float>& v, int w, int h, double x0, double x
     return n ? sum / static_cast<double>(n) : 0.0;
 }
 
-// Regioes da foto de teste: rosto do astronauta (perto, pessoa) e o fundo cinza do estudio (longe, nao e pessoa)
 struct Regions
 {
     double fx0 = 0.38, fx1 = 0.48, fy0 = 0.30, fy1 = 0.42;
@@ -165,8 +152,6 @@ double pearson(const std::vector<float>& a, const std::vector<float>& b)
     }
     return sab / std::sqrt(std::max(saa * sbb, 1e-12));
 }
-
-// ---------------------------------------------------------------------------------------------------- GL
 
 GLuint uploadRgba(const Rgb& img, bool flip)
 {
@@ -238,8 +223,6 @@ double meanDiff(const std::vector<std::uint8_t>& a, const std::vector<std::uint8
     return s / static_cast<double>(a.size());
 }
 
-// ---------------------------------------------------------------------------------------------------- testes
-
 struct Bench
 {
     double firstMs = 0, avgMs = 0;
@@ -247,7 +230,6 @@ struct Bench
     bool ok = false;
 };
 
-// Roda o modelo 'n' vezes (mais uma de aquecimento) e devolve a ultima saida
 Bench benchModel(ai::ModelKind kind, ai::DevicePref pref, const Rgb& in, std::vector<float>& out, int n = 20)
 {
     Bench b;
@@ -288,7 +270,6 @@ fs::path personPath()
     return {};
 }
 
-// Resultados de GPU e CPU guardados para o resumo final
 struct Summary
 {
     double depthGpu = -1, depthCpu = -1, personGpu = -1, personCpu = -1;
@@ -312,7 +293,6 @@ void testRuntime()
         const auto kind = static_cast<ai::ModelKind>(k);
         CHECK_MSG(ai::modelPresent(kind), std::string("modelo presente: ") + ai::modelSpec(kind).fileName);
     }
-    // numa maquina com dGPU (Optimus), o adaptador escolhido e o de maior desempenho (a NVIDIA)
     bool hasNvidia = false;
     for (const ai::AdapterInfo& a : ai::listAdapters())
         hasNvidia = hasNvidia || (a.usable && a.name.find("NVIDIA") != std::string::npos);
@@ -389,7 +369,6 @@ void testModels(bool bench)
     }
 }
 
-// Pede a IA ate ficar pronta (ou estourar o tempo); devolve o ultimo quadro
 ai::AiFrame waitReady(ai::AiEngine& eng, std::uint64_t src, GLuint tex, int w, int h, bool top, unsigned need, double seconds,
                       std::uint64_t minRuns = 6, ai::ModelKind watch = ai::ModelKind::Depth)
 {
@@ -418,10 +397,9 @@ void testEngine(const Rgb& photo)
     CHECK(eng.enabled() && eng.rate() == 15);
 
     const GLuint top = uploadRgba(photo, false);
-    const GLuint bottom = uploadRgba(photo, true); // linha 0 = base: o motor precisa corrigir com topOrigin = false
+    const GLuint bottom = uploadRgba(photo, true);
     const unsigned need = ai::kNeedDepth | ai::kNeedPerson;
 
-    // render nao trava: acquire() so reduz a imagem e le o PBO
     {
         const auto t0 = Clock::now();
         const ai::AiFrame first = eng.acquire(1001, 0, top, photo.w, photo.h, true, need, false);
@@ -459,7 +437,6 @@ void testEngine(const Rgb& photo)
         CHECK_MSG(mFace > 0.7 && mBg < 0.2, "mascara das texturas: rosto ~1, fundo ~0 (orientacao certa)");
     }
 
-    // cache por fonte e quadro: dois efeitos da mesma cadeia (mesmo sourceId) dividem a inferencia
     {
         auto count = [&](bool two, std::uint64_t src) {
             const std::uint64_t before = eng.stats().models[0].runs;
@@ -468,7 +445,7 @@ void testEngine(const Rgb& photo)
             while (std::chrono::duration<double>(Clock::now() - t0).count() < 2.0) {
                 eng.acquire(src, frame, top, photo.w, photo.h, true, ai::kNeedDepth, false);
                 if (two)
-                    eng.acquire(src, frame, bottom, photo.w, photo.h, false, ai::kNeedDepth, false); // 2o efeito: outra entrada
+                    eng.acquire(src, frame, bottom, photo.w, photo.h, false, ai::kNeedDepth, false);
                 ++frame;
                 sleepMs(8);
             }
@@ -482,7 +459,6 @@ void testEngine(const Rgb& photo)
         CHECK_MSG(two <= one + one / 3 + 2, "2 efeitos na mesma fonte usam a mesma inferencia");
     }
 
-    // taxa configuravel
     {
         eng.setRateOverride(5);
         CHECK(eng.rate() == 5);
@@ -531,7 +507,7 @@ void testEco(const Rgb& photo)
     const GLuint tex = uploadRgba(photo, false);
     const std::uint64_t runs0 = eng.stats().models[0].runs + eng.stats().models[1].runs;
 
-    eng.setProfileRate(0); // Eco
+    eng.setProfileRate(0);
     CHECK(!eng.enabled() && eng.rate() == 0);
     ai::AiFrame f;
     for (int i = 0; i < 40; ++i) {
@@ -540,7 +516,6 @@ void testEco(const Rgb& photo)
     }
     CHECK(f.state == ai::AiState::Off && f.depth == 0 && f.mask == 0);
     CHECK(ai::aiStatusText(f) == "IA desligada no perfil Eco");
-    // ctx.eco = true tambem desliga, mesmo com o perfil ligado
     eng.setProfileRate(15);
     f = eng.acquire(5002, 0, tex, photo.w, photo.h, true, ai::kNeedDepth, true);
     CHECK(f.state == ai::AiState::Off);
@@ -549,7 +524,6 @@ void testEco(const Rgb& photo)
     const std::uint64_t runs1 = eng.stats().models[0].runs + eng.stats().models[1].runs;
     CHECK_MSG(runs1 == runs0, "nenhuma inferencia nova no Eco");
 
-    // efeitos: a saida e a propria entrada e o status explica
     FboPool pool;
     for (const char* id : {bl::kRelightId, bl::kBodyGlitchId, bl::kAuraId, bl::kZSliceId}) {
         std::unique_ptr<fx::IEffect> e = fx::EffectRegistry::instance().create(id);
@@ -684,7 +658,6 @@ void testEffectsWithRealAi(const Rgb& photo)
     const std::vector<std::uint8_t> original = readRgba(tex, photo.w, photo.h);
     const bool ok1 = runUntilReady(bl::kRelightId, {{"debug", Json("depth")}}, depthView);
     CHECK_MSG(ok1, "Relight: IA pronta");
-    // no modo "Ver profundidade" o rosto e mais claro que o fundo
     auto lum = [&](const std::vector<std::uint8_t>& img, double x0, double x1, double y0, double y1) {
         double s = 0;
         size_t n = 0;
@@ -704,7 +677,6 @@ void testEffectsWithRealAi(const Rgb& photo)
     CHECK(runUntilReady(bl::kRelightId, {}, lit));
     CHECK_MSG(meanDiff(lit, original) > 2.0, "Relight muda a imagem");
 
-    // Glitch (slicer): fora da regiao igual a entrada; dentro (rosto, perto) diferente
     std::vector<std::uint8_t> glitch;
     CHECK(runUntilReady(bl::kBodyGlitchId, {{"mode", Json("slicer")}, {"near", Json(55.0)}, {"sliceShift", Json(20.0)}, {"tint", Json(0.0)}}, glitch));
     double outsideBg = 0;
@@ -735,13 +707,12 @@ void testAuraAndZSliceRealAi(const Rgb& photo)
     eng.setDevicePref(ai::DevicePref::Auto);
     FboPool pool;
 
-    // --- Z-Slice: o rosto (perto) cai na Frente e o fundo do estudio (longe) nao
     {
-        const GLuint tex = uploadRgba(photo, true); // linha 0 = base (textura de canvas), como na cadeia da camada
+        const GLuint tex = uploadRgba(photo, true);
         std::unique_ptr<fx::IEffect> e = fx::EffectRegistry::instance().create(bl::kZSliceId);
         media::ParamValues v;
         v.set("feather", Json(8.0));
-        v.set("t1", Json(30.0)); // a profundidade da IA e normalizada pela foto: o rosto fica perto de 0,44
+        v.set("t1", Json(30.0));
         v.set("t2", Json(10.0));
         e->setParams(media::ParamSet(e->paramDescs(), v));
         Fbo out(photo.w, photo.h);
@@ -769,8 +740,8 @@ void testAuraAndZSliceRealAi(const Rgb& photo)
         CHECK_MSG(ready, "Z-Slice: IA pronta e mascara publicada");
         ZoneMask zm;
         if (ready && ZoneMasks::instance().find(0, zm)) {
-            const std::vector<std::uint8_t> m = readRgba(zm.texture, zm.width, zm.height); // linha 0 = base
-            auto zoneMean = [&](int channel, double x0, double x1, double y0, double y1) { // y em fracao do topo
+            const std::vector<std::uint8_t> m = readRgba(zm.texture, zm.width, zm.height);
+            auto zoneMean = [&](int channel, double x0, double x1, double y0, double y1) {
                 double s = 0;
                 size_t n = 0;
                 for (int y = static_cast<int>((1.0 - y1) * zm.height); y < static_cast<int>((1.0 - y0) * zm.height); ++y)
@@ -790,7 +761,6 @@ void testAuraAndZSliceRealAi(const Rgb& photo)
         glDeleteTextures(1, &tex);
     }
 
-    // --- Aura: a foto balanca para os lados; a mascara real da IA move as bordas e o fluido aparece em volta da pessoa
     {
         Rgb shifted = photo;
         const GLuint tex = uploadRgba(photo, false);
@@ -845,7 +815,7 @@ void testAuraAndZSliceRealAi(const Rgb& photo)
     }
 }
 
-} // namespace
+}
 
 int main(int argc, char** argv)
 {

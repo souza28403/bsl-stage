@@ -18,18 +18,12 @@ uniform int uTop;
 uniform float uTime;
 uniform float uBeat;
 uniform float uBeatPhase;
-// Posicao da imagem, 0..1, y para BAIXO (topo = 0), seja qual for a orientacao da textura
 vec2 imgPos() { return uTop == 1 ? vUv : vec2(vUv.x, 1.0 - vUv.y); }
 vec2 toTex(vec2 p) { return uTop == 1 ? p : vec2(p.x, 1.0 - p.y); }
-// Posicao no estilo OpenGL dos plugins FFGL: y para CIMA
 vec2 glPos() { vec2 p = imgPos(); return vec2(p.x, 1.0 - p.y); }
-// Alpha reto (como o BSL Stage guarda as imagens)
 vec4 samp(vec2 p) { return texture(uTex, toTex(p)); }
-// Premultiplicado, como os plugins FFGL recebiam a imagem
 vec4 sampP(vec2 p) { vec4 c = samp(p); c.rgb *= c.a; return c; }
-// Idem, com a posicao em y para cima
 vec4 sampGl(vec2 q) { return sampP(vec2(q.x, 1.0 - q.y)); }
-// Premultiplicado -> alpha reto. Luz acima do alpha (brilho aditivo) sobe o alpha em vez de estourar a cor.
 vec4 toStraight(vec3 rgb, float a)
 {
     float outA = max(a, min(1.0, max(rgb.r, max(rgb.g, rgb.b))));
@@ -41,7 +35,6 @@ bool FeedbackBuffer::ensure(int w, int h)
 {
     if (fbo_ && fbo_->width() == w && fbo_->height() == h)
         return false;
-    // Chamado de dentro do desenho do efeito: o FBO de saida precisa continuar ligado depois de limpar o novo
     GLint prevFbo = 0;
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevFbo);
     fbo_ = std::make_unique<Fbo>(w, h);
@@ -93,7 +86,6 @@ void BslEffect::setParams(const media::ParamSet& params)
 
 const media::ParamSet& BslEffect::params() const
 {
-    // Antes do primeiro setParams: os padrões dos descritores
     static thread_local std::optional<media::ParamSet> fallback;
     if (params_)
         return *params_;
@@ -168,7 +160,6 @@ void BslEffect::process(const EffectContext& ctx, GLuint inputTex, int w, int h,
 
 void AiEffect::prepare(const EffectContext& ctx, int w, int h)
 {
-    // Varios efeitos da mesma cadeia (mesmo sourceId) dividem a inferencia; sem id, uma fonte propria por efeito
     const std::uint64_t key = ctx.sourceId != 0 ? ctx.sourceId : static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(this));
     frame_ = ai::AiEngine::instance().acquire(key, ctx.frameIndex, inputTexture(), w, h, ctx.topOrigin, aiNeed(), ctx.eco);
     if (frame_.state != ai::AiState::Ready) {
@@ -190,4 +181,4 @@ media::SourceStatus AiEffect::status() const
     return {level, ai::aiStatusText(frame_)};
 }
 
-} // namespace bsl::fx::bsllight
+}

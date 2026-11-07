@@ -1,11 +1,13 @@
 #pragma once
 
 #include "core/Generators.h"
+#include "core/LayerTransform.h"
 #include "fx/EffectChain.h"
 #include "media/ISource.h"
 #include "media/MediaFormats.h"
 #include "render/Texture.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -32,67 +34,93 @@ inline const char* loopModeName(media::LoopMode m)
     return "";
 }
 
-// Celula da grade. Os parametros de reproducao ficam aqui (valem mesmo com a fonte fechada);
-// a fonte so existe enquanto o clip esta disparado numa camada.
+inline void fitFraction(FitMode mode, int cw, int ch, int sw, int sh, float& outX, float& outY)
+{
+    const float fcw = static_cast<float>(cw), fch = static_cast<float>(ch);
+    const float fsw = static_cast<float>(sw > 1 ? sw : 1), fsh = static_cast<float>(sh > 1 ? sh : 1);
+    float kx = 1.0f, ky = 1.0f;
+    switch (mode) {
+    case FitMode::Fit: kx = ky = (fcw / fsw < fch / fsh) ? fcw / fsw : fch / fsh; break;
+    case FitMode::Fill: kx = ky = (fcw / fsw > fch / fsh) ? fcw / fsw : fch / fsh; break;
+    case FitMode::Stretch:
+        kx = fcw / fsw;
+        ky = fch / fsh;
+        break;
+    case FitMode::Original: break;
+    }
+    outX = fsw * kx / fcw;
+    outY = fsh * ky / fch;
+}
+
+enum class ReplayMode { Resume, Restart };
+
+inline const char* replayModeName(ReplayMode m)
+{
+    return m == ReplayMode::Resume ? "Retomar de onde parou" : "Reiniciar do início";
+}
+
 struct Clip
 {
     enum class Type { Empty, File, Generator };
 
     Type type = Type::Empty;
-    std::string name;               // nome exibido (UTF-8)
-    std::filesystem::path path;     // arquivo (vazio no gerador)
-    std::string generatorId;        // Type::Generator: "gen:..." (ver core/Generators.h)
-    media::ParamValues params;      // parametros da fonte (id -> valor); valem mesmo com a fonte fechada
+    std::string name;
+    std::filesystem::path path;
+    std::string generatorId;
+    media::ParamValues params;
     media::MediaKind kind = media::MediaKind::Unknown;
-    bool missing = false;           // arquivo nao encontrado ao abrir o projeto (a celula nao dispara)
+    bool missing = false;
+    bool missingPlugin = false;
 
-    // Parametros salvos no clip
     float speed = 1.0f;
     media::LoopMode loop = media::LoopMode::Loop;
     FitMode fit = FitMode::Fit;
     bool playing = true;
-    bool interact = false;          // Web: encaminha mouse/teclado da Previa para a pagina (nao e salvo)
+    bool interact = false;
+    ReplayMode replay = ReplayMode::Restart;
 
-    fx::EffectChain effects;        // cadeia de efeitos do clip (aplicada no tamanho da fonte, antes do encaixe)
+    bool ownTransform = false;
+    LayerTransform transform;
 
-    std::unique_ptr<media::ISource> source; // aberta so quando disparado
+    fx::EffectChain effects;
 
-    // Miniatura de fonte ao vivo/gerada, atualizada a partir da fonte enquanto ela esta ativa (no maximo 1x/s)
+    std::unique_ptr<media::ISource> source;
+    std::unique_ptr<media::ISource> parked;
+    std::uint64_t parkedStamp = 0;
+    double parkedAccum = 0.0;
+    double resumeSeconds = 0.0;
+
     Texture liveThumb;
-    double liveThumbTime = -1.0e9; // relogio da UI do ultimo desenho
+    double liveThumbTime = -1.0e9;
 
     bool empty() const { return type == Type::Empty; }
     bool isOpen() const { return source && source->isOpen(); }
-    // Videos e fontes ao vivo so tocam para frente: sem ping-pong
+    bool isParked() const { return parked && parked->isOpen(); }
+    media::ISource* liveSource() const { return source ? source.get() : parked.get(); }
     bool supportsPingPong() const { return kind != media::MediaKind::Video && !isLive() && !hasPageNav(); }
 
     bool isGenerator() const { return type == Type::Generator; }
     bool isTestPattern() const { return type == Type::Generator && generatorId == kTestPatternId; }
     const GeneratorInfo* generatorInfo() const { return type == Type::Generator ? findGenerator(generatorId) : nullptr; }
-    // Fonte ao vivo (dispositivo/captura/web): exclusiva, sem transporte
     bool isLive() const;
-    // Fonte que vive num processo auxiliar (PDF, Office, Web)
     bool isRemote() const;
-    bool isWeb() const;   // gerador Web (URL) ou arquivo .html
-    bool isPaged() const; // PDF ou documento do Office (paginas)
-    // Com navegacao por pagina: PDF/Office e a fonte BSL PPT Manager (um gerador que abre um documento)
-    bool hasPageNav() const { return isPaged() || generatorId == kBslPptManagerId; }
-    // A Previa nunca abre uma segunda instancia (ao vivo ou remota)
+    bool isWeb() const;
+    bool isPaged() const;
+    bool hasPageNav() const { return isPaged(); }
     bool isExclusive() const { return isLive() || hasPageNav(); }
-    // Parametros da fonte (vazio nos arquivos e no padrao de teste). Funciona com a fonte fechada.
+    bool keepsAliveInBackground() const { return isLive() || isRemote(); }
+    bool supportsReplayMode() const;
+    ReplayMode defaultReplay() const;
     std::vector<media::ParamDesc> paramDescs() const;
-    // Grava o valor no clip e avisa a fonte aberta (onParamsChanged); atualiza o nome exibido
     void setParam(const std::string& id, media::Json value);
     void refreshName();
 
     static Clip fromFile(const std::filesystem::path& file);
     static Clip testPattern();
-    // Gerador com os parametros no padrao. Clip vazio se o id for desconhecido.
     static Clip generator(const std::string& id);
-    // Aceita o caminho de um arquivo ou o id de um gerador ("gen:..."). Clip vazio se nao for suportado.
+    static Clip absentGenerator(const std::string& id);
     static Clip fromId(const std::string& idOrPath);
 
-    // Aplicam o parametro ao clip e, se a fonte estiver aberta, a ela
     void setSpeed(float s);
     void setLoop(media::LoopMode m);
     void setPlaying(bool p);
@@ -100,4 +128,4 @@ struct Clip
     void seek(double seconds);
 };
 
-} // namespace bsl
+}

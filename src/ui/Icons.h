@@ -92,3 +92,4 @@
 #define ICON_FILE_SPREADSHEET "\xEE\x8C\xA6" // file-spreadsheet U+E326
 #define ICON_IMAGE_DOWN "\xEE\x94\xBC" // image-down U+E53C
 #define ICON_IMAGE_PLUS "\xEE\x87\xB7" // image-plus U+E1F7
+#define ICON_LINK "\xEE\x84\x82" // link U+E102

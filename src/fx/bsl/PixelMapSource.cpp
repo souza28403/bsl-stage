@@ -1,11 +1,3 @@
-// Padrao de calibracao BSL: gera ao vivo, no canvas, o padrao HD de cada painel do Pixel Map dentro do seu retangulo
-// escalado (a mesma conta da tabela e do "Criar mapeamento"). Com o mapeamento criado, o operador poe a fonte na grade e
-// o padrao certo aparece no painel fisico real. Opcionalmente anima uma barra que corre e um contador de quadros para
-// ver frame drop e travamento.
-//
-// O desenho e feito em CPU (output/PatternRaster) e enviado como textura; o padrao de cada painel fica em cache e so e
-// refeito quando o painel, a escala ou a marca mudam.
-
 #include "fx/bsl/BslCommon.h"
 #include "fx/bsl/BslSources.h"
 #include "fx/bsl/PixelMapFeed.h"
@@ -58,7 +50,7 @@ namespace pm = pixelmap;
 struct Tile
 {
     std::string key;
-    pm::Image image; // padrao ja reduzido/ampliado para o retangulo do painel no canvas
+    pm::Image image;
     bool used = false;
 };
 
@@ -113,8 +105,10 @@ public:
     {
         if (!pm::fontsAvailable())
             return {media::SourceStatus::Level::Warning, "Fontes não encontradas em assets/fonts: o padrão sai sem textos."};
-        if (panelCount_ == 0)
-            return {media::SourceStatus::Level::Info, "Sem painéis: adicione no modo Pixel Map."};
+        if (generic_)
+            return {media::SourceStatus::Level::Info,
+                    "Pixel Map vazio: mostrando o padrão do canvas inteiro. Adicione os painéis no modo Pixel Map para ver "
+                    "o padrão de cada um."};
         return {};
     }
 
@@ -144,11 +138,10 @@ private:
         glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prev));
     }
 
-    // Cria a imagem base (todos os padroes nos retangulos escalados) quando a configuracao, o canvas ou a marca mudam
     void rebuildBase(const media::ParamSet& p)
     {
         pm::Config cfg = PixelMapFeed::instance().config();
-        cfg.inW = width_; // o desenho vale para o canvas real (igual ao "Criar mapeamento")
+        cfg.inW = width_;
         cfg.inH = height_;
         smooth_ = p.b("smooth");
 
@@ -164,9 +157,15 @@ private:
         for (Tile& t : tiles_)
             t.used = false;
         base_ = pm::Image(width_, height_, 0x000000);
-        panelCount_ = static_cast<int>(cfg.panels.size());
+        std::vector<pm::Panel> panels = cfg.panels;
+        generic_ = panels.empty();
+        if (generic_) {
+            panels.push_back(pm::makePanel("CANVAS INTEIRO", 0, 0, width_, height_));
+            cfg.physW = width_;
+            cfg.physH = height_;
+        }
         rects_.clear();
-        for (const pm::Panel& panel : cfg.panels) {
+        for (const pm::Panel& panel : panels) {
             const RectI r = pm::scaledRectRounded(cfg, panel);
             rects_.push_back(r);
             if (r.w < 1 || r.h < 1 || r.x >= width_ || r.y >= height_ || r.x + r.w <= 0 || r.y + r.h <= 0)
@@ -194,6 +193,25 @@ private:
             blit(tile->image, r.x, r.y);
         }
         std::erase_if(tiles_, [](const Tile& t) { return !t.used; });
+        if (generic_)
+            drawEmptyNotice();
+    }
+
+    void drawEmptyNotice()
+    {
+        pm::Surface s(base_);
+        const double size = std::clamp(height_ * 0.032, 12.0, 44.0);
+        const std::string line1 = "PIXEL MAP VAZIO";
+        const std::string line2 = "Adicione os painéis no modo Pixel Map. Este é o padrão do canvas inteiro.";
+        const double w1 = pm::textWidth(line1, size * 1.5, pm::FontId::Bold);
+        const double w2 = pm::textWidth(line2, size, pm::FontId::Bold);
+        const double boxW = std::min(static_cast<double>(width_) - 16.0, std::max(w1, w2) + size * 2.5);
+        const double boxH = size * 4.2;
+        const double x = (width_ - boxW) * 0.5, y = std::max(8.0, height_ * 0.06);
+        s.fillRect(x, y, boxW, boxH, pm::rgb(0x000000, 0.86f));
+        s.strokeRect(x, y, boxW, boxH, std::max(2.0, size * 0.12), pm::rgb(pm::kAmberRgb));
+        s.text(line1, width_ * 0.5, y + boxH * 0.34, size * 1.5, pm::rgb(pm::kAmberRgb), pm::FontId::Bold);
+        s.text(line2, width_ * 0.5, y + boxH * 0.74, size, pm::rgb(0xFFFFFF), pm::FontId::Bold);
     }
 
     void blit(const pm::Image& src, int dx, int dy)
@@ -212,10 +230,9 @@ private:
         const bool counter = p.b("counter");
         if (!bar && !counter)
             return;
-        const pm::Config cfg = PixelMapFeed::instance().config();
         pm::Surface s(frame_);
         const double phase = std::fmod(time_ * static_cast<double>(p.f("speed")), 1.0);
-        for (size_t i = 0; i < rects_.size() && i < cfg.panels.size(); ++i) {
+        for (size_t i = 0; i < rects_.size(); ++i) {
             const RectI r = rects_[i];
             if (r.w < 1 || r.h < 1)
                 continue;
@@ -256,7 +273,7 @@ private:
             frame_.rgba = base_.rgba;
             animate(p);
         } else if (haveFrame_) {
-            return; // imagem estatica: nada a enviar
+            return;
         }
         haveFrame_ = !animated;
 
@@ -280,7 +297,7 @@ private:
     bool haveFrame_ = false;
     bool smooth_ = true;
     std::uint64_t feedVersion_ = 0;
-    int panelCount_ = 0;
+    bool generic_ = false;
     std::string wmKey_ = "?";
     pm::Image logo_;
     bool hasLogo_ = false;
@@ -291,7 +308,7 @@ private:
     std::vector<Tile> tiles_;
 };
 
-} // namespace
+}
 
 std::vector<media::ParamDesc> describePixelMapPattern()
 {
@@ -313,4 +330,4 @@ std::unique_ptr<media::ISource> makePixelMapPattern(int canvasW, int canvasH)
     return std::make_unique<PixelMapPatternSource>(canvasW, canvasH);
 }
 
-} // namespace bsl::fx::bsllight
+}

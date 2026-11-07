@@ -2,6 +2,7 @@
 
 #include "app/Log.h"
 #include "app/Paths.h"
+#include "app/Qa.h"
 #include "io/FileDialogs.h"
 #include "io/ProjectFile.h"
 #include "ui/Theme.h"
@@ -41,7 +42,6 @@ fs::path lockPath()
     return paths::appDataDir() / L"session.lock";
 }
 
-// Autosaves existentes, do mais antigo ao mais novo (o nome carrega data e hora)
 std::vector<fs::path> listAutosaves()
 {
     std::vector<fs::path> files;
@@ -63,7 +63,7 @@ bool isProjectExtension(const fs::path& p)
     return ext == L".bslstage";
 }
 
-} // namespace
+}
 
 ProjectSession::ProjectSession(Targets targets, std::function<OutputSetup(int, int)> defaultOutput)
     : t_(targets), defaultOutput_(std::move(defaultOutput))
@@ -77,8 +77,6 @@ void* ProjectSession::hwnd() const
 {
     return window_ ? static_cast<void*>(glfwGetWin32Window(window_)) : nullptr;
 }
-
-// ---------------------------------------------------------------- autosave / crash
 
 void ProjectSession::enableCrashRecovery(bool offerRecovery)
 {
@@ -101,7 +99,7 @@ void ProjectSession::shutdown()
         return;
     std::error_code ec;
     for (const fs::path& f : listAutosaves())
-        fs::remove(f, ec); // encerramento normal: nada a recuperar
+        fs::remove(f, ec);
     if (lockHeld_)
         fs::remove(lockPath(), ec);
     lockHeld_ = false;
@@ -128,7 +126,6 @@ void ProjectSession::autosaveIfNeeded()
     wchar_t stamp[40];
     std::wcsftime(stamp, 40, L"autosave-%Y%m%d-%H%M%S.bslstage", &tm);
 
-    // Sem pasta de projeto: so caminhos absolutos (o autosave mora em outra pasta)
     std::string error;
     const fs::path file = autosaveDir() / stamp;
     if (!project::saveFile(file, project::serialize(t_.composition, t_.output, {}), &error)) {
@@ -157,8 +154,6 @@ void ProjectSession::recoverLatestAutosave()
     applyLoaded(std::move(comp), std::move(output), {}, true);
     log::info("Autosave recuperado: " + paths::toUtf8(file.filename()));
 }
-
-// ---------------------------------------------------------------- estado
 
 std::string ProjectSession::currentText() const
 {
@@ -198,8 +193,6 @@ void ProjectSession::showMessage(std::string title, std::string text)
     messages_.push_back({std::move(title), std::move(text)});
 }
 
-// ---------------------------------------------------------------- pedidos
-
 void ProjectSession::requestNew() { request_ = {Action::New, {}, 0, 0, 0}; }
 void ProjectSession::requestOpen() { request_ = {Action::Open, {}, 0, 0, 0}; }
 void ProjectSession::requestOpenPath(const fs::path& file) { request_ = {Action::OpenPath, file, 0, 0, 0}; }
@@ -220,7 +213,6 @@ void ProjectSession::update()
 {
     const auto now = Clock::now();
 
-    // Resposta do modal "Salvar alteracoes?" / recuperacao
     const Decision decision = decision_;
     decision_ = Decision::None;
     switch (decision) {
@@ -297,7 +289,6 @@ void ProjectSession::process(const Request& r)
     }
 }
 
-// Acao que descarta o projeto atual (ja confirmada)
 void ProjectSession::execute(const Request& r)
 {
     switch (r.action) {
@@ -326,8 +317,6 @@ void ProjectSession::execute(const Request& r)
     }
 }
 
-// ---------------------------------------------------------------- salvar
-
 bool ProjectSession::saveCurrent()
 {
     if (path_.empty())
@@ -337,7 +326,15 @@ bool ProjectSession::saveCurrent()
 
 bool ProjectSession::saveAs()
 {
-    auto file = dialogs::saveProject(static_cast<HWND>(hwnd()), path_);
+    std::optional<fs::path> file;
+    if (qa::enabled()) {
+        wchar_t buf[MAX_PATH * 4] = {};
+        const DWORD n = GetEnvironmentVariableW(L"BSLSTAGE_QA_SAVE_PATH", buf, static_cast<DWORD>(std::size(buf)));
+        if (n > 0 && n < std::size(buf))
+            file = fs::path(std::wstring(buf, n));
+    }
+    if (!file)
+        file = dialogs::saveProject(static_cast<HWND>(hwnd()), path_);
     if (!file)
         return false;
     if (!isProjectExtension(*file))
@@ -363,12 +360,10 @@ bool ProjectSession::writeTo(const fs::path& file)
     return true;
 }
 
-// ---------------------------------------------------------------- abrir / novo
-
 bool ProjectSession::openFile(const fs::path& fileArg)
 {
     std::error_code absEc;
-    const fs::path file = fs::absolute(fileArg, absEc).lexically_normal(); // recentes e relPath precisam de caminho absoluto
+    const fs::path file = fs::absolute(fileArg, absEc).lexically_normal();
     Composition comp;
     comp.decoderOptions = t_.composition.decoderOptions;
     OutputSetup output;
@@ -388,7 +383,6 @@ bool ProjectSession::openFile(const fs::path& fileArg)
     std::string notes;
     for (const std::string& w : res.warnings) {
         log::warn(w);
-        // Itens de clip ignorado vao so para o log; o aviso de versao merece a tela
         if (w.starts_with("Este projeto"))
             notes += w + "\n";
     }
@@ -402,8 +396,7 @@ bool ProjectSession::openFile(const fs::path& fileArg)
 
 void ProjectSession::applyLoaded(Composition&& comp, OutputSetup&& output, const fs::path& file, bool dirtyAfter)
 {
-    t_.composition.stopAll(); // fecha as fontes antes de trocar tudo
-    // Ids novos: as janelas/senders do projeto anterior saem e os do novo sao criados
+    t_.composition.stopAll();
     int next = std::max(t_.output.nextScreenId, 1);
     for (Screen& s : output.screens)
         s.id = next++;
@@ -418,7 +411,7 @@ void ProjectSession::applyLoaded(Composition&& comp, OutputSetup&& output, const
     lastAutosave_ = Clock::now();
 
     if (dirtyAfter) {
-        snapshot_.clear(); // recuperado de autosave: sem arquivo, sempre "modificado"
+        snapshot_.clear();
         dirty_ = true;
     } else {
         markClean();
@@ -437,8 +430,6 @@ void ProjectSession::doNew()
     OutputSetup output = defaultOutput_ ? defaultOutput_(comp.width, comp.height) : OutputSetup{};
     applyLoaded(std::move(comp), std::move(output), {}, false);
 }
-
-// ---------------------------------------------------------------- localizar
 
 void ProjectSession::doLocate(const Request& r)
 {
@@ -469,8 +460,6 @@ void ProjectSession::doLocate(const Request& r)
     else
         log::info("Arquivo localizado: " + paths::toUtf8(*file));
 }
-
-// ---------------------------------------------------------------- modais
 
 void ProjectSession::drawModals()
 {
@@ -548,4 +537,4 @@ void ProjectSession::drawModals()
     ImGui::EndPopup();
 }
 
-} // namespace bsl
+}

@@ -22,7 +22,6 @@ std::string lower(std::string s)
     return s;
 }
 
-// Id estavel do descritor: o nome do parametro em minusculas (ASCII), sem repetir
 std::string uniqueId(const std::string& name, int index, std::set<std::string>& used)
 {
     std::string base;
@@ -44,7 +43,6 @@ std::string uniqueId(const std::string& name, int index, std::set<std::string>& 
     return id;
 }
 
-// Tira a palavra que marca o canal ("Cor Red" -> "Cor", "Hue" -> "") para nomear a cor/ponto; 'fallback' se sobrar nada
 std::string stripWord(const std::string& name, const char* const* words, size_t n, const std::string& fallback)
 {
     std::string out = name;
@@ -63,7 +61,6 @@ std::string stripWord(const std::string& name, const char* const* words, size_t 
             break;
         }
     }
-    // espacos e separadores sobrando
     while (!out.empty() && (out.back() == ' ' || out.back() == '_' || out.back() == '-' || out.back() == '.'))
         out.pop_back();
     size_t start = 0;
@@ -72,7 +69,6 @@ std::string stripWord(const std::string& name, const char* const* words, size_t 
     out = out.substr(start);
     if (out.empty())
         return fallback;
-    // "Red 1" / "Hue 2": sobrou so o numero -> "Cor 1"
     if (std::all_of(out.begin(), out.end(), [](char c) { return std::isdigit(static_cast<unsigned char>(c)) || c == ' '; }))
         return fallback + " " + out;
     return out;
@@ -102,7 +98,7 @@ ParamDesc baseDesc(const std::string& id, const std::string& label, const std::s
     return d;
 }
 
-} // namespace
+}
 
 std::string optionKey(float value)
 {
@@ -180,7 +176,6 @@ ParamMap buildParamMap(const PluginInfo& info)
         const ParamInfo& p = ps[i];
         const int idx = p.index;
 
-        // --- cores e pontos: parametros consecutivos viram um so controle ---
         if (p.type == kPRed && isType(ps, i + 1, kPGreen) && isType(ps, i + 2, kPBlue)) {
             const bool alpha = isType(ps, i + 3, kPAlpha);
             static const char* const words[] = {"red", "vermelho", "r"};
@@ -235,7 +230,6 @@ ParamMap buildParamMap(const PluginInfo& info)
             continue;
         }
 
-        // --- parametros simples ---
         Binding b;
         b.params[0] = idx;
         b.count = 1;
@@ -304,11 +298,10 @@ ParamMap buildParamMap(const PluginInfo& info)
             break;
         }
         case kPBuffer:
-            ++i; // FFT/audio: o host nao fornece
+            ++i;
             continue;
         case kPStandard:
         default:
-            // red/green/blue/xpos/ypos/hue... soltos e alpha tambem viram numeros
             b.kind = BindKind::Float;
             b.min = p.min;
             b.max = p.max;
@@ -467,4 +460,4 @@ bool pluginValueDiffers(const PluginValue& a, const PluginValue& b)
     return std::fabs(a.f - b.f) > tol;
 }
 
-} // namespace bsl::ffgl
+}

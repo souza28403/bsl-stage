@@ -1,8 +1,3 @@
-// BSL VHS: efeito nativo (sem IA) de fita VHS clássica. Tremor horizontal por linha (tape wobble), faixa de tracking que
-// rola, ruído e chuvisco, cor vazando (o croma perde resolução em YIQ e escorre para a direita), saturação e contraste de
-// fita, vinheta, linhas de scan, dropouts, "PLAY" e data/hora estilo câmera (fonte de pixels 5x7 própria). Quatro
-// presets; cada controle ajusta (em %) o valor do preset. O tracking pode piscar no tempo da batida (BPM).
-
 #include "fx/bsl/BslCommon.h"
 #include "fx/bsl/BslEffects.h"
 
@@ -21,8 +16,6 @@ namespace {
 using media::ParamSet;
 using namespace media::param;
 
-// --------------------------------------------------------------------------------------------------- fonte 5x7
-// Cada glifo: 7 linhas de 5 bits (bit 4 = coluna da esquerda)
 struct Glyph
 {
     char c;
@@ -46,7 +39,7 @@ constexpr Glyph kFont[] = {
     {'L', {0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111}},
     {'A', {0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001}},
     {'Y', {0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100}},
-    {'>', {0b10000, 0b11000, 0b11100, 0b11110, 0b11100, 0b11000, 0b10000}}, // triangulo de "play"
+    {'>', {0b10000, 0b11000, 0b11100, 0b11110, 0b11100, 0b11000, 0b10000}},
 };
 
 constexpr int kOvW = 64;
@@ -69,14 +62,12 @@ void drawText(std::vector<std::uint8_t>& px, int row0, const std::string& text)
     }
 }
 
-// --------------------------------------------------------------------------------------------------- presets
 struct Preset
 {
     float wobble, track, noise, chroma, sat, contrast, lift, vig, scan, drop;
     float tint[3];
 };
 
-// Fita gasta, Câmera 90s, Glitch forte, Sutil
 constexpr Preset kPresets[4] = {
     {0.80f, 0.80f, 0.70f, 0.85f, 0.85f, 0.92f, 0.80f, 0.60f, 0.55f, 0.70f, {1.00f, 1.00f, 0.90f}},
     {0.30f, 0.30f, 0.35f, 0.55f, 1.18f, 1.06f, 0.35f, 0.55f, 0.35f, 0.15f, {1.03f, 1.00f, 0.94f}},
@@ -84,17 +75,16 @@ constexpr Preset kPresets[4] = {
     {0.20f, 0.20f, 0.20f, 0.30f, 1.00f, 0.98f, 0.20f, 0.30f, 0.20f, 0.05f, {1.00f, 1.00f, 1.00f}},
 };
 
-// --------------------------------------------------------------------------------------------------- shader
 const char* const kVhsBody = R"(
-uniform sampler2D uOv;     // texto de pixels (R8): "PLAY >", data, hora
+uniform sampler2D uOv;
 uniform float uWobble, uTrack, uNoise, uChroma, uSat, uContrast, uLift, uVig, uScan, uDrop;
 uniform vec3 uTint;
 uniform float uIntensity;
-uniform float uTrackPos;   // posicao da faixa de tracking (0 = topo)
-uniform float uTrackAmt;   // forca da faixa
-uniform float uStrobe;     // flash no tempo da batida
+uniform float uTrackPos;
+uniform float uTrackAmt;
+uniform float uStrobe;
 uniform float uPlay, uStamp;
-uniform float uPxs;        // pixels de tela por pixel da fonte
+uniform float uPxs;
 
 float hash11(float p) { p = fract(p * 0.1031); p *= p + 33.33; p *= p + p; return fract(p); }
 float hash21(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
@@ -134,20 +124,17 @@ void main()
     vec2 uv = imgPos();
     vec4 orig = samp(uv);
     float ov0 = overlay(uv);
-    const float rows = 240.0;          // linhas "da fita"
+    const float rows = 240.0;
     float row = floor(uv.y * rows);
     float ft = floor(uTime * 30.0);
 
-    // 1. Tremor horizontal por linha + deriva lenta
     float jitter = hash21(vec2(row, ft)) - 0.5;
     float drift = sin(uv.y * 9.0 + uTime * 1.7) * 0.5 + sin(uv.y * 31.0 - uTime * 3.1) * 0.25;
     float dx = (jitter * 0.0035 + drift * 0.0025 + (hash11(ft) - 0.5) * 0.002) * uWobble;
 
-    // Troca de cabecote: as linhas do rodape tremem mais
     float hs = smoothstep(0.955, 1.0, uv.y);
     dx += hs * (0.012 + 0.03 * hash21(vec2(row, ft + 3.0))) * uWobble;
 
-    // 2. Faixa de tracking que rola
     float d = uv.y - uTrackPos;
     d -= floor(d + 0.5);
     const float bandH = 0.04;
@@ -159,7 +146,6 @@ void main()
     vec3 rgb = sceneRgb(suv);
     vec3 yiq = toYiq(rgb);
 
-    // 3. Croma de baixa resolucao: borrado na horizontal, mais grosso na vertical e atrasado (vaza para a direita)
     float cw = 0.016 * uChroma;
     float lag = 0.006 * uChroma;
     float cy = mix(uv.y, (floor(uv.y * rows * 0.5) + 0.5) / (rows * 0.5), min(uChroma, 1.0));
@@ -172,13 +158,11 @@ void main()
     iq /= 8.0;
     yiq = vec3(yiq.x, iq);
 
-    // 4. Cor de fita: saturacao, contraste, pretos levantados
     yiq.yz *= uSat * (1.0 - 0.6 * band * uTrackAmt);
     yiq.x = (yiq.x - 0.5) * uContrast + 0.5;
     yiq.x = mix(yiq.x, 0.05 + yiq.x * 0.9, uLift);
     rgb = fromYiq(yiq) * uTint;
 
-    // 5. Ruido: grao, riscos horizontais, chuvisco
     float grain = hash21(uv * uSize + ft * 17.0) - 0.5;
     rgb += grain * 0.18 * uNoise;
     float lineN = hash21(vec2(row, ft + 31.0));
@@ -189,7 +173,6 @@ void main()
     rgb = mix(rgb, vec3(grain + 0.5) * 0.85, band * 0.4 * min(uTrackAmt, 1.5));
     rgb += edge * 0.35;
 
-    // 6. Dropout: riscos curtos claros ou escuros que duram poucos quadros
     float slot = floor(uTime * 12.0);
     float ev = hash21(vec2(row, slot));
     if (ev > 1.0 - 0.012 * uDrop) {
@@ -200,7 +183,6 @@ void main()
         rgb = mix(rgb, dc, inside * 0.9);
     }
 
-    // 7. Linhas de scan e vinheta
     rgb *= 1.0 - uScan * 0.25 * (0.5 - 0.5 * cos(uv.y * rows * 6.2831853));
     float v = smoothstep(0.35, 0.95, length((uv - 0.5) * vec2(uSize.x / uSize.y, 1.0) * 0.9));
     rgb *= 1.0 - uVig * 0.7 * v;
@@ -225,7 +207,7 @@ public:
 protected:
     std::string fragmentSource() const override { return std::string(kBslPrelude) + kVhsBody; }
 
-    void prepare(const EffectContext& ctx, int /*w*/, int h) override
+    void prepare(const EffectContext& ctx, int , int h) override
     {
         const ParamSet& p = params();
         updateOverlay(p.b("playText"), p.b("dateStamp"));
@@ -248,7 +230,6 @@ protected:
         intensity_ = std::clamp(p.f("intensity") * 0.01f, 0.0f, 1.0f);
         pxs_ = std::max(1.0f, std::floor(static_cast<float>(h) / 180.0f));
 
-        // Faixa de tracking: rola sozinha ou, sincronizada, uma volta por 1/2/4 batidas, piscando no tempo da batida
         trackAmt_ = track_;
         strobe_ = 0.0f;
         if (p.b("bpmSync")) {
@@ -292,7 +273,6 @@ protected:
     }
 
 private:
-    // Texto de pixels (PLAY, data, hora) numa textura R8 pequena; a hora so muda a cada segundo
     void updateOverlay(bool play, bool stamp)
     {
         std::string date = "00.00.0000", time = "00:00:00";
@@ -340,7 +320,7 @@ private:
     float intensity_ = 1, trackPos_ = 0, trackAmt_ = 0, strobe_ = 0, play_ = 0, stamp_ = 0, pxs_ = 1;
 };
 
-} // namespace
+}
 
 std::vector<media::ParamDesc> describeVhs()
 {
@@ -383,4 +363,4 @@ std::unique_ptr<IEffect> makeVhs()
     return std::make_unique<VhsEffect>();
 }
 
-} // namespace bsl::fx::bsllight
+}

@@ -30,7 +30,6 @@ std::string cacheKey(const fs::path& source)
            + std::to_string(static_cast<long long>(mtime));
 }
 
-// Mutex nomeado: uma conversao por vez (o Office e uma instancia unica e o Quit de uma atrapalharia a outra)
 class NamedLock
 {
 public:
@@ -111,7 +110,6 @@ void trySet(const com::Object& o, const wchar_t* prop, const com::Var& v)
     try {
         o.put(prop, v);
     } catch (const com::ComError&) {
-        // PowerPoint nao deixa esconder a janela e o Word/Excel podem recusar: nao e fatal
     }
 }
 
@@ -123,7 +121,6 @@ void tryCall(const com::Object& o, const wchar_t* method, std::initializer_list<
     }
 }
 
-// Abre, exporta e fecha o documento com o aplicativo ja obtido. Lanca ComError.
 void exportWithOffice(OfficeApp which, const com::Object& app, const fs::path& source, const fs::path& outPdf)
 {
     using com::Var;
@@ -131,7 +128,7 @@ void exportWithOffice(OfficeApp which, const com::Object& app, const fs::path& s
     const Var out = Var::text(outPdf.wstring());
     switch (which) {
     case OfficeApp::PowerPoint: {
-        trySet(app, L"DisplayAlerts", Var::integer(1)); // ppAlertsNone
+        trySet(app, L"DisplayAlerts", Var::integer(1));
         const Var ro = Var::mso(true), untitled = Var::mso(false), noWindow = Var::mso(false);
         const com::Object presentations = app.getObject(L"Presentations");
         const Var opened = presentations.call(L"Open", {&in, &ro, &untitled, &noWindow});
@@ -139,7 +136,7 @@ void exportWithOffice(OfficeApp which, const com::Object& app, const fs::path& s
         if (!pres)
             throw com::ComError("o PowerPoint não abriu o arquivo", E_FAIL);
         try {
-            const Var fmt = Var::integer(32); // ppSaveAsPDF
+            const Var fmt = Var::integer(32);
             pres.call(L"SaveAs", {&out, &fmt});
         } catch (...) {
             tryCall(pres, L"Close");
@@ -149,7 +146,7 @@ void exportWithOffice(OfficeApp which, const com::Object& app, const fs::path& s
         break;
     }
     case OfficeApp::Word: {
-        trySet(app, L"DisplayAlerts", Var::integer(0)); // wdAlertsNone
+        trySet(app, L"DisplayAlerts", Var::integer(0));
         trySet(app, L"Visible", Var::boolean(false));
         const Var noConfirm = Var::boolean(false), ro = Var::boolean(true), noRecent = Var::boolean(false);
         const com::Object documents = app.getObject(L"Documents");
@@ -157,9 +154,9 @@ void exportWithOffice(OfficeApp which, const com::Object& app, const fs::path& s
         const com::Object doc(opened.dispatch(), true);
         if (!doc)
             throw com::ComError("o Word não abriu o arquivo", E_FAIL);
-        const Var noSave = Var::integer(0); // wdDoNotSaveChanges
+        const Var noSave = Var::integer(0);
         try {
-            const Var fmt = Var::integer(17); // wdExportFormatPDF
+            const Var fmt = Var::integer(17);
             doc.call(L"ExportAsFixedFormat", {&out, &fmt});
         } catch (...) {
             tryCall(doc, L"Close", {&noSave});
@@ -179,7 +176,7 @@ void exportWithOffice(OfficeApp which, const com::Object& app, const fs::path& s
             throw com::ComError("o Excel não abriu o arquivo", E_FAIL);
         const Var noSave = Var::boolean(false);
         try {
-            const Var type = Var::integer(0); // xlTypePDF
+            const Var type = Var::integer(0);
             wb.call(L"ExportAsFixedFormat", {&type, &out});
         } catch (...) {
             tryCall(wb, L"Close", {&noSave});
@@ -191,7 +188,6 @@ void exportWithOffice(OfficeApp which, const com::Object& app, const fs::path& s
     }
 }
 
-// Converte pelo Office. Devolve vazio se deu certo; senao o motivo.
 std::string convertWithOffice(OfficeApp which, const fs::path& source, const fs::path& outPdf)
 {
     const HRESULT initHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -206,7 +202,6 @@ std::string convertWithOffice(OfficeApp which, const fs::path& source, const fs:
             error = attachError;
         } else {
             if (inst.createdByUs) {
-                // Processos novos = os que iniciamos (so esses podemos encerrar)
                 for (int i = 0; i < 40 && mine.empty(); ++i) {
                     for (DWORD pid : processIds(exeFor(which)))
                         if (std::find(before.begin(), before.end(), pid) == before.end())
@@ -224,7 +219,7 @@ std::string convertWithOffice(OfficeApp which, const fs::path& source, const fs:
             if (quit)
                 tryCall(inst.app, L"Quit");
         }
-    } // objetos COM liberados aqui, antes de esperar o processo sair
+    }
 
     if (quit) {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
@@ -236,7 +231,7 @@ std::string convertWithOffice(OfficeApp which, const fs::path& source, const fs:
                 break;
             Sleep(100);
         }
-        for (DWORD pid : mine) { // encerra so o que nos mesmos iniciamos e que nao quis sair
+        for (DWORD pid : mine) {
             if (!pidAlive(pid))
                 continue;
             if (HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, pid)) {
@@ -249,8 +244,6 @@ std::string convertWithOffice(OfficeApp which, const fs::path& source, const fs:
         CoUninitialize();
     return error;
 }
-
-// --- LibreOffice ---
 
 fs::path findSoffice()
 {
@@ -323,7 +316,7 @@ std::string convertWithLibreOffice(const fs::path& soffice, const fs::path& sour
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
     if (job)
-        CloseHandle(job); // mata o soffice.bin, se sobrou
+        CloseHandle(job);
 
     const fs::path produced = tmpDir / (source.stem().wstring() + L".pdf");
     if (error.empty()) {
@@ -336,7 +329,7 @@ std::string convertWithLibreOffice(const fs::path& soffice, const fs::path& sour
     return error;
 }
 
-} // namespace
+}
 
 fs::path docCachePath(const fs::path& source)
 {
@@ -366,7 +359,6 @@ ConvertResult convertToPdf(const fs::path& source)
         return fromCache();
 
     const OfficeApp which = appFor(lowerExt(source));
-    // Uma conversao por vez no sistema inteiro; quem esperou normalmente ja encontra o cache pronto
     NamedLock lock(L"Local\\bslstage-office-convert", 240000);
     if (cached())
         return fromCache();
@@ -422,4 +414,4 @@ ConvertResult convertToPdf(const fs::path& source)
     return r;
 }
 
-} // namespace bsl::worker
+}

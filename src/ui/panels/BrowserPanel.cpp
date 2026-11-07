@@ -30,7 +30,7 @@ constexpr size_t kMaxEntries = 3000;
 
 struct Entry
 {
-    std::string name; // UTF-8
+    std::string name;
     std::filesystem::path path;
     bool isDirectory = false;
     media::MediaKind kind = media::MediaKind::Unknown;
@@ -67,7 +67,7 @@ void refresh(BrowserState& state)
         if (!isDir) {
             kind = media::classify(it->path());
             if (kind == media::MediaKind::Unknown)
-                continue; // so pastas e arquivos suportados
+                continue;
         }
         if (state.entries.size() >= kMaxEntries) {
             state.truncated = true;
@@ -82,7 +82,6 @@ void refresh(BrowserState& state)
     }
     state.error = static_cast<bool>(ec);
 
-    // Pastas primeiro, depois ordem alfabetica (sem diferenciar maiusculas)
     auto lower = [](std::string s) {
         std::transform(s.begin(), s.end(), s.begin(),
                        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -109,7 +108,6 @@ void navigate(BrowserState& state, Settings& settings, const std::filesystem::pa
     refresh(state);
 }
 
-// Carrega o arquivo na celula selecionada (duplo clique)
 void loadIntoSelection(PanelContext& ctx, const std::string& id)
 {
     const Selection& sel = ctx.selection;
@@ -126,7 +124,6 @@ void loadIntoSelection(PanelContext& ctx, const std::string& id)
     afterClipPlaced(ctx.composition, sel.layer, sel.column);
 }
 
-// Ícone do tipo de arquivo (no lugar das etiquetas [VID]/[IMG]/...)
 const char* kindIcon(const Entry& e)
 {
     if (e.isDirectory)
@@ -153,11 +150,9 @@ const char* generatorIcon(const std::string& id)
     if (id == kWebUrlId) return ICON_GLOBE;
     if (id == kNdiId) return ICON_CIRCLE_DOT;
     if (id == kSpoutId) return ICON_LAYERS;
-    return ICON_GRID; // padrão de teste
+    return ICON_GRID;
 }
 
-// Linha de lista com ícone à esquerda. O Selectable não tem texto (o ImGui não recuaria o nome); ícone e nome são
-// desenhados por cima e 'qaName' vira o rótulo do item para o teste de interface.
 bool iconRow(const char* qaName, const char* icon, const char* label, ImGuiSelectableFlags flags = ImGuiSelectableFlags_None)
 {
     const bool clicked = ImGui::Selectable("##linha", false, flags, ImVec2(0.0f, dp(22.0f)));
@@ -184,7 +179,7 @@ void dragSource(const std::string& id, const std::string& label)
     }
 }
 
-} // namespace
+}
 
 void drawBrowserPanel(PanelContext& ctx)
 {
@@ -202,7 +197,6 @@ void drawBrowserPanel(PanelContext& ctx)
 
     beginPanel(panel::kFiles);
 
-    // Barra de caminho editavel + pasta acima
     std::filesystem::path goTo;
     if (iconButton(ICON_CORNER_LEFT_UP, "##acima", "Pasta acima")) {
         const std::filesystem::path parent = state.folder.parent_path();
@@ -220,7 +214,7 @@ void drawBrowserPanel(PanelContext& ctx)
             const Entry& e = state.entries[i];
             ImGui::PushID(static_cast<int>(i));
             if (e.isDirectory) {
-                const std::string qaName = e.name + "/"; // o uiqa acha a pasta por este nome
+                const std::string qaName = e.name + "/";
                 if (iconRow(qaName.c_str(), kindIcon(e), e.name.c_str()))
                     goTo = e.path;
             } else {
@@ -249,7 +243,6 @@ void drawGeneratorsPanel(PanelContext& ctx)
 {
     beginPanel(panel::kGenerators);
 
-    // Fontes BSL Light: nativas, já instaladas, no topo (nada a importar)
     ImGui::PushStyleColor(ImGuiCol_Header, theme::kPanelRaised);
     ImGui::PushStyleColor(ImGuiCol_HeaderHovered, theme::kPanelHover);
     ImGui::PushStyleColor(ImGuiCol_HeaderActive, theme::kPanelActive);
@@ -260,7 +253,7 @@ void drawGeneratorsPanel(PanelContext& ctx)
                 continue;
             ImGui::PushID(p.id);
             const std::string pid = p.id;
-            const bool needsCef = pid == kBslWebBackgroundsId || pid == kBslWebMotionId;
+            const bool needsCef = pid == kBslWebBackgroundsId;
             const bool noCef = needsCef && !media::WebSource::available();
             ImGui::BeginDisabled(noCef);
             iconRow(p.name, ICON_ZAP, p.name, ImGuiSelectableFlags_AllowDoubleClick);
@@ -301,7 +294,6 @@ void drawGeneratorsPanel(PanelContext& ctx)
         ImGui::PopID();
     }
 
-    // Geradores ISF (shaders sem entrada de imagem das pastas ISF)
     {
         fx::IsfLibrary& lib = fx::IsfLibrary::instance();
         std::vector<fx::IsfEntry> gens;
@@ -327,7 +319,6 @@ void drawGeneratorsPanel(PanelContext& ctx)
             ImGui::TextColored(theme::kTextDim, "Nenhum gerador ISF nas pastas (veja Efeitos > Pastas ISF).");
     }
 
-    // Geradores FFGL (plugins do tipo fonte: os seus e, se ligado, os do Resolume)
     {
         ffgl::Catalog& catalog = ffgl::Catalog::instance();
         std::vector<ffgl::EntryPtr> sources;
@@ -352,7 +343,7 @@ void drawGeneratorsPanel(PanelContext& ctx)
         if (catalog.scanning())
             ImGui::TextColored(theme::kTextDim, "Procurando plugins…");
         else if (sources.empty())
-            ImGui::TextColored(theme::kTextDim, "Nenhuma fonte FFGL nas pastas de plugins (veja Ver > Plugins).");
+            ImGui::TextColored(theme::kTextDim, "Nenhuma fonte FFGL nas pastas de plugins (veja Exibir > Plugins).");
     }
 
     ImGui::Spacing();
@@ -364,4 +355,4 @@ void drawGeneratorsPanel(PanelContext& ctx)
     endPanel();
 }
 
-} // namespace bsl::ui
+}

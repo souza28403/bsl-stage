@@ -30,7 +30,7 @@ IsfSource::~IsfSource()
     close();
 }
 
-bool IsfSource::open(const std::filesystem::path& /*path*/, std::string* error)
+bool IsfSource::open(const std::filesystem::path& , std::string* error)
 {
     close();
     if (!renderer_) {
@@ -49,7 +49,7 @@ bool IsfSource::open(const std::filesystem::path& /*path*/, std::string* error)
     clock_ = media::ClipClock{};
     renderer_->reset();
     renderer_->setParams(currentParams());
-    update(0.0); // primeiro quadro ja na abertura
+    update(0.0);
     return true;
 }
 
@@ -66,10 +66,9 @@ void IsfSource::refreshDoc()
         return;
     seenVersion_ = v;
     const auto entry = lib.find(id_);
-    if (!entry || !entry->doc || entry->isEffect || (renderer_ && renderer_->docPtr() == entry->doc))
+    if (isfReload(renderer_, entry, true, false, reload_) != IsfReloadResult::Replaced)
         return;
     descs_ = isfParamDescs(*entry->doc);
-    renderer_ = std::make_unique<IsfRenderer>(entry->doc, entry->file.parent_path());
     renderer_->setParams(currentParams());
 }
 
@@ -88,7 +87,7 @@ void IsfSource::update(double dt)
     ctx.canvasWidth = width_;
     ctx.canvasHeight = height_;
     ctx.frameIndex = frame_++;
-    ctx.topOrigin = true; // texturas de fonte: linha 0 = topo
+    ctx.topOrigin = true;
     ctx.audio = audio::AudioAnalyzer::instance().snapshot();
     renderer_->render(ctx, 0, 0, 0, width_, height_, *fbo_);
 }
@@ -103,6 +102,8 @@ media::SourceStatus IsfSource::status() const
 {
     if (!renderer_)
         return {media::SourceStatus::Level::Warning, loadError_};
+    if (!reload_.error.empty())
+        return {media::SourceStatus::Level::Warning, isfReloadMessage(reload_)};
     if (!renderer_->error().empty())
         return {media::SourceStatus::Level::Warning, renderer_->error()};
     if (!renderer_->warnings().empty())
@@ -119,7 +120,7 @@ struct Node
     GeneratorInfo info;
 };
 
-} // namespace
+}
 
 const GeneratorInfo* IsfSource::generatorInfo(const std::string& id)
 {
@@ -152,4 +153,4 @@ const GeneratorInfo* IsfSource::generatorInfo(const std::string& id)
     return result;
 }
 
-} // namespace bsl::fx
+}

@@ -4,9 +4,6 @@
 
 namespace bsl {
 
-// Guarda o estado GL que uma passada auxiliar (conversão, readback) costuma mexer e o restaura ao sair:
-// FBO de desenho/leitura, viewport, programa, VAO, texturas das unidades 0-3, buffers de pixel pack/unpack,
-// alinhamentos e flags de blend/scissor/depth/cull.
 class GlStateGuard
 {
 public:
@@ -76,4 +73,4 @@ private:
     GLboolean blend_ = GL_FALSE, scissor_ = GL_FALSE, depth_ = GL_FALSE, cull_ = GL_FALSE;
 };
 
-} // namespace bsl
+}

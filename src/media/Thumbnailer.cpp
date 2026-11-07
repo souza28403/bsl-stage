@@ -18,7 +18,6 @@ namespace bsl::media {
 
 namespace {
 
-// Escala 'src' (RGBA ou YUV420P/YUVA420P) para caber em dstW x dstH, centralizado, em RGBA.
 bool fitToRgba(const Frame& src, int dstW, int dstH, Frame& dst)
 {
     if (src.empty())
@@ -64,7 +63,7 @@ bool fitToRgba(const Frame& src, int dstW, int dstH, Frame& dst)
     return rows > 0;
 }
 
-} // namespace
+}
 
 Thumbnailer::Thumbnailer(int width, int height) : width_(width), height_(height)
 {
@@ -155,7 +154,7 @@ Thumbnail Thumbnailer::generate(const std::filesystem::path& path)
     case MediaKind::Video: {
         VideoDecoder dec;
         VideoDecoderOptions opt;
-        opt.lowPower = true; // miniatura nao precisa de loop filter nem de resolucao cheia
+        opt.lowPower = true;
         opt.targetWidth = width_ * 2;
         opt.targetHeight = height_ * 2;
         opt.queueSize = 2;
@@ -181,7 +180,7 @@ Thumbnail Thumbnailer::generate(const std::filesystem::path& path)
     case MediaKind::Office:
         out.ok = renderDocThumbnail(path, width_, height_, out.frame);
         break;
-    case MediaKind::Web: // sem miniatura: a interface desenha uma etiqueta
+    case MediaKind::Web:
     case MediaKind::Unknown:
         break;
     }
@@ -190,4 +189,4 @@ Thumbnail Thumbnailer::generate(const std::filesystem::path& path)
     return out;
 }
 
-} // namespace bsl::media
+}

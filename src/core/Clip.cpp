@@ -19,7 +19,8 @@ Clip Clip::fromFile(const std::filesystem::path& file)
     c.kind = kind;
     c.path = file;
     c.name = paths::toUtf8(file.filename());
-    c.params.fillDefaults(c.paramDescs()); // PDF/Office/Web: parametros no padrao
+    c.params.fillDefaults(c.paramDescs());
+    c.replay = c.defaultReplay();
     return c;
 }
 
@@ -38,6 +39,18 @@ Clip Clip::generator(const std::string& id)
     c.generatorId = id;
     c.params.fillDefaults(info->describe(c.params));
     c.refreshName();
+    c.replay = c.defaultReplay();
+    return c;
+}
+
+Clip Clip::absentGenerator(const std::string& id)
+{
+    Clip c;
+    c.type = Type::Generator;
+    c.generatorId = id;
+    c.missing = true;
+    c.missingPlugin = true;
+    c.name = "Plugin ausente: " + id;
     return c;
 }
 
@@ -50,13 +63,23 @@ bool Clip::isLive() const
 bool Clip::isRemote() const
 {
     return (type == Type::File && media::isRemoteKind(kind)) || generatorId == kWebUrlId ||
-           generatorId == kBslWebBackgroundsId || generatorId == kBslWebMotionId || generatorId == kBslPptManagerId;
+           generatorId == kBslWebBackgroundsId;
 }
 
 bool Clip::isWeb() const
 {
     return (type == Type::File && kind == media::MediaKind::Web) || generatorId == kWebUrlId ||
-           generatorId == kBslWebBackgroundsId || generatorId == kBslWebMotionId;
+           generatorId == kBslWebBackgroundsId;
+}
+
+bool Clip::supportsReplayMode() const
+{
+    return !missing && ((type == Type::File && kind == media::MediaKind::Video) || keepsAliveInBackground());
+}
+
+ReplayMode Clip::defaultReplay() const
+{
+    return keepsAliveInBackground() ? ReplayMode::Resume : ReplayMode::Restart;
 }
 
 bool Clip::isPaged() const
@@ -69,8 +92,8 @@ std::vector<media::ParamDesc> Clip::paramDescs() const
     if (const GeneratorInfo* info = generatorInfo())
         return info->describe(params);
     if (type == Type::File) {
-        if (source && media::isRemoteKind(kind))
-            return source->paramDescs(); // com o total de paginas real
+        if (media::ISource* live = liveSource(); live && media::isRemoteKind(kind))
+            return live->paramDescs();
         if (media::isPagedKind(kind))
             return media::PdfSource::describe(params, media::docPageCount(path));
         if (kind == media::MediaKind::Web)
@@ -84,7 +107,6 @@ void Clip::refreshName()
     if (const GeneratorInfo* info = generatorInfo()) {
         name = info->label ? info->label(params) : info->name;
     } else if (isPaged()) {
-        // "label": nome gravado por "Expandir paginas na linha" (cada clip fixo na sua pagina)
         if (const media::Json* v = params.find("label"); v && v->is_string() && !v->get<std::string>().empty())
             name = v->get<std::string>();
     }
@@ -95,6 +117,8 @@ void Clip::setParam(const std::string& id, media::Json value)
     params.set(id, std::move(value));
     if (source)
         source->setParams(params);
+    if (parked)
+        parked->setParams(params);
     refreshName();
 }
 
@@ -148,4 +172,4 @@ void Clip::seek(double seconds)
         source->seek(seconds);
 }
 
-} // namespace bsl
+}

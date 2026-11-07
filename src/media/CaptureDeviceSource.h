@@ -9,9 +9,6 @@
 
 namespace bsl::media {
 
-// Placa de captura / webcam (DirectShow via FFmpeg "dshow"), reaproveitando o VideoDecoder em modo ao vivo.
-// Abrir o dispositivo acontece numa thread de fundo: a UI nunca trava. Se o dispositivo some (ou nao
-// existe), a fonte mostra preto + "Sem sinal" e tenta reabrir a cada 2 s.
 class CaptureDeviceSource final : public ISource
 {
 public:
@@ -36,7 +33,6 @@ public:
     static std::vector<ParamDesc> describe(const ParamValues& values);
     static std::string label(const ParamValues& values);
 
-    // Diagnostico / testes
     enum class State { Connecting, Live, NoSignal };
     State state() const { return state_; }
     unsigned long long frameCount() const { return frames_; }
@@ -46,7 +42,7 @@ protected:
     void onParamsChanged() override { paramsDirty_ = true; }
 
 private:
-    struct Pending; // resultado de uma abertura em andamento (thread de fundo)
+    struct Pending;
 
     void startConnect();
     void applyDevice();
@@ -59,9 +55,9 @@ private:
     bool paramsDirty_ = true;
     State state_ = State::NoSignal;
     std::string lastError_;
-    std::string device_;      // dispositivo em uso
-    std::string formatValue_; // formato pedido ("auto" ou "WxH@F:fmt")
-    std::string openedInfo_;  // descricao do que foi aberto
+    std::string device_;
+    std::string formatValue_;
+    std::string openedInfo_;
 
     std::unique_ptr<VideoDecoder> decoder_;
     std::shared_ptr<Pending> pending_;
@@ -79,4 +75,4 @@ private:
     int height_ = 720;
 };
 
-} // namespace bsl::media
+}

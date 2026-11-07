@@ -1,8 +1,5 @@
 #pragma once
 
-// Transicao em fade entre dois quadros: guarda uma copia do quadro anterior e mistura com o atual ao longo
-// de 'duration' segundos num FBO proprio. Rodar na thread GL.
-
 #include "render/Fbo.h"
 #include "render/Shader.h"
 
@@ -20,11 +17,8 @@ public:
     FadeBlender(const FadeBlender&) = delete;
     FadeBlender& operator=(const FadeBlender&) = delete;
 
-    // Copia o quadro atual (src, w x h) para o buffer "anterior"
     void snapshot(GLuint src, int w, int h);
-    // Comeca a misturar anterior -> 'current' durante 'duration' s (ja desenha o primeiro quadro, t = 0)
     void begin(GLuint current, double duration);
-    // Avanca; devolve false quando termina
     bool update(double dt, GLuint current);
     bool active() const { return active_; }
     GLuint output() const { return out_ ? out_->texture() : 0; }
@@ -43,4 +37,4 @@ private:
     double duration_ = 0.5;
 };
 
-} // namespace bsl::media
+}

@@ -9,7 +9,7 @@ Uso:  py -3 tools/uiqa/aishots.py [vhs] [relight] [aura] [zslice]      (sem argu
 
 Gera um projeto (build/qa/aishots/*.bslstage) com o video de teste (testmedia/h264_1080p.mp4) e o efeito na cadeia do clip,
 abre o app com layout limpo (--qa), dispara o clip, espera a IA carregar (Relight, Aura e Z-Slice usam a IA local de
-verdade) e pede o screenshot pelo comando "shot" do app. Precisa do Resolume? Nao. Mexe no mouse so para tirar o ponteiro
+verdade) e pede o screenshot pelo comando "shot" do app. Mexe no mouse so para tirar o ponteiro
 de cima dos controles.
 
 O Aura precisa de movimento: o script gera build/qa/aishots/person_sway.mp4 (com o ffmpeg do third_party) balancando
@@ -24,7 +24,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import driver  # noqa: E402
+import driver
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 EXE = os.path.join(ROOT, "build", "Release", "BSLStage.exe")
@@ -75,7 +75,7 @@ def shot(proj, out_name, settle, tab="efeitos"):
     try:
         time.sleep(settle)
         app.wait_frames(10)
-        app.hover(960, 1075)  # mouse fora dos controles
+        app.hover(960, 1075)
         app.wait_frames(6)
         path = os.path.join(DOCS, out_name)
         app.screenshot(path)
@@ -120,9 +120,8 @@ def zslice():
     proj = project([], "zslice.bslstage", video=PERSON, layer_effects=zs, output=out, fit="fill")
     app = driver.App(EXE, os.path.join(OUT, "qa"), [proj, "--trigger", "1", "1", "--tab", "camada"], size=(1920, 1080))
     try:
-        time.sleep(14.0)  # a IA de profundidade carrega
+        time.sleep(14.0)
         app.wait_frames(10)
-        # Assistente do painel do efeito (Camada): a sugestao ja liga Frente, Meio e Fundo aos 3 slices, em ordem
         app.click("##camada_efeito_1_zrotear")
         app.find("##camada_efeito_1_zrota_aplicar", timeout=5.0)
         app.click("##camada_efeito_1_zrota_aplicar")
@@ -130,11 +129,9 @@ def zslice():
                             "zonas roteadas Frente, Meio, Fundo", timeout=5.0)
         print("zFilter dos slices:", [sl["zFilter"] for sl in st["screens"][0]["slices"]],
               "zSource:", [sl["zSource"] for sl in st["screens"][0]["slices"]])
-        # Mapeamento: selecionar o primeiro slice mostra a zona nas Propriedades
         app.click("###modo_mapeamento", "MainMenuBar")
         app.wait_state(lambda s: s["mode"] == "mapping", "modo Mapeamento", timeout=4.0)
         app.wait_frames(20)
-        # O assistente entra no desfazer do Mapeamento: desfazer zera as zonas, refazer devolve
         undo0 = app.state["mapping"]["undo"]
         if undo0 < 1:
             raise driver.QaFailure("o assistente nao entrou no desfazer do Mapeamento (undo=%d)" % undo0)

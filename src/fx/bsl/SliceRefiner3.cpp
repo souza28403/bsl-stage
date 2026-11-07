@@ -1,14 +1,3 @@
-// BSL Slice Refiner (plugin FFGL "BSR3"): recorta o video nos formatos dos slices, ate 8 grupos com cantos arredondados,
-// slices unidos (merge suave), borda com 12 efeitos, blinker, bounce e rotacao de cor. Reescrito como efeito nativo.
-//
-// Diferencas em relacao ao plugin:
-//  - os slices vem do proprio BSL Stage (OutputSetup, publicados em SliceFeed); ainda aceita importar o
-//    AdvancedOutput.xml do Resolume;
-//  - o estado (o state.json do original) mora no parametro "state" do efeito e e salvo no projeto; cada instancia tem o
-//    seu (o plugin tinha um estado global por processo);
-//  - a interface web da porta 8083 virou o editor nativo do painel Clip; com "Controle remoto pela rede" ligado o mesmo
-//    painel web (assets/bsl/web_bg/control.html) e servido por um servidor HTTP local, com a mesma API.
-
 #include "fx/bsl/BslCommon.h"
 #include "fx/bsl/BslEffects.h"
 #include "fx/bsl/BslPreview.h"
@@ -39,15 +28,11 @@ using namespace media::param;
 constexpr int kMaxUsedSlices = 64;
 constexpr double kPi = 3.14159265358979323846;
 
-// Port do fragment shader original (GLSL 4.10 -> 3.30). 'pos' = pixels da textura, origem no canto superior esquerdo,
-// y para baixo (a mesma convencao do AdvancedOutput.xml); o video entra premultiplicado, como nos plugins FFGL.
 const char* const kHelpers = R"(
 uniform float Opacity;
 uniform float BlackBG;
 uniform float Pass;
-// slices: 2 vec4 cada. [0] = (cx, cy, hw, hh) px   [1] = (cos, sin, unused, fase do slice dentro do grupo)
 uniform vec4 sl[128];
-// grupos: 10 vec4 cada (ver SliceRefiner3.cpp)
 uniform vec4 gd[80];
 
 const float TAU = 6.28318530718;
@@ -102,7 +87,6 @@ float smin( float a, float b, float k )
     return min( a, b ) - h * h * k * 0.25;
 }
 
-// Rounded box, local frame with Y down. r = radii (TL, TR, BR, BL)
 float sdBox( vec2 q, vec2 hb, vec4 r )
 {
     float rr = q.x < 0.0 ? ( q.y < 0.0 ? r.x : r.w ) : ( q.y < 0.0 ? r.y : r.z );
@@ -111,14 +95,13 @@ float sdBox( vec2 q, vec2 hb, vec4 r )
     return min( max( d.x, d.y ), 0.0 ) + length( max( d, 0.0 ) ) - rr;
 }
 
-// Position along the box perimeter in [0,1), clockwise from the top-left corner (Y down).
 float perimU( vec2 q, vec2 hb, out float perim )
 {
     hb = max( hb, vec2( 1.0 ) );
     perim = 4.0 * ( hb.x + hb.y );
     vec2 a = abs( q ) / hb;
     float t = max( max( a.x, a.y ), 1e-4 );
-    vec2 b = q / t; // projected onto the boundary
+    vec2 b = q / t;
     float s;
     if( a.y >= a.x )
     {
@@ -147,20 +130,18 @@ float sh( float m, bool sm )
     return sm ? smoothstep( 0.2, 0.8, m ) : step( 0.5, m );
 }
 
-// ep: position relative to the group centre (already mirrored by symX/symY)
-// u/perim: position along the perimeter of the nearest slice and its length in px
 vec3 effectColor( int fx, vec2 ep, float u, float perim, float t, float var, bool sm, vec3 A, vec3 B, vec2 ext, int sym )
 {
-    float fr = 0.5 + 2.0 * var; // detail / frequency multiplier
+    float fr = 0.5 + 2.0 * var;
     float m = 0.0;
     vec3 col = A;
-    if( fx == 0 ) // noise
+    if( fx == 0 )
     {
         float n = fbm( ep * ( 0.012 * fr ) + vec2( t * 0.35, -t * 0.22 ) );
         m = sh( clamp( ( n - 0.5 ) * 2.4 + 0.5, 0.0, 1.0 ), sm );
         col = mix( B, A, m );
     }
-    else if( fx == 1 ) // spiral, travelling inwards
+    else if( fx == 1 )
     {
         float ang = atan( ep.y, ep.x + 1e-5 );
         float arms = floor( 1.0 + fr * 2.0 );
@@ -168,19 +149,19 @@ vec3 effectColor( int fx, vec2 ep, float u, float perim, float t, float var, boo
         m = sh( 0.5 + 0.5 * sin( TAU * ph ), sm );
         col = mix( B, A, m );
     }
-    else if( fx == 2 ) // radial waves going outwards
+    else if( fx == 2 )
     {
         float ph = length( ep ) / ( 60.0 / fr ) - t;
         m = sh( 0.5 + 0.5 * sin( TAU * ph ), sm );
         col = mix( B, A, m );
     }
-    else if( fx == 3 ) // zebra
+    else if( fx == 3 )
     {
         float ph = dot( ep, vec2( 0.70711 ) ) / ( 40.0 / fr ) - t;
         m = sm ? smoothstep( 0.3, 0.7, 0.5 + 0.5 * sin( TAU * ph ) ) : step( 0.5, fract( ph ) );
         col = mix( B, A, m );
     }
-    else if( fx == 4 ) // disco squares
+    else if( fx == 4 )
     {
         float cs = 36.0 / fr;
         vec2 c = floor( ep / cs );
@@ -196,7 +177,7 @@ vec3 effectColor( int fx, vec2 ep, float u, float perim, float t, float var, boo
         float grid = smoothstep( 0.0, 0.08, min( e.x, e.y ) );
         col = mix( B, A, m ) * mix( 0.55, 1.0, grid );
     }
-    else if( fx == 5 ) // chaser: a segment running around the shape
+    else if( fx == 5 )
     {
         float L = mix( 0.12, 0.40, var );
         float y = fract( t * 0.4 - u );
@@ -204,20 +185,20 @@ vec3 effectColor( int fx, vec2 ep, float u, float perim, float t, float var, boo
             m = sm ? pow( 1.0 - y / L, 1.3 ) : 1.0;
         col = mix( B, A, m );
     }
-    else if( fx == 6 ) // marching dashes
+    else if( fx == 6 )
     {
         float n = max( floor( perim / ( 36.0 / fr ) ), 2.0 );
         float ph = fract( u * n - t * 0.5 );
         m = sm ? ( 1.0 - smoothstep( 0.45, 0.6, ph ) ) * smoothstep( 0.0, 0.1, ph ) : step( ph, 0.55 );
         col = mix( B, A, m );
     }
-    else if( fx == 7 ) // rainbow turning around the shape
+    else if( fx == 7 )
     {
         float cycles = floor( 1.0 + fr );
         float h = fract( u * cycles - t * 0.15 );
         col = hueColor( sm ? h : floor( h * 6.0 ) / 6.0 );
     }
-    else if( fx == 8 ) // sparkle
+    else if( fx == 8 )
     {
         float cs = 22.0 / fr;
         vec2 c = floor( ep / cs );
@@ -236,7 +217,7 @@ vec3 effectColor( int fx, vec2 ep, float u, float perim, float t, float var, boo
             m = step( 0.3, m );
         col = mix( B, A, m ) + vec3( m * m * 0.5 );
     }
-    else if( fx == 9 ) // glitch colours (the jitter itself is applied to the contour)
+    else if( fx == 9 )
     {
         float bn = floor( ep.y / 6.0 ) + floor( ep.x / 60.0 ) * 7.0;
         float fl = hash21( vec2( bn, floor( t * 14.0 ) ) );
@@ -245,13 +226,13 @@ vec3 effectColor( int fx, vec2 ep, float u, float perim, float t, float var, boo
         if( fl > 0.93 )
             col = vec3( 1.0 );
     }
-    else if( fx == 10 ) // pulse (breathing)
+    else if( fx == 10 )
     {
         float br = 0.5 + 0.5 * sin( TAU * ( t * 0.5 - length( ep ) * var / 400.0 ) );
         col = mix( A, B, sm ? br : step( 0.5, br ) );
         col *= mix( 0.7, 1.25, br );
     }
-    else // scanner: bright bar sweeping across the group
+    else
     {
         float xn = ep.x / max( ext.x, 1.0 );
         float tri = abs( fract( t * 0.25 ) * 2.0 - 1.0 );
@@ -281,18 +262,18 @@ void main()
 
     for( int g = 0; g < 8; g++ )
     {
-        vec4 g0 = gd[ g * 10 + 0 ]; // fill(1 video,0 none,-1 skip), masterSize, offset, mergeSmooth
+        vec4 g0 = gd[ g * 10 + 0 ];
         if( g0.x < -0.5 )
             continue;
-        vec4 g1 = gd[ g * 10 + 1 ]; // corners TL TR BR BL (0..1)
-        vec4 g2 = gd[ g * 10 + 2 ]; // merge, softEdge px, stroke width, glow
-        vec4 g3 = gd[ g * 10 + 3 ]; // colour A rgb, effect mode
-        vec4 g4 = gd[ g * 10 + 4 ]; // colour B rgb, effect index
-        vec4 g5 = gd[ g * 10 + 5 ]; // stroke time, variation, smooth, sym bits
-        vec4 g6 = gd[ g * 10 + 6 ]; // dual on, dual width, dual gap, blink factor
-        vec4 g7 = gd[ g * 10 + 7 ]; // hue shift (turns), bounce mode (0 off,1 smooth,2 step), bounce min, multi
-        vec4 g8 = gd[ g * 10 + 8 ]; // bounce phase, group centre xy
-        vec4 g9 = gd[ g * 10 + 9 ]; // first slice, slice count, group half extents
+        vec4 g1 = gd[ g * 10 + 1 ];
+        vec4 g2 = gd[ g * 10 + 2 ];
+        vec4 g3 = gd[ g * 10 + 3 ];
+        vec4 g4 = gd[ g * 10 + 4 ];
+        vec4 g5 = gd[ g * 10 + 5 ];
+        vec4 g6 = gd[ g * 10 + 6 ];
+        vec4 g7 = gd[ g * 10 + 7 ];
+        vec4 g8 = gd[ g * 10 + 8 ];
+        vec4 g9 = gd[ g * 10 + 9 ];
         int start = int( g9.x + 0.5 );
         int cnt = int( g9.y + 0.5 );
         if( cnt <= 0 )
@@ -341,7 +322,7 @@ void main()
             float d;
             float lb = length( p ) - length( hb );
             if( lb > cut )
-                d = lb; // far away: conservative distance, nothing to draw here
+                d = lb;
             else
             {
                 q = vec2( dot( p, s1.xy ), dot( p, vec2( -s1.y, s1.x ) ) );
@@ -382,18 +363,16 @@ void main()
             dEdge = abs( dU );
         }
 
-        // ---- fill ----
         float inside = 1.0 - smoothstep( -0.5, 0.5, dU );
         if( g0.x > 0.5 && inside > 0.001 )
         {
             vec3 vc = vid.rgb;
             if( g2.y > 0.5 )
-                vc *= smoothstep( 0.0, g2.y, -dU ); // inner shadow
+                vc *= smoothstep( 0.0, g2.y, -dU );
             vec4 src = vec4( vc, vid.a ) * inside;
             res = src + res * ( 1.0 - src.a );
         }
 
-        // ---- stroke / glow ----
         float blink = g6.w;
         float glowK = g2.w;
         float glowA = 0.0;
@@ -452,7 +431,6 @@ double fract(double x)
     return x - std::floor(x);
 }
 
-// Fases de animacao de um grupo
 struct GroupPhase
 {
     double stroke = 0.0;
@@ -480,7 +458,7 @@ public:
         BslEffect::setParams(params);
         const Json raw = params.raw("state");
         std::lock_guard lk(mutex_);
-        if (raw != lastParamState_) { // so reinterpreta quando o valor do projeto mudou
+        if (raw != lastParamState_) {
             lastParamState_ = raw;
             SliceState parsed;
             if (raw.is_object() && sliceStateFromJson(raw, parsed)) {
@@ -499,7 +477,6 @@ public:
         }
     }
 
-    // O painel remoto mudou o estado: devolve ao parametro (salvo no projeto)
     bool pollParamChanges(media::ParamValues& values) override
     {
         std::lock_guard lk(mutex_);
@@ -528,7 +505,7 @@ public:
 protected:
     std::string fragmentSource() const override { return std::string(kBslPrelude) + kHelpers + kMain; }
 
-    void prepare(const EffectContext& ctx, int /*w*/, int /*h*/) override
+    void prepare(const EffectContext& ctx, int , int ) override
     {
         syncRemote(ctx);
         refreshSlices(ctx);
@@ -544,7 +521,6 @@ protected:
             st = state_;
         }
 
-        // ---- escala do canvas (ou da composicao do XML) para a textura ----
         float sx = 1.0f, sy = 1.0f;
         if (compW_ > 0 && compH_ > 0 && w > 0 && h > 0) {
             sx = static_cast<float>(w) / static_cast<float>(compW_);
@@ -555,7 +531,6 @@ protected:
                 sy = 1.0f;
         }
 
-        // slice -> grupo
         std::vector<int> groupOf(slices_.size(), -1);
         for (size_t i = 0; i < slices_.size(); ++i) {
             const auto it = st.assign.find(slices_[i].id);
@@ -569,7 +544,7 @@ protected:
         for (int g = 0; g < kSliceGroups; ++g) {
             float* G = gd + g * 40;
             const SliceGroup& grp = st.groups[g];
-            G[0] = -1.0f; // ignorado, a menos que seja preenchido abaixo
+            G[0] = -1.0f;
             if (!grp.enabled)
                 continue;
             std::vector<size_t> idx;
@@ -583,7 +558,6 @@ protected:
             float minX = 1e9f, minY = 1e9f, maxX = -1e9f, maxY = -1e9f, minSide = 1e9f;
             for (size_t k = 0; k < idx.size(); ++k) {
                 const FeedSlice& s = slices_[idx[k]];
-                // centro e meias dimensoes escalados (a rotacao e mantida)
                 const float cx = s.cx * sx, cy = s.cy * sy, hw = s.hw * sx, hh = s.hh * sy;
                 const float a = static_cast<float>(s.angle * kPi / 180.0);
                 const float c = std::cos(a), si = std::sin(a);
@@ -612,9 +586,6 @@ protected:
             G[0] = grp.fillVideo ? 1.0f : 0.0f;
             G[1] = grp.masterSize;
             G[2] = grp.offset;
-            // Correcao em relacao ao original: com "Suavizar juncao" = 0 a uniao por minimo deixava uma linha de borda nas
-            // emendas entre slices encostados (nos dois lados da emenda a distancia ate a borda e ~0). A uniao suave
-            // some com a linha quando o raio e maior que 4x a meia-largura da borda; usa-se esse minimo.
             const float seamBand = grp.strokeWidth * 0.5f + (grp.dualOn ? grp.dualGap + grp.dualWidth : 0.0f) + 1.0f;
             G[3] = grp.merge ? std::max(grp.mergeSmooth, grp.strokeWidth > 0.05f ? 4.0f * seamBand : 0.0f) : 0.0f;
             for (int k = 0; k < 4; ++k)
@@ -673,14 +644,11 @@ protected:
     }
 
 private:
-    // ----------------------------------------------------------------------------------------- slices
     void refreshSlices(const EffectContext& ctx)
     {
         const ParamSet& p = params();
         if (p.s("source") == "xml") {
             std::string path = p.s("xmlFile");
-            if (path.empty())
-                path = defaultResolumeSliceXmlPath();
             using Clock = std::chrono::steady_clock;
             const auto now = Clock::now();
             const std::filesystem::path fp{std::u8string(path.begin(), path.end())};
@@ -706,12 +674,11 @@ private:
             if (in) {
                 const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
                 if (text.size() < (64u << 20))
-                    parsed = parseResolumeSlices(text, &xw, &xh);
+                    parsed = parseSliceXml(text, &xw, &xh);
             }
             applySlices(std::move(parsed), xw > 0 ? xw : ctx.canvasWidth, xh > 0 ? xh : ctx.canvasHeight);
             return;
         }
-        // Saida do BSL Stage
         SliceFeed& feed = SliceFeed::instance();
         const bool reload = reloadRequestedLocal();
         if (!fromFeed_ || feed.version() != feedVersion_ || reload) {
@@ -739,7 +706,6 @@ private:
         snapshotDirty_ = true;
     }
 
-    // ----------------------------------------------------------------------------------------- relogios
     void advanceClocks(const EffectContext& ctx)
     {
         const ParamSet& p = params();
@@ -797,7 +763,6 @@ private:
         }
     }
 
-    // ----------------------------------------------------------------------------------------- controle remoto
     bool remoteRunning() const
     {
         std::lock_guard lk(mutex_);
@@ -830,7 +795,7 @@ private:
         if (server_.running())
             stopRemote();
         else if (now - lastRemoteTry_ < std::chrono::seconds(2))
-            return; // porta ocupada: tenta de novo a cada 2 s, sem travar o quadro
+            return;
         lastRemoteTry_ = now;
         std::string error;
         if (server_.start(port, [this](const net::HttpRequest& rq, net::HttpResponse& rs) { handle(rq, rs); }, &error)) {
@@ -860,7 +825,6 @@ private:
             o["id"] = s.id;
             o["name"] = s.sliceName.empty() ? s.name : s.sliceName;
             o["screen"] = s.screen;
-            // Retangulo orientado SEM rotacao: centro = (x + w/2, y + h/2), girado de 'angle' graus em torno dele
             o["x"] = r1(s.cx - s.hw);
             o["y"] = r1(s.cy - s.hh);
             o["w"] = r1(s.hw * 2.0f);
@@ -938,7 +902,6 @@ private:
         rs.json("{\"ok\":false,\"error\":\"not found\"}", 404);
     }
 
-    // ----------------------------------------------------------------------------------------- dados
     mutable std::mutex mutex_;
     SliceState state_;
     Json stateJson_;
@@ -977,7 +940,7 @@ std::string localAddresses()
     return "(no celular ou tablet: o IP deste computador na mesma rede, nessa porta)";
 }
 
-} // namespace
+}
 
 std::vector<media::ParamDesc> describeSliceRefiner3()
 {
@@ -986,13 +949,13 @@ std::vector<media::ParamDesc> describeSliceRefiner3()
     d.back().tooltip = "Atribua os slices a até 8 grupos e ajuste formato, borda, efeito e animação de cada um";
 
     d.push_back(makeEnum("source", "Origem dos slices",
-                         {{"output", "Saída do BSL Stage"}, {"xml", "XML do Resolume"}}, "output", "Slices"));
-    d.back().tooltip = "Saída: os slices da aba Saída / Mapeamento do projeto. XML: importa um AdvancedOutput.xml do Resolume";
-    d.push_back(makeFile("xmlFile", "XML do Resolume", "XML do Resolume (*.xml)|*.xml", "Slices"));
+                         {{"output", "Saída do BSL Stage"}, {"xml", "XML de slices"}}, "output", "Slices"));
+    d.back().tooltip = "Saída: os slices da aba Saída / Mapeamento do projeto. XML: importa um arquivo XML de slices";
+    d.push_back(makeFile("xmlFile", "XML de slices", "XML de slices (*.xml)|*.xml", "Slices"));
     d.back().enabledIf = "source=xml";
-    d.back().tooltip = "Vazio = Documents\\Resolume Arena\\Preferences\\AdvancedOutput.xml";
+    d.back().tooltip = "Arquivo XML com os slices";
     d.push_back(makeCustom("reload", "Recarregar slices", "event", Json(0), "Slices"));
-    d.back().tooltip = "Relê os slices da saída (ou o XML do Resolume)";
+    d.back().tooltip = "Relê os slices da saída (ou o XML de slices)";
 
     d.push_back(makeFloat("opacity", "Opacidade", 100.0f, 0.0f, 100.0f, "%.0f %%", "Geral"));
     d.back().tooltip = "Opacidade do resultado sobre a entrada";
@@ -1016,4 +979,4 @@ std::unique_ptr<IEffect> makeSliceRefiner3()
     return std::make_unique<SliceRefiner3Effect>();
 }
 
-} // namespace bsl::fx::bsllight
+}

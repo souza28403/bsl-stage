@@ -4,11 +4,15 @@
 #include "app/Paths.h"
 #include "output/OutputRenderer.h"
 #include "ui/Brand.h"
+#include "ui/KeysUi.h"
 #include "ui/LayoutUi.h"
 #include "ui/Theme.h"
+#include "ui/ViewUi.h"
 #include "ui/Widgets.h"
 #include "ui/panels/AiWindow.h"
 #include "ui/panels/AudioWindow.h"
+#include "ui/panels/DmxWindow.h"
+#include "ui/panels/LegalWindow.h"
 #include "ui/panels/BrowserPanel.h"
 #include "ui/panels/CaptureTargetChooser.h"
 #include "ui/panels/ClipPanel.h"
@@ -17,13 +21,18 @@
 #include "ui/panels/MappingPanels.h"
 #include "ui/panels/PixelMapPanels.h"
 #include "ui/panels/PluginsWindow.h"
+#include "ui/panels/PluginWizard.h"
 #include "ui/panels/PreviewPanel.h"
+#include "ui/panels/ReportWindow.h"
 #include "ui/panels/StatusBar.h"
 #include "ui/panels/TabPanels.h"
+#include "ui/panels/TransformEditor.h"
+#include "ui/panels/UpdateUi.h"
 #include "ui/panels/VideoCompat.h"
+#include "app/Version.h"
 
 #include <imgui.h>
-#include <imgui_internal.h> // DockBuilder
+#include <imgui_internal.h>
 
 #include <cmath>
 #include <cstdio>
@@ -35,46 +44,33 @@ namespace bsl::ui {
 
 namespace {
 
-#ifndef BSL_VERSION
-#define BSL_VERSION "0.1.0"
-#endif
+constexpr ImGuiID kDockSpaceId = 0x42534C43;
+constexpr ImGuiID kMappingDockSpaceId = 0x42534C4D;
+constexpr ImGuiID kPixelMapDockSpaceId = 0x42534C50;
 
-// IDs dos dockspaces. O da Composição mudou ("BSLC") quando o layout foi refeito no estilo media
-// server: um imgui.ini antigo, com o dockspace "BSLS", é ignorado e o layout novo é construído.
-constexpr ImGuiID kDockSpaceId = 0x42534C43;        // "BSLC": layout do modo Composição
-constexpr ImGuiID kMappingDockSpaceId = 0x42534C4D; // "BSLM": layout do modo Mapeamento (salvo à parte)
-constexpr ImGuiID kPixelMapDockSpaceId = 0x42534C50; // "BSLP": layout do modo Pixel Map (salvo à parte)
-
-bool g_resetCompLayout = false; // refaz o layout da Composicao (inicio, Restaurar layout, troca de layout)
-bool g_resetMapLayout = false;  // idem para o Mapeamento
-bool g_resetPixelLayout = false; // idem para o Pixel Map
+bool g_resetCompLayout = false;
+bool g_resetMapLayout = false;
+bool g_resetPixelLayout = false;
+bool g_resetRequested = false;
 bool g_openAbout = false;
-int g_focusFilesFrames = 0; // depois de montar o layout, seleciona a aba Arquivos (por alguns frames)
-const char* g_focusTab = nullptr; // aba pedida por --tab (depois da Arquivos)
+int g_focusFilesFrames = 0;
+const char* g_focusTab = nullptr;
 int g_focusTabFrames = 0;
 
-// Layouts prontos da Composição. Todas as proporções são frações da janela (nada em pixels), então valem
-// em qualquer tamanho e escala.
-//  +-----------+---------------------------+
-//  | Saída     | Composição (grade + deck  |
-//  |           |  + transporte)            |
-//  +-----------+-------------+-------------+
-//  | Prévia    | Clip        | Abas        |
-//  +-----------+-------------+-------------+
 struct LayoutPlan
 {
-    float leftWidth;     // fração da largura para a coluna dos monitores (Saída + Prévia)
-    float previewShare;  // fração da altura da coluna dos monitores para a Prévia (embaixo)
-    float bottomHeight;  // fração da altura da área à direita para Clip + abas (embaixo)
-    float tabsShare;     // fração da largura de Clip + abas para as abas
+    float leftWidth;
+    float previewShare;
+    float bottomHeight;
+    float tabsShare;
 };
 
 LayoutPlan planFor(UiLayout layout)
 {
     switch (layout) {
-    case UiLayout::BigGrid: return {0.20f, 0.45f, 0.30f, 0.50f};   // monitores pequenos, grade grande
-    case UiLayout::BigOutput: return {0.46f, 0.30f, 0.34f, 0.60f}; // Saída grande para operar olhando a saída
-    default: return {0.30f, 0.50f, 0.44f, 0.50f};                  // media server
+    case UiLayout::BigGrid: return {0.20f, 0.45f, 0.30f, 0.50f};
+    case UiLayout::BigOutput: return {0.46f, 0.30f, 0.34f, 0.60f};
+    default: return {0.30f, 0.50f, 0.44f, 0.50f};
     }
 }
 
@@ -110,9 +106,6 @@ void buildDefaultLayout(ImGuiID root, ImVec2 size, UiLayout layout)
     g_focusFilesFrames = 4;
 }
 
-// Layout inicial do Mapeamento:
-//  | Lista |      Entrada       | Propriedades |
-//  |       |      Saída         |              |
 void buildMappingLayout(ImGuiID root, ImVec2 size)
 {
     ImGui::DockBuilderRemoveNode(root);
@@ -131,9 +124,6 @@ void buildMappingLayout(ImGuiID root, ImVec2 size)
     ImGui::DockBuilderFinish(root);
 }
 
-// Layout inicial do Pixel Map:
-//  | Configuração |        Overview         |
-//  |              |        Tabela           |
 void buildPixelMapLayout(ImGuiID root, ImVec2 size)
 {
     ImGui::DockBuilderRemoveNode(root);
@@ -150,7 +140,6 @@ void buildPixelMapLayout(ImGuiID root, ImVec2 size)
     ImGui::DockBuilderFinish(root);
 }
 
-// Botão de alternância (aceso em vermelho quando ligado)
 bool toggleChip(const char* label, bool on)
 {
     if (on) {
@@ -165,7 +154,6 @@ bool toggleChip(const char* label, bool on)
     return pressed;
 }
 
-// Arquivo > Abrir recente: últimos projetos (os que não existem mais somem da lista)
 void drawRecentMenu(PanelContext& ctx)
 {
     Settings& settings = ctx.settings;
@@ -199,23 +187,12 @@ void drawRecentMenu(PanelContext& ctx)
         ctx.project.requestOpenPath(std::filesystem::path(std::u8string(chosen.begin(), chosen.end())));
 }
 
-// Atalhos de projeto (ignorados enquanto um modal está aberto)
-void handleProjectShortcuts(PanelContext& ctx)
+const char* shortcutText(std::string& storage, const char* actionId)
 {
-    if (ctx.project.busy())
-        return;
-    constexpr ImGuiInputFlags flags = ImGuiInputFlags_RouteGlobal;
-    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S, flags))
-        ctx.project.requestSaveAs();
-    else if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S, flags))
-        ctx.project.requestSave();
-    else if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_O, flags))
-        ctx.project.requestOpen();
-    else if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_N, flags))
-        ctx.project.requestNew();
+    storage = actionShortcut(actionId);
+    return storage.empty() ? nullptr : storage.c_str();
 }
 
-// Barra de menu: monograma BSL a esquerda e menus Arquivo / Composição / Saída / Ver / Ajuda
 void drawMenuBar(PanelContext& ctx)
 {
     if (!ImGui::BeginMainMenuBar())
@@ -237,16 +214,22 @@ void drawMenuBar(PanelContext& ctx)
 
     if (ImGui::BeginMenu("Arquivo")) {
         ProjectSession& project = ctx.project;
-        if (ImGui::MenuItem(ICON_FILE_PLUS "  Novo##menu_novo", "Ctrl+N"))
+        std::string sc;
+        if (ImGui::MenuItem(ICON_FILE_PLUS "  Novo##menu_novo", shortcutText(sc, "project.new")))
             project.requestNew();
-        if (ImGui::MenuItem(ICON_FOLDER_OPEN "  Abrir…##menu_abrir", "Ctrl+O"))
+        if (ImGui::MenuItem(ICON_FOLDER_OPEN "  Abrir…##menu_abrir", shortcutText(sc, "project.open")))
             project.requestOpen();
         drawRecentMenu(ctx);
         ImGui::Separator();
-        if (ImGui::MenuItem(ICON_SAVE "  Salvar##menu_salvar", "Ctrl+S"))
+        if (ImGui::MenuItem(ICON_SAVE "  Salvar##menu_salvar", shortcutText(sc, "project.save")))
             project.requestSave();
-        if (ImGui::MenuItem(ICON_SAVE_ALL "  Salvar como…##menu_salvar_como", "Ctrl+Shift+S"))
+        if (ImGui::MenuItem(ICON_SAVE_ALL "  Salvar como…##menu_salvar_como", shortcutText(sc, "project.saveAs")))
             project.requestSaveAs();
+        ImGui::Separator();
+        if (ImGui::MenuItem(ICON_PACKAGE_PLUS "  Novo plugin…##menu_novo_plugin"))
+            openNewPluginWizard();
+        if (ImGui::MenuItem(ICON_DOWNLOAD "  Importar plugin (.bslplugin)…##menu_importar_plugin"))
+            openImportPluginWindow();
         ImGui::Separator();
         if (ImGui::MenuItem(ICON_X "  Sair##menu_sair", "Alt+F4"))
             ctx.quitRequested = true;
@@ -274,9 +257,35 @@ void drawMenuBar(PanelContext& ctx)
             ctx.mode = AppMode::Mapping;
         if (ImGui::MenuItem("Abrir Pixel Map"))
             ctx.mode = AppMode::PixelMap;
+        ImGui::Separator();
+        if (ImGui::MenuItem(ICON_SLIDERS "  DMX / Art-Net…##menu_dmx"))
+            openDmxWindow();
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Ver")) {
+    if (ImGui::BeginMenu("Exibir")) {
+        drawPanelMenuItems(ctx);
+        ImGui::Separator();
+        drawDetachMenu(ctx);
+        if (ImGui::BeginMenu("Layout")) {
+            for (int i = 0; i < kUiLayoutCount; ++i) {
+                const auto layout = static_cast<UiLayout>(i);
+                if (ImGui::MenuItem(uiLayoutLabel(layout), nullptr,
+                                    ctx.settings.layout == layout && ctx.settings.lastLayoutPreset.empty())) {
+                    ctx.settings.layout = layout;
+                    clearActiveLayoutPreset(ctx);
+                    ctx.settings.view.detached.clear();
+                    showAllPanels(AppMode::Composition);
+                    g_resetCompLayout = true;
+                }
+            }
+            drawLayoutPresetsMenu(ctx);
+            ImGui::Separator();
+            if (ImGui::MenuItem(ICON_RESYNC "  Restaurar padrão##layout_restaurar"))
+                requestResetLayout();
+            ImGui::EndMenu();
+        }
+        drawWindowMenuItems(ctx);
+        ImGui::Separator();
         if (ImGui::BeginMenu("Tamanho da interface")) {
             Settings& st = ctx.settings;
             if (ImGui::MenuItem("Acompanhar a janela (recomendado)", nullptr, st.uiScaleMode == UiScaleMode::Window))
@@ -296,19 +305,6 @@ void drawMenuBar(PanelContext& ctx)
             }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Layout")) {
-            for (int i = 0; i < kUiLayoutCount; ++i) {
-                const auto layout = static_cast<UiLayout>(i);
-                if (ImGui::MenuItem(uiLayoutLabel(layout), nullptr,
-                                    ctx.settings.layout == layout && ctx.settings.lastLayoutPreset.empty())) {
-                    ctx.settings.layout = layout;
-                    clearActiveLayoutPreset(ctx);
-                    g_resetCompLayout = true; // vale ja na Composicao (ou ao voltar a ela, vindo do Mapeamento)
-                }
-            }
-            drawLayoutPresetsMenu(ctx); // Salvar layout atual…, os do usuário (Alt+1..9) e Gerenciar…
-            ImGui::EndMenu();
-        }
         ImGui::Separator();
         if (ImGui::MenuItem(ICON_AUDIO_LINES "  Áudio…##menu_audio"))
             openAudioWindow();
@@ -318,30 +314,34 @@ void drawMenuBar(PanelContext& ctx)
             openPluginsWindow();
         if (ImGui::MenuItem(ICON_GLOBE "  Compatibilidade de vídeo…##menu_compat"))
             openCompatWindow();
-        ImGui::Separator();
-        if (ImGui::MenuItem("Restaurar layout")) {
-            if (ctx.mode == AppMode::Mapping) {
-                g_resetMapLayout = true;
-            } else if (ctx.mode == AppMode::PixelMap) {
-                g_resetPixelLayout = true;
-            } else {
-                g_resetCompLayout = true;
-                clearActiveLayoutPreset(ctx); // volta ao layout pronto
-            }
-        }
+        if (ImGui::MenuItem(ICON_ZAP "  Atalhos…##menu_atalhos"))
+            openKeysEditor();
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Ajuda")) {
+        if (ImGui::MenuItem(ICON_REFRESH "  Procurar atualizações…##menu_atualizar"))
+            openUpdateWindow(true);
+        if (const std::string news = updateMenuText(ctx); !news.empty()) {
+            const std::string label = std::string(ICON_DOWNLOAD "  ") + news + "##menu_atualizacao_nova";
+            if (ImGui::MenuItem(label.c_str()))
+                openUpdateWindow(false);
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem(ICON_ALERT "  Reportar problema…##menu_reportar"))
+            openReportWindow(update::ReportKind::Bug);
+        if (ImGui::MenuItem(ICON_SPARKLES "  Sugerir melhoria…##menu_sugerir"))
+            openReportWindow(update::ReportKind::Improvement);
+        ImGui::Separator();
+        if (ImGui::MenuItem(ICON_FILE_TEXT "  Licenças e avisos…##menu_licencas"))
+            openLegalWindow();
         if (ImGui::MenuItem("Sobre"))
             g_openAbout = true;
         ImGui::EndMenu();
     }
 
-    // Alternância de layout: Composição | Mapeamento | Pixel Map
     ImGui::Dummy(ImVec2(dp(18.0f), 1.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, dp(12.0f, 3.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, dp(4.0f, 0.0f));
-    // "###modo_*": o menu "Composição" usa o mesmo rotulo nesta barra (conflito de ID no ImGui)
     if (toggleChip("Composição###modo_composicao", ctx.mode == AppMode::Composition))
         ctx.mode = AppMode::Composition;
     if (toggleChip("Mapeamento###modo_mapeamento", ctx.mode == AppMode::Mapping))
@@ -381,24 +381,32 @@ void drawAboutModal()
         ImGui::TextUnformatted("BSL Stage");
         ImGui::PopFont();
         ImGui::PushFont(fonts().mono, fonts().mono->LegacySize);
-        ImGui::TextColored(theme::kTextDim, "Versão %s", BSL_VERSION);
+        ImGui::TextColored(theme::kTextDim, "Versão %s", BSLSTAGE_VERSION);
         ImGui::PopFont();
-        ImGui::TextUnformatted("Licença GPL-3.0");
+        ImGui::TextUnformatted("© 2026 BSL Light");
+        ImGui::TextUnformatted("Software livre sob a GNU GPL, versão 3 (GPL-3.0)");
 
         ImGui::Spacing();
-        ImGui::SeparatorText("Bibliotecas");
-        ImGui::BulletText("GLFW 3.4 (zlib)");
-        ImGui::BulletText("glad / OpenGL 3.3 core");
-        ImGui::BulletText("Dear ImGui 1.93 docking (MIT)");
-        ImGui::BulletText("FFmpeg 9 (LGPL)");
-        ImGui::BulletText("stb_image / stb_image_write / stb_truetype (domínio público)");
-        ImGui::BulletText("nlohmann/json (MIT)");
-        ImGui::BulletText("Spout2 SDK 2.007 (BSD-2)");
-        ImGui::BulletText("NDI (runtime da NDI instalado à parte; este programa não o inclui)");
+        ImGui::PushTextWrapPos(dp(420.0f));
+        ImGui::TextColored(theme::kTextDim,
+                           "Este programa não tem nenhuma garantia. Você pode redistribuí-lo e modificá-lo sob as condições da "
+                           "GPL-3.0. O código-fonte completo está disponível em:");
+        ImGui::PopTextWrapPos();
+        ImGui::TextUnformatted(sourceCodeUrl().c_str());
+        if (ImGui::Button(ICON_LINK "  Abrir o código-fonte##sobre_codigo"))
+            openSourceCode();
+        ImGui::SameLine();
+        if (ImGui::Button("Licenças e avisos…##sobre_licencas")) {
+            openLegalWindow();
+            ImGui::CloseCurrentPopup();
+        }
 
         ImGui::Spacing();
-        ImGui::TextColored(theme::kTextDim, "Fontes: Barlow, JetBrains Mono (OFL); ícones Lucide (ISC)");
-        ImGui::TextColored(theme::kTextDim, "NDI® is a registered trademark of Vizrt NDI AB");
+        ImGui::PushTextWrapPos(dp(420.0f));
+        ImGui::TextColored(theme::kTextDim, "Bibliotecas de terceiros (GLFW, Dear ImGui, FFmpeg, PDFium, ONNX Runtime e outras) e as "
+                                            "fontes Barlow, JetBrains Mono e ícones Lucide: veja Ajuda > Licenças e avisos…");
+        ImGui::TextColored(theme::kTextDim, "NDI® is a registered trademark of Vizrt NDI AB. O runtime do NDI não faz parte deste programa.");
+        ImGui::PopTextWrapPos();
         ImGui::Spacing();
         if (ImGui::Button("Fechar", ImVec2(dp(120.0f), 0.0f)))
             ImGui::CloseCurrentPopup();
@@ -406,21 +414,32 @@ void drawAboutModal()
     }
 }
 
-} // namespace
+}
 
 void drawUi(PanelContext& ctx)
 {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
 
-    // As barras de menu e de status reservam as faixas de cima e de baixo antes do dockspace
+    keysFrame(ctx);
+    dmxFrame(ctx);
     drawMenuBar(ctx);
-    drawStatusBar(ctx);
-    handleProjectShortcuts(ctx);
-    handleLayoutShortcuts(ctx);
-    applyPendingLayout(ctx); // preset de layout pedido (menu, Gerenciar, Alt+1..9) ou o último usado, ao abrir o app
+    if (g_resetRequested) {
+        g_resetRequested = false;
+        showAllPanels(ctx.mode);
+        if (ctx.mode == AppMode::Mapping) {
+            g_resetMapLayout = true;
+        } else if (ctx.mode == AppMode::PixelMap) {
+            g_resetPixelLayout = true;
+        } else {
+            g_resetCompLayout = true;
+            clearActiveLayoutPreset(ctx);
+        }
+        ctx.settings.view.detached.clear();
+    }
+    if (statusBarVisible())
+        drawStatusBar(ctx);
+    applyPendingLayout(ctx);
 
-    // Cada modo tem seu próprio dockspace (e painéis com nomes diferentes), então o imgui.ini
-    // guarda os layouts separados.
     const bool mapping = ctx.mode == AppMode::Mapping;
     const bool pixelMap = ctx.mode == AppMode::PixelMap;
     const ImGuiID dockId = mapping ? kMappingDockSpaceId : pixelMap ? kPixelMapDockSpaceId : kDockSpaceId;
@@ -434,37 +453,55 @@ void drawUi(PanelContext& ctx)
         else
             buildDefaultLayout(dockId, viewport->WorkSize, ctx.settings.layout);
     }
-    // Sem "central node": o ImGui entrega ao central todo o espaco que sobra ao redimensionar a janela e mantem os
-    // outros paineis em pixels fixos. Sem ele, a divisao segue as proporcoes (SizeRef) e o layout acompanha a janela.
     if (ImGuiDockNode* central = ImGui::DockBuilderGetCentralNode(dockId))
         central->SetLocalFlags(central->LocalFlags & ~ImGuiDockNodeFlags_CentralNode);
-    ImGui::DockSpaceOverViewport(dockId, viewport);
+    ImGui::DockSpaceOverViewport(dockId, viewport, viewDockSpaceFlags());
 
     if (mapping) {
         validateMappingSelection(ctx);
-        mapHistoryObserve(ctx); // uma operacao de desfazer por gesto (arraste, valor digitado, botao...)
-        drawMappingListPanel(ctx);
-        drawMappingInputPanel(ctx);
-        drawMappingOutputPanel(ctx);
-        drawMappingPropertiesPanel(ctx);
+        mapHistoryObserve(ctx);
+        if (panelVisible(panel::kMapList))
+            drawMappingListPanel(ctx);
+        if (panelVisible(panel::kMapInput))
+            drawMappingInputPanel(ctx);
+        if (panelVisible(panel::kMapOutput))
+            drawMappingOutputPanel(ctx);
+        if (panelVisible(panel::kMapProps))
+            drawMappingPropertiesPanel(ctx);
     } else if (pixelMap) {
         validateMappingSelection(ctx);
-        mapHistoryObserve(ctx); // "Criar mapeamento" mexe no OutputSetup: entra no desfazer do mapeamento
+        mapHistoryObserve(ctx);
         pixelMapPrepare(ctx);
-        drawPixelMapOverviewPanel(ctx);
-        drawPixelMapConfigPanel(ctx);
-        drawPixelMapTablePanel(ctx);
+        if (panelVisible(panel::kPmOverview))
+            drawPixelMapOverviewPanel(ctx);
+        if (panelVisible(panel::kPmConfig))
+            drawPixelMapConfigPanel(ctx);
+        if (panelVisible(panel::kPmTable))
+            drawPixelMapTablePanel(ctx);
     } else {
-        drawOutputPanel(ctx);
-        drawPreviewPanel(ctx);
-        drawCompositionPanel(ctx);
-        drawClipPanel(ctx);
-        drawBrowserPanel(ctx);
-        drawGeneratorsPanel(ctx);
-        drawEffectsPanel(ctx);
-        drawCompositionTabPanel(ctx);
-        drawLayerTabPanel(ctx);
-        drawOutputTabPanel(ctx);
+        transformHistoryObserve(ctx);
+        if (panelVisible(panel::kOutput))
+            drawOutputPanel(ctx);
+        if (panelVisible(panel::kPreview))
+            drawPreviewPanel(ctx);
+        else
+            previewPanelHidden();
+        if (panelVisible(panel::kComposition))
+            drawCompositionPanel(ctx);
+        if (panelVisible(panel::kClip))
+            drawClipPanel(ctx);
+        if (panelVisible(panel::kFiles))
+            drawBrowserPanel(ctx);
+        if (panelVisible(panel::kGenerators))
+            drawGeneratorsPanel(ctx);
+        if (panelVisible(panel::kEffects))
+            drawEffectsPanel(ctx);
+        if (panelVisible(panel::kCompositionTab))
+            drawCompositionTabPanel(ctx);
+        if (panelVisible(panel::kLayerTab))
+            drawLayerTabPanel(ctx);
+        if (panelVisible(panel::kOutputTab))
+            drawOutputTabPanel(ctx);
         if (g_focusFilesFrames > 0 && ImGui::FindWindowByName(panel::kFiles)) {
             ImGui::SetWindowFocus(panel::kFiles);
             --g_focusFilesFrames;
@@ -476,12 +513,24 @@ void drawUi(PanelContext& ctx)
 
     drawCaptureTargetChooser(ctx);
     drawAboutModal();
+    drawUpdateWindow(ctx);
+    drawReportWindow(ctx);
+    drawLegalWindow(ctx);
     drawLayoutWindows(ctx);
+    drawKeysWindows(ctx);
     drawPluginsWindow(ctx);
+    drawPluginWizard(ctx);
     drawCompatWindow(ctx);
     drawAudioWindow(ctx);
+    drawDmxWindow(ctx);
     drawAiWindow(ctx);
     ctx.project.drawModals();
+    viewFrame();
+}
+
+void requestResetLayout()
+{
+    g_resetRequested = true;
 }
 
 void requestFocusTab(const std::string& key)
@@ -495,7 +544,9 @@ void requestFocusTab(const std::string& key)
         if (key == t.key) {
             g_focusTab = t.window;
             g_focusTabFrames = 6;
+            if (const view::PanelDef* def = view::findPanelByWindow(t.window))
+                setPanelVisible(def->key, true);
         }
 }
 
-} // namespace bsl::ui
+}

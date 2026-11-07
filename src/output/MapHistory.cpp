@@ -50,4 +50,4 @@ bool OutputHistory::redo(OutputSetup& live)
     return true;
 }
 
-} // namespace bsl
+}

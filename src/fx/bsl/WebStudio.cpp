@@ -20,8 +20,6 @@ using namespace media::param;
 
 namespace {
 
-// ----------------------------------------------------------------------------------------------- dados
-
 StudioData loadStudio()
 {
     StudioData s;
@@ -120,8 +118,6 @@ const StudioBackground* findBg(const std::string& id)
     return nullptr;
 }
 
-// ----------------------------------------------------------------------------------------------- campos
-
 enum class FK { Num, Bool, Hex, Text, Enum };
 enum EnumKey { EK_None, EK_Bg, EK_Palette, EK_Font, EK_Weight, EK_Fill, EK_Position, EK_In, EK_Loop, EK_Out, EK_Mirror, EK_Posterize, EK_Mode };
 
@@ -131,7 +127,7 @@ struct Field
     FK kind;
     double def;
     double lo, hi;
-    const char* defText; // Hex / Text / Enum
+    const char* defText;
     EnumKey ek;
     const char* label;
     const char* fmt;
@@ -259,7 +255,7 @@ EnumList enumOptions(EnumKey key)
     case EK_Bg:
         for (const StudioBackground& b : d.backgrounds)
             out.options.push_back({b.id, b.label});
-        out.options.push_back({"none", "Nenhum (só texto e logo)"}); // a pagina aceita bg "none": combine com Fundo transparente
+        out.options.push_back({"none", "Nenhum (só texto e logo)"});
         break;
     case EK_Palette:
         for (const StudioPalette& p : d.palettes)
@@ -363,15 +359,13 @@ bool sameNumber(const Json& a, const Json& b)
     return a == b;
 }
 
-} // namespace
+}
 
 const StudioData& studioData()
 {
     static const StudioData data = loadStudio();
     return data;
 }
-
-// ----------------------------------------------------------------------------------------------- descritores
 
 std::vector<ParamDesc> describeStudioParams(const ParamValues& values)
 {
@@ -406,7 +400,6 @@ std::vector<ParamDesc> describeStudioParams(const ParamValues& values)
         emit(f);
         const std::string path = f.path;
         if (path == "bg.transition" && bg) {
-            // Ajustes do fundo escolhido (os do painel original, com a mesma faixa e padrao)
             const std::string group = "Ajustes · " + bg->label;
             for (const StudioBgParam& p : bg->params) {
                 const std::string id = bgParamId(bg->id, p.id);
@@ -430,7 +423,6 @@ std::vector<ParamDesc> describeStudioParams(const ParamValues& values)
             }
         }
         if (path == "palette.hueCycle") {
-            // As 5 cores da paleta personalizada
             const StudioPalette* base = studio.palettes.empty() ? nullptr : &studio.palettes.front();
             for (int i = 0; i < 5; ++i) {
                 const std::string hex = base && i < static_cast<int>(base->colors.size()) ? base->colors[static_cast<size_t>(i)] : "#ffffff";
@@ -454,8 +446,6 @@ std::vector<ParamDesc> describeStudioParams(const ParamValues& values)
     return d;
 }
 
-// ----------------------------------------------------------------------------------------------- estado
-
 Json buildStudioState(const ParamSet& p)
 {
     const StudioData& studio = studioData();
@@ -478,12 +468,10 @@ Json buildStudioState(const ParamSet& p)
         }
         setPath(state, f.path, std::move(v));
     }
-    // fx.flash: contador de disparos
     {
         const Json raw = p.raw("fx_flash");
         setPath(state, "fx.flash", raw.is_number() ? raw.get<int>() : 0);
     }
-    // Paleta: as cores da paleta escolhida, ou as 5 personalizadas
     {
         Json colors = Json::array();
         const std::string palId = p.s("palette_id");
@@ -499,7 +487,6 @@ Json buildStudioState(const ParamSet& p)
         }
         setPath(state, "palette.colors", std::move(colors));
     }
-    // Ajustes do fundo escolhido
     {
         const std::string bgId = p.s("bg_id");
         const StudioBackground* bg = findBg(bgId);
@@ -581,13 +568,11 @@ bool applyStudioState(const Json& state, ParamValues& values)
         }
     }
     if (const Json* flash = getPath(state, "fx.flash"); flash && flash->is_number()) {
-        // O painel soma 1 por flash; o contador do clip acompanha (nunca volta atras)
         const Json mine = cur.raw("fx_flash");
         const int have = mine.is_number() ? mine.get<int>() : 0;
         if (flash->get<int>() > have)
             put("fx_flash", Json(flash->get<int>()));
     }
-    // Cores da paleta: personalizada guarda as 5; uma paleta conhecida ja define as cores
     if (const Json* cols = getPath(state, "palette.colors"); cols && cols->is_array()) {
         const Json* pid = getPath(state, "palette.id");
         const bool custom = !pid || !pid->is_string() || pid->get<std::string>() == "custom";
@@ -598,7 +583,6 @@ bool applyStudioState(const Json& state, ParamValues& values)
                     put("palette_c" + std::to_string(i + 1), colorJson({rgb[0], rgb[1], rgb[2], 1.0f}));
             }
     }
-    // Ajustes por fundo
     if (const Json* bgp = getPath(state, "bg.params"); bgp && bgp->is_object()) {
         for (auto it = bgp->begin(); it != bgp->end(); ++it) {
             const StudioBackground* bg = findBg(it.key());
@@ -629,4 +613,4 @@ bool applyStudioState(const Json& state, ParamValues& values)
     return changed;
 }
 
-} // namespace bsl::fx::bsllight
+}

@@ -11,17 +11,14 @@ class Shader;
 namespace ndi {
 class Runtime;
 }
-} // namespace bsl
+}
 
 namespace bsl::media {
 
-// Fonte NDI® (recebe vídeo de outra máquina/programa pela rede). O receptor roda sem bloquear: a cada quadro do app
-// a fonte pega o que já chegou (timeout 0), sobe para a GPU e, se for UYVY, converte para RGBA num shader.
-// Reconecta sozinha se a fonte some e volta. Sem o runtime do NDI mostra preto + "NDI Runtime não encontrado".
 class NdiSource final : public ISource
 {
 public:
-    explicit NdiSource(ndi::Runtime* runtime = nullptr); // nulo = Runtime::instance()
+    explicit NdiSource(ndi::Runtime* runtime = nullptr);
     ~NdiSource() override;
 
     bool open(const std::filesystem::path& path, std::string* error = nullptr) override;
@@ -42,7 +39,6 @@ public:
     static std::vector<ParamDesc> describe(const ParamValues& values);
     static std::string label(const ParamValues& values);
 
-    // Diagnóstico / testes
     enum class State { NoRuntime, NoSource, Connecting, Live, NoSignal };
     State state() const { return state_; }
     unsigned long long frameCount() const { return frames_; }
@@ -62,12 +58,12 @@ private:
     bool paramsDirty_ = false;
     State state_ = State::NoSource;
 
-    struct Recv; // receptor NDI
+    struct Recv;
     std::unique_ptr<Recv> recv_;
     std::string sourceName_;
     bool lowBandwidth_ = false;
     bool lowLatency_ = false;
-    std::string info_; // "1920 x 1080 @ 60 fps | UYVY"
+    std::string info_;
     bool sourceListed_ = true;
 
     std::chrono::steady_clock::time_point lastFrame_{};
@@ -76,11 +72,10 @@ private:
     unsigned long long frames_ = 0;
     bool everLive_ = false;
 
-    // GPU
-    GLuint rgbaTex_ = 0;   // BGRA/RGBA direto (e o preto inicial)
+    GLuint rgbaTex_ = 0;
     int rgbaW_ = 0, rgbaH_ = 0;
     bool opaqueSwizzle_ = false;
-    GLuint packedTex_ = 0; // UYVY empacotado: (w/2) x h texels RGBA8
+    GLuint packedTex_ = 0;
     int packedW_ = 0, packedH_ = 0;
     std::unique_ptr<Fbo> fbo_;
     std::unique_ptr<Shader> shader_;
@@ -91,4 +86,4 @@ private:
     int height_ = 720;
 };
 
-} // namespace bsl::media
+}

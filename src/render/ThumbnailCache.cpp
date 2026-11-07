@@ -6,7 +6,6 @@ namespace bsl {
 
 void ThumbnailCache::pump()
 {
-    // Poucos uploads por frame para nao engasgar a UI
     for (int i = 0; i < 4; ++i) {
         auto thumb = thumbnailer_.poll();
         if (!thumb)
@@ -33,4 +32,4 @@ GLuint ThumbnailCache::get(const std::filesystem::path& path)
     return it->second.texture.id;
 }
 
-} // namespace bsl
+}

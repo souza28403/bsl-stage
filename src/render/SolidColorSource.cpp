@@ -19,7 +19,7 @@ std::vector<media::ParamDesc> SolidColorSource::describe(const media::ParamValue
     return d;
 }
 
-bool SolidColorSource::open(const std::filesystem::path& /*path*/, std::string* error)
+bool SolidColorSource::open(const std::filesystem::path& , std::string* error)
 {
     close();
     try {
@@ -41,7 +41,7 @@ void SolidColorSource::close()
     fbo_.reset();
 }
 
-void SolidColorSource::update(double /*dt*/)
+void SolidColorSource::update(double )
 {
     if (fbo_ && dirty_)
         render();
@@ -70,4 +70,4 @@ void SolidColorSource::render()
     glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prevFbo));
 }
 
-} // namespace bsl
+}

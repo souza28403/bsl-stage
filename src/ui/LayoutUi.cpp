@@ -5,13 +5,15 @@
 #include "app/ProjectSession.h"
 #include "app/Settings.h"
 #include "io/FileDialogs.h"
+#include "ui/KeysUi.h"
 #include "ui/LayoutPreset.h"
 #include "ui/Theme.h"
+#include "ui/ViewState.h"
 #include "ui/Widgets.h"
 #include "ui/panels/PreviewPanel.h"
 
 #include <imgui.h>
-#include <imgui_internal.h> // MarkIniSettingsDirty
+#include <imgui_internal.h>
 
 #include <cfloat>
 #include <cmath>
@@ -37,8 +39,8 @@ PresetStore& store()
     return *s;
 }
 
-std::optional<LayoutPreset> g_pending; // preset a aplicar antes do dockspace do proximo quadro
-bool g_restoreChecked = false;         // o ultimo preset usado ja foi restaurado nesta execucao
+std::optional<LayoutPreset> g_pending;
+bool g_restoreChecked = false;
 
 bool g_openSave = false;
 bool g_focusName = false;
@@ -52,7 +54,10 @@ bool g_renameFocus = false;
 char g_renameBuf[96] = {};
 std::string g_status;
 
-int g_exportRequest = -1;       // indice a exportar (o dialogo de arquivo abre fora do desenho)
+std::string g_deleteName;
+bool g_deleteOpened = false;
+
+int g_exportRequest = -1;
 bool g_importRequest = false;
 
 const char* keyOf(UiLayout l)
@@ -67,6 +72,7 @@ LayoutPreset capture(const PanelContext& ctx, const std::string& name, bool incl
     size_t n = 0;
     const char* ini = ImGui::SaveIniSettingsToMemory(&n);
     p.dock = layout::extractDock(std::string(ini, n));
+    p.hidden = ctx.settings.view.hidden;
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     p.refW = static_cast<int>(std::lround(vp->WorkSize.x));
     p.refH = static_cast<int>(std::lround(vp->WorkSize.y));
@@ -90,10 +96,10 @@ void requestApply(const LayoutPreset& p)
     g_pending = p;
 }
 
-void applyPreset(PanelContext& ctx, const LayoutPreset& p)
+void applyPreset(PanelContext& ctx, const LayoutPreset& p, bool withDock = true)
 {
-    // Painéis: troca só as janelas dos paineis e os dockspaces do preset; o resto do imgui.ini fica como está
-    if (layout::hasDockRoot(p.dock, layout::kCompDockRoot) || layout::hasDockRoot(p.dock, layout::kMapDockRoot)) {
+    if (withDock
+        && (layout::hasDockRoot(p.dock, layout::kCompDockRoot) || layout::hasDockRoot(p.dock, layout::kMapDockRoot))) {
         const ImGuiViewport* vp = ImGui::GetMainViewport();
         const double sx = p.refW > 0 ? static_cast<double>(vp->WorkSize.x) / p.refW : 1.0;
         const double sy = p.refH > 0 ? static_cast<double>(vp->WorkSize.y) / p.refH : 1.0;
@@ -104,17 +110,18 @@ void applyPreset(PanelContext& ctx, const LayoutPreset& p)
         ImGui::MarkIniSettingsDirty();
     }
 
-    // Prévia
+    if (withDock)
+        ctx.settings.view.hidden = view::sanitizeKeys(p.hidden);
+
     PreviewOptions& o = previewOptions();
     o.source = p.preview.source == "layer" ? PreviewSource::Layer : PreviewSource::Clip;
     o.checker = p.preview.checker;
     o.fit = p.preview.fit == "fill" ? FitMode::Fill : FitMode::Fit;
 
-    // Layout pronto de origem (o que "Restaurar layout" refaz) e, se o preset guardou, o tamanho da interface
     for (int i = 0; i < kUiLayoutCount; ++i)
         if (p.builtin == keyOf(static_cast<UiLayout>(i)))
             ctx.settings.layout = static_cast<UiLayout>(i);
-    if (p.hasUiScale) {
+    if (p.hasUiScale && withDock) {
         ctx.settings.uiScaleMode = p.uiMode == "system" ? UiScaleMode::System
                                    : p.uiMode == "fixed" ? UiScaleMode::Fixed
                                                          : UiScaleMode::Window;
@@ -164,7 +171,8 @@ void drawSaveModal(PanelContext& ctx)
                                         ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
     ImGui::Checkbox("Incluir o tamanho da interface##layout_incluir_escala", &g_includeScale);
     ImGui::PushTextWrapPos(dp(300.0f));
-    ImGui::TextColored(theme::kTextDim, "Guarda a posição e o tamanho dos painéis, o modo e as opções da Prévia.");
+    ImGui::TextColored(theme::kTextDim,
+                       "Guarda a posição e o tamanho dos painéis (inclusive os soltos em janela), quais estão ocultos, o modo e as opções da Prévia.");
     ImGui::PopTextWrapPos();
 
     const std::string name = layout::sanitizeName(g_nameBuf);
@@ -197,6 +205,54 @@ void drawSaveModal(PanelContext& ctx)
     ImGui::EndPopup();
 }
 
+void deleteLayoutByName(PanelContext& ctx, const std::string& name)
+{
+    PresetStore& st = store();
+    const int index = st.find(name);
+    if (index < 0)
+        return;
+    const std::string realName = st.entries()[static_cast<size_t>(index)].preset.name;
+    if (st.remove(index)) {
+        if (ctx.settings.lastLayoutPreset == realName) {
+            ctx.settings.lastLayoutPreset.clear();
+            ctx.settings.save();
+        }
+        g_renameIndex = -1;
+        g_status = "Layout \"" + realName + "\" excluído.";
+        log::info("Layout excluído: " + realName);
+    } else {
+        g_status = "Não foi possível excluir \"" + realName + "\".";
+    }
+}
+
+void drawDeleteModal(PanelContext& ctx)
+{
+    if (!g_deleteName.empty() && !g_deleteOpened) {
+        ImGui::OpenPopup("Excluir layout");
+        g_deleteOpened = true;
+    }
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal("Excluir layout", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings))
+        return;
+    ImGui::Text("Excluir o layout \"%s\"?", g_deleteName.c_str());
+    ImGui::TextColored(theme::kTextDim, "Os painéis continuam como estão; só o layout salvo é apagado.");
+    ImGui::Spacing();
+    bool close = false;
+    if (ImGui::Button("Excluir##layout_excluir_ok", ImVec2(dp(140.0f), 0.0f))) {
+        deleteLayoutByName(ctx, g_deleteName);
+        close = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancelar##layout_excluir_cancelar", ImVec2(dp(140.0f), 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape))
+        close = true;
+    if (close) {
+        g_deleteName.clear();
+        g_deleteOpened = false;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
 void drawManageWindow(PanelContext& ctx)
 {
     if (!g_openManage)
@@ -211,7 +267,7 @@ void drawManageWindow(PanelContext& ctx)
             if (st.count() == 0) {
                 ImGui::PushTextWrapPos(0.0f);
                 ImGui::TextColored(theme::kTextDim,
-                                   "Nenhum layout salvo. Use Ver > Layout > Salvar layout atual… para guardar o arranjo dos painéis.");
+                                   "Nenhum layout salvo. Use Exibir > Layout > Salvar layout atual… para guardar o arranjo dos painéis.");
                 ImGui::PopTextWrapPos();
             }
             int toDelete = -1;
@@ -258,8 +314,9 @@ void drawManageWindow(PanelContext& ctx)
                 }
                 ImGui::TableSetColumnIndex(1);
                 ImGui::AlignTextToFramePadding();
-                if (i < 9)
-                    ImGui::TextColored(theme::kTextDim, "Alt+%d", i + 1);
+                control::ActionArgs presetArgs;
+                presetArgs.index = i;
+                ImGui::TextColored(theme::kTextDim, "%s", actionShortcut("ui.layoutPreset", presetArgs).c_str());
                 ImGui::TableSetColumnIndex(2);
                 if (ImGui::Button(("Aplicar##layout_" + id + "_aplicar").c_str()))
                     toApply = i;
@@ -313,53 +370,59 @@ void drawManageWindow(PanelContext& ctx)
     }
 }
 
-} // namespace
+}
 
 void drawLayoutPresetsMenu(PanelContext& ctx)
 {
     PresetStore& st = store();
     ImGui::Separator();
-    if (ImGui::MenuItem(ICON_SAVE "  Salvar layout atual…##layout_salvar"))
+    if (ImGui::MenuItem(ICON_SAVE "  Salvar layout atual como…##layout_salvar"))
         g_openSave = true;
     if (st.count() > 0)
         ImGui::Separator();
     for (int i = 0; i < st.count(); ++i) {
         const LayoutPreset& p = st.entries()[static_cast<size_t>(i)].preset;
-        char shortcut[16] = {};
-        if (i < 9)
-            std::snprintf(shortcut, sizeof(shortcut), "Alt+%d", i + 1);
+        control::ActionArgs presetArgs;
+        presetArgs.index = i;
+        const std::string shortcut = actionShortcut("ui.layoutPreset", presetArgs);
         const std::string label = p.name + "##layout_preset_" + std::to_string(i + 1);
-        if (ImGui::MenuItem(label.c_str(), shortcut[0] ? shortcut : nullptr, ctx.settings.lastLayoutPreset == p.name))
+        if (ImGui::MenuItem(label.c_str(), shortcut.empty() ? nullptr : shortcut.c_str(), ctx.settings.lastLayoutPreset == p.name))
             requestApply(p);
     }
     ImGui::Separator();
+    if (ImGui::BeginMenu(ICON_TRASH "  Excluir layout##layout_excluir", st.count() > 0)) {
+        for (int i = 0; i < st.count(); ++i) {
+            const std::string& name = st.entries()[static_cast<size_t>(i)].preset.name;
+            if (ImGui::MenuItem((name + "##layout_excluir_" + std::to_string(i + 1)).c_str()))
+                g_deleteName = name;
+        }
+        ImGui::EndMenu();
+    }
     if (ImGui::MenuItem(ICON_SLIDERS "  Gerenciar…##layout_gerenciar"))
         g_openManage = true;
 }
 
-void handleLayoutShortcuts(PanelContext& ctx)
+bool applyLayoutPresetIndex(int index)
 {
-    if (ctx.project.busy() || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) || ImGui::GetIO().WantTextInput)
-        return;
     const PresetStore& st = store();
-    for (int i = 0; i < 9 && i < st.count(); ++i) {
-        if (ImGui::Shortcut(ImGuiMod_Alt | (ImGuiKey_1 + i), ImGuiInputFlags_RouteGlobal)) {
-            requestApply(st.entries()[static_cast<size_t>(i)].preset);
-            return;
-        }
-    }
+    if (index < 0 || index >= st.count())
+        return false;
+    requestApply(st.entries()[static_cast<size_t>(index)].preset);
+    return true;
 }
 
 void applyPendingLayout(PanelContext& ctx)
 {
-    if (!g_restoreChecked) { // ao abrir o app: volta o ultimo layout do usuario
+    if (!g_restoreChecked) {
         g_restoreChecked = true;
         if (!ctx.settings.lastLayoutPreset.empty()) {
             const int index = store().find(ctx.settings.lastLayoutPreset);
-            if (index >= 0)
+            if (index < 0)
+                ctx.settings.lastLayoutPreset.clear();
+            else if (!ImGui::DockBuilderGetNode(layout::kCompDockRoot))
                 g_pending = store().entries()[static_cast<size_t>(index)].preset;
             else
-                ctx.settings.lastLayoutPreset.clear(); // o arquivo sumiu
+                applyPreset(ctx, store().entries()[static_cast<size_t>(index)].preset, false);
         }
     }
     if (!g_pending)
@@ -372,6 +435,7 @@ void applyPendingLayout(PanelContext& ctx)
 void drawLayoutWindows(PanelContext& ctx)
 {
     drawSaveModal(ctx);
+    drawDeleteModal(ctx);
     drawManageWindow(ctx);
 }
 
@@ -421,4 +485,4 @@ LayoutUiInfo layoutUiInfo()
     return info;
 }
 
-} // namespace bsl::ui
+}

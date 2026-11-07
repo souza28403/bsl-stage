@@ -35,7 +35,7 @@ const char* errorText(unsigned long code)
     }
 }
 
-} // namespace
+}
 
 struct PdfDocument::FileAccess
 {
@@ -159,11 +159,11 @@ bool PdfDocument::render(int page, int w, int h, const std::uint8_t bg[4], std::
         FPDF_ClosePage(p);
         return false;
     }
-    FPDFBitmap_FillRect(bmp, x0, y0, rw, rh, 0xFFFFFFFFu); // papel branco opaco
+    FPDFBitmap_FillRect(bmp, x0, y0, rw, rh, 0xFFFFFFFFu);
     FPDF_RenderPageBitmap(bmp, p, x0, y0, rw, rh, 0, FPDF_ANNOT);
     FPDFBitmap_Destroy(bmp);
     FPDF_ClosePage(p);
     return true;
 }
 
-} // namespace bsl::worker
+}

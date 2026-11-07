@@ -25,7 +25,7 @@ GLuint compile(GLenum type, const char* source)
     return shader;
 }
 
-} // namespace
+}
 
 Shader::Shader(const char* vertexSource, const char* fragmentSource)
 {
@@ -114,4 +114,4 @@ void Shader::setVec3Array(const char* name, const float* values, int count) cons
     glUniform3fv(glGetUniformLocation(program_, name), count, values);
 }
 
-} // namespace bsl
+}

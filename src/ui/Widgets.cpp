@@ -3,8 +3,9 @@
 #include "app/Qa.h"
 #include "ui/Brand.h"
 #include "ui/Theme.h"
+#include "ui/ViewUi.h"
 
-#include <imgui_internal.h> // DockNode, ImTextCharFromUtf8
+#include <imgui_internal.h>
 
 #include <algorithm>
 #include <cfloat>
@@ -59,13 +60,11 @@ std::string formatTime(double seconds)
 
 bool beginPanel(const char* name, ImGuiWindowFlags flags)
 {
-    return ImGui::Begin(name, nullptr, flags);
+    return viewBegin(name, flags);
 }
 
 void endPanel()
 {
-    // Contorno do painel em foco: so no encaixado que tem o foco (ou algum filho dele). Cobre o no inteiro do dock
-    // (aba incluida), por dentro, por cima do conteudo e dos filhos desta janela.
     ImGuiWindow* window = ImGui::GetCurrentWindow();
     if (window->DockNode && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
         const ImRect r = window->DockNode->Rect();
@@ -94,7 +93,6 @@ bool toggleButton(const char* label, bool& value, const char* tooltip, ImVec2 si
         ImGui::PushStyleColor(ImGuiCol_Border, theme::kAccent);
         ImGui::PushFont(fonts().bold, fonts().bold->LegacySize);
     } else {
-        // Desligado: fundo escuro rebaixado com contorno e letra cinza (legivel como "apagado")
         ImGui::PushStyleColor(ImGuiCol_Button, theme::kField);
         ImGui::PushStyleColor(ImGuiCol_Text, theme::kTextDim);
         ImGui::PushStyleColor(ImGuiCol_Border, theme::kBorder);
@@ -123,8 +121,6 @@ void drawIcon(ImDrawList* dl, const char* icon, ImVec2 center, ImU32 color, floa
 {
     ImFont* font = ImGui::GetFont();
     const float size = ImGui::GetFontSize() * scale;
-    // Caixa que une os glifos visiveis ('icon' pode ter mais de um, ex.: + e monitor): centraliza por ela, nao pela
-    // linha de texto
     ImFontBaked* baked = font->GetFontBaked(size);
     float x0 = FLT_MAX, y0 = FLT_MAX, x1 = -FLT_MAX, y1 = -FLT_MAX, pen = 0.0f;
     for (const char* p = icon; *p;) {
@@ -276,29 +272,25 @@ void drawCenteredFit(ImDrawList* dl, ImVec2 a, ImVec2 b, const char* text, ImU32
     dl->AddText(font, size, ImVec2(a.x + (b.x - a.x - ts.x) * 0.5f, a.y + (b.y - a.y - ts.y) * 0.5f), color, text);
 }
 
-// --------------------------------------------------------------------------------------------------------------
-// Numeros arrastaveis ("hot text")
-
 namespace {
 
-// Um unico campo de cada vez recebe arrasto ou digitacao (so existe um mouse e um teclado)
 struct HotState
 {
-    ImGuiID editId = 0;     // campo de digitacao aberto
-    int editFrame = -1;     // ultimo frame em que o campo de digitacao foi desenhado (descarta estado velho)
-    bool focusEdit = false; // pedir o foco do teclado no primeiro frame de edicao
-    char buf[64] = {};      // texto digitado
-    char initial[64] = {};  // texto de quando a edicao comecou (confirmar sem mexer nao arredonda o valor)
+    ImGuiID editId = 0;
+    int editFrame = -1;
+    bool focusEdit = false;
+    char buf[64] = {};
+    char initial[64] = {};
 
     ImGuiID dragId = 0;
     bool moved = false;
-    double accum = 0.0;     // valor sem arredondamento durante o arrasto (inteiros precisam de passos fracionarios)
+    double accum = 0.0;
     float startX = 0.0f;
     float lastX = 0.0f;
 
-    int frame = -1;         // ordem dos campos no frame, para o Tab
+    int frame = -1;
     int seq = 0;
-    int tabTarget = -1;     // campo que abre a edicao no proximo frame (depois do Tab)
+    int tabTarget = -1;
     int tabFrame = -1;
 };
 HotState g_hot;
@@ -314,7 +306,7 @@ void formatValue(char* out, size_t n, const char* format, double v, bool isInt)
 bool parseValue(const char* text, double& out)
 {
     std::string t(text);
-    std::replace(t.begin(), t.end(), ',', '.'); // virgula decimal do teclado brasileiro
+    std::replace(t.begin(), t.end(), ',', '.');
     char* end = nullptr;
     const double v = std::strtod(t.c_str(), &end);
     if (end == t.c_str() || !std::isfinite(v))
@@ -323,16 +315,20 @@ bool parseValue(const char* text, double& out)
     return true;
 }
 
+std::function<void()> g_hotExtra;
+
 bool hotCore(const char* id, double& value, double lo, double hi, double step, bool isInt, const char* format,
              const char* unit, double def, float width, bool bar)
 {
+    const std::function<void()> extraMenu = std::move(g_hotExtra);
+    g_hotExtra = nullptr;
     HotState& h = g_hot;
     const int frame = ImGui::GetFrameCount();
     if (h.frame != frame) {
         h.frame = frame;
         h.seq = 0;
     }
-    if (h.editId != 0 && h.editFrame < frame - 1) // o campo deixou de ser desenhado (aba trocada, painel fechado)
+    if (h.editId != 0 && h.editFrame < frame - 1)
         h.editId = 0;
     if (h.tabTarget >= 0 && h.tabFrame < frame - 1)
         h.tabTarget = -1;
@@ -357,7 +353,6 @@ bool hotCore(const char* id, double& value, double lo, double hi, double step, b
     float w = width < 0.0f ? std::max(availW, dp(24.0f)) : (width > 0.0f ? dp(width) : textW + dp(2.0f));
     w = std::max(w, dp(18.0f));
 
-    // Tab: este campo abre a edicao agora (sem item desenhado antes, entao nao duplica o ID)
     if (h.tabTarget == seq && h.editId == 0) {
         h.tabTarget = -1;
         h.editId = uid;
@@ -378,7 +373,7 @@ bool hotCore(const char* id, double& value, double lo, double hi, double step, b
                                               ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll
                                                   | ImGuiInputTextFlags_CharsScientific);
         ImGui::PopFont();
-        ImGui::SetItemKeyOwner(ImGuiKey_Tab); // o Tab e nosso: a navegacao do ImGui nao pula para outro campo
+        ImGui::SetItemKeyOwner(ImGuiKey_Tab);
         const bool tab = ImGui::IsItemActive() && ImGui::IsKeyPressed(ImGuiKey_Tab, false);
         const bool deactivated = ImGui::IsItemDeactivated();
         const bool cancelled = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
@@ -397,7 +392,6 @@ bool hotCore(const char* id, double& value, double lo, double hi, double step, b
         return value != original;
     }
 
-    // --- Estado normal: texto "quente" ---
     const ImVec2 pos = ImGui::GetCursorScreenPos();
     ImGui::InvisibleButton(id, ImVec2(w, height));
     const bool hovered = ImGui::IsItemHovered();
@@ -424,24 +418,27 @@ bool hotCore(const char* id, double& value, double lo, double hi, double step, b
     if (hovered || active)
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
     if (released && h.dragId == uid && !h.moved && hovered && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
-        h.editId = uid; // o campo de digitacao aparece no proximo frame
+        h.editId = uid;
         h.focusEdit = true;
         h.editFrame = frame;
         std::snprintf(h.buf, sizeof(h.buf), "%s", text);
         std::snprintf(h.initial, sizeof(h.initial), "%s", text);
     }
 
-    // Menu de contexto: restaurar o padrao
-    if (std::isfinite(def) && ImGui::BeginPopupContextItem(nullptr)) { // ID do popup = ID do item (um por campo)
-        if (ImGui::MenuItem("Restaurar padrão"))
+    if ((std::isfinite(def) || extraMenu) && ImGui::BeginPopupContextItem(nullptr)) {
+        if (std::isfinite(def) && ImGui::MenuItem("Restaurar padrão"))
             value = std::clamp(def, lo, hi);
+        if (extraMenu) {
+            if (std::isfinite(def))
+                ImGui::Separator();
+            extraMenu();
+        }
         ImGui::EndPopup();
     }
     if (hovered && !active && !ImGui::IsPopupOpen(uid, ImGuiPopupFlags_None) && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
         ImGui::SetTooltip("Arraste para ajustar (Shift: x10, Ctrl: x0,1)\nClique para digitar%s",
                           std::isfinite(def) ? "\nBotão direito: restaurar padrão" : "");
 
-    // Desenho: valor em vermelho claro (mono), unidade cinza, sublinhado no hover/arrasto
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const float textY = pos.y + (height - monoPx) * 0.5f;
     const ImU32 valueCol = ImGui::GetColorU32(theme::kAccentHover);
@@ -469,7 +466,7 @@ bool hotCore(const char* id, double& value, double lo, double hi, double step, b
     return value != original;
 }
 
-} // namespace
+}
 
 void splitValueFormat(const char* format, std::string& numberFormat, std::string& unit)
 {
@@ -477,7 +474,7 @@ void splitValueFormat(const char* format, std::string& numberFormat, std::string
     unit.clear();
     const char* f = format && format[0] ? format : "%.2f";
     const char* p = f;
-    for (; *p; ++p) { // acha o primeiro '%' que nao seja "%%"
+    for (; *p; ++p) {
         if (*p == '%' && p[1] == '%') {
             ++p;
             continue;
@@ -485,7 +482,7 @@ void splitValueFormat(const char* format, std::string& numberFormat, std::string
         if (*p == '%')
             break;
     }
-    if (!*p) { // sem conversao: o formato todo vira unidade do numero padrao
+    if (!*p) {
         numberFormat = "%.2f";
         unit = f;
         return;
@@ -497,7 +494,7 @@ void splitValueFormat(const char* format, std::string& numberFormat, std::string
         ++q;
     numberFormat.assign(f, static_cast<size_t>(q - f));
     std::string rest(q);
-    for (size_t i = 0; i + 1 < rest.size();) { // "%%" -> "%"
+    for (size_t i = 0; i + 1 < rest.size();) {
         if (rest[i] == '%' && rest[i + 1] == '%')
             rest.erase(i + 1, 1);
         else
@@ -505,6 +502,11 @@ void splitValueFormat(const char* format, std::string& numberFormat, std::string
     }
     const size_t first = rest.find_first_not_of(' ');
     unit = first == std::string::npos ? std::string() : rest.substr(first);
+}
+
+void hotContextExtra(std::function<void()> draw)
+{
+    g_hotExtra = std::move(draw);
 }
 
 bool hotNumber(const char* id, float& v, float lo, float hi, float step, const char* format, const char* unit, float def,
@@ -557,4 +559,4 @@ bool hotPercent(const char* id, float& value, float def, float width)
     return changed;
 }
 
-} // namespace bsl::ui
+}

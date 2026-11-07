@@ -1,4 +1,3 @@
-// glewInit() dos plugins de teste: carrega o OpenGL pelo glad.
 #include <GL/glew.h>
 
 #include <windows.h>

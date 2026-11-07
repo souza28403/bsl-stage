@@ -77,4 +77,4 @@ void Fbo::unbind()
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-} // namespace bsl
+}

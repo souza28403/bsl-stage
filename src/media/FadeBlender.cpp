@@ -14,7 +14,6 @@ void main()
 }
 )";
 
-// Mistura em alpha premultiplicado e devolve alpha reta (convencao das fontes)
 const char* const kMix = R"(#version 330 core
 out vec4 fragColor;
 uniform sampler2D uPrev;
@@ -42,7 +41,7 @@ void main()
 }
 )";
 
-} // namespace
+}
 
 FadeBlender::FadeBlender()
 {
@@ -160,4 +159,4 @@ void FadeBlender::draw(GLuint current, float t)
     glViewport(vp[0], vp[1], vp[2], vp[3]);
 }
 
-} // namespace bsl::media
+}

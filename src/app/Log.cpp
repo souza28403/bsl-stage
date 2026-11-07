@@ -31,7 +31,7 @@ void write(const char* level, const std::string& message)
         file << line;
 }
 
-} // namespace
+}
 
 void info(const std::string& message)
 {
@@ -56,4 +56,4 @@ std::string recentWarning(double seconds)
     return age <= seconds ? g_lastWarning : std::string();
 }
 
-} // namespace bsl::log
+}

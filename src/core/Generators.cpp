@@ -46,7 +46,7 @@ const GeneratorInfo kGenerators[] = {
      &media::SpoutSource::label},
 };
 
-} // namespace
+}
 
 std::span<const GeneratorInfo> allGenerators()
 {
@@ -67,4 +67,4 @@ const GeneratorInfo* findGenerator(const std::string& id)
     return nullptr;
 }
 
-} // namespace bsl
+}

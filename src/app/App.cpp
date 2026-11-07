@@ -6,6 +6,8 @@
 #include "app/Paths.h"
 #include "app/ProjectSession.h"
 #include "app/Qa.h"
+#include "app/Version.h"
+#include "legal/Notices.h"
 #include "ai/AiEngine.h"
 #include "audio/AudioAnalyzer.h"
 #include "ffgl/FfglCatalog.h"
@@ -27,12 +29,22 @@
 #include "ui/Brand.h"
 #include "ui/Theme.h"
 #include "ui/LayoutUi.h"
+#include "ui/KeysUi.h"
 #include "ui/Ui.h"
+#include "ui/ViewUi.h"
 #include "ui/panels/CaptureTargetChooser.h"
+#include "ui/panels/DmxWindow.h"
+#include "ui/panels/LegalWindow.h"
+#include "ui/panels/PluginWizard.h"
 #include "ui/panels/MapView.h"
 #include "ui/panels/PixelMapPanels.h"
 #include "ui/panels/PreviewPanel.h"
+#include "ui/panels/ReportWindow.h"
+#include "ui/panels/UpdateUi.h"
+#include "update/Http.h"
+#include "update/Policy.h"
 #include "ui/panels/TabPanels.h"
+#include "ui/panels/TransformEditor.h"
 
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
@@ -45,7 +57,7 @@
 #include <stb_image_write.h>
 
 #include <windows.h>
-#include <mmsystem.h> // timeBeginPeriod
+#include <mmsystem.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
 
@@ -53,6 +65,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
+#include <iterator>
 #include <exception>
 #include <fstream>
 #include <thread>
@@ -63,13 +77,13 @@ namespace bsl {
 namespace {
 
 constexpr const char* kWindowTitle = "BSL Stage";
+constexpr int kOutputWindowUiFps = 60;
 
 void glfwErrorCallback(int code, const char* description)
 {
     std::fprintf(stderr, "GLFW erro %d: %s\n", code, description);
 }
 
-// Mesmo layout do DROPFILES do Windows (shlobj.h traz macros que atrapalham o resto do arquivo)
 struct DropFilesHeader
 {
     DWORD pFiles;
@@ -84,7 +98,6 @@ const char* glString(GLenum name)
     return s ? s : "?";
 }
 
-// Reduz 'src' para caber em size x size mantendo a proporcao (centralizada, fundo transparente)
 RgbaImage squareIcon(const RgbaImage& src, int size)
 {
     const double s = std::min(static_cast<double>(size) / src.width, static_cast<double>(size) / src.height);
@@ -104,7 +117,6 @@ RgbaImage squareIcon(const RgbaImage& src, int size)
     return out;
 }
 
-// Grava RGBA8 (linhas de cima para baixo) como PNG opaco
 bool writePng(const std::filesystem::path& path, int w, int h, std::vector<unsigned char>& rgba)
 {
     for (size_t i = 3; i < rgba.size(); i += 4)
@@ -124,7 +136,47 @@ bool writePng(const std::filesystem::path& path, int w, int h, std::vector<unsig
     return true;
 }
 
-} // namespace
+GLFWmonitor* monitorOfWindow(GLFWwindow* window)
+{
+    int wx = 0, wy = 0, ww = 0, wh = 0;
+    glfwGetWindowPos(window, &wx, &wy);
+    glfwGetWindowSize(window, &ww, &wh);
+    int count = 0;
+    GLFWmonitor** monitors = glfwGetMonitors(&count);
+    GLFWmonitor* best = glfwGetPrimaryMonitor();
+    long long bestArea = -1;
+    for (int i = 0; monitors && i < count; ++i) {
+        const GLFWvidmode* mode = glfwGetVideoMode(monitors[i]);
+        if (!mode)
+            continue;
+        int mx = 0, my = 0;
+        glfwGetMonitorPos(monitors[i], &mx, &my);
+        const long long ox = std::max(0, std::min(wx + ww, mx + mode->width) - std::max(wx, mx));
+        const long long oy = std::max(0, std::min(wy + wh, my + mode->height) - std::max(wy, my));
+        if (ox * oy > bestArea) {
+            bestArea = ox * oy;
+            best = monitors[i];
+        }
+    }
+    return best;
+}
+
+bool windowPosVisible(int x, int y, int w)
+{
+    int count = 0;
+    GLFWmonitor** monitors = glfwGetMonitors(&count);
+    const int px = x + std::min(w / 2, 200);
+    const int py = y + 12;
+    for (int i = 0; monitors && i < count; ++i) {
+        int ax = 0, ay = 0, aw = 0, ah = 0;
+        glfwGetMonitorWorkarea(monitors[i], &ax, &ay, &aw, &ah);
+        if (px >= ax && px < ax + aw && py >= ay && py < ay + ah)
+            return true;
+    }
+    return false;
+}
+
+}
 
 App::App(AppOptions options) : options_(std::move(options))
 {
@@ -143,11 +195,15 @@ int App::run()
         return 1;
 
     startTime_ = lastFrameStart_ = lastUpdate_ = Clock::now();
+    frameWatch_.start();
     while (!glfwWindowShouldClose(window_)) {
         const auto frameStart = Clock::now();
+        frameWatch_.enter(FrameWatch::Events);
+        pollSystemHotkeys();
         glfwPollEvents();
 
         if (glfwGetWindowAttrib(window_, GLFW_ICONIFIED)) {
+            frameWatch_.enter(FrameWatch::Idle);
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             lastUpdate_ = Clock::now();
             continue;
@@ -156,19 +212,20 @@ int App::run()
         updateStats(frameStart);
         frame();
 
-        // Tempo de trabalho medido antes da espera do limitador
         smoothedWork_ += 0.1f * (std::chrono::duration<float>(Clock::now() - frameStart).count()
                                  - smoothedWork_);
+        frameWatch_.enter(FrameWatch::Limiter);
         limitFrameRate(frameStart);
     }
 
+    frameWatch_.stop();
     shutdown();
     return 0;
 }
 
 bool App::init()
 {
-    if (!options_.qaDir.empty()) { // teste de interface: settings, imgui.ini, log e autosave ficam isolados na pasta
+    if (!options_.qaDir.empty()) {
         std::error_code ec;
         std::filesystem::create_directories(options_.qaDir, ec);
         paths::setAppDataOverride(options_.qaDir / L"appdata");
@@ -185,15 +242,17 @@ bool App::init()
         settings_.uiScale = std::clamp(options_.uiScale, 0.75f, 3.0f);
         settings_.uiScaleMode = UiScaleMode::Fixed;
     }
+    setupUpdates();
+    ui::viewBind(settings_);
     composition_ = Composition::createDefault();
     {
-        Settings ffglSettings = settings_; // --plugins entra so na varredura, nao nas configuracoes salvas
+        Settings ffglSettings = settings_;
         for (const std::filesystem::path& dir : options_.pluginFolders)
             ffglSettings.ffglFolders.push_back(paths::toUtf8(dir));
-        configureFfglCatalog(ffglSettings); // plugins FFGL: varredura em segundo plano (cache em %LOCALAPPDATA%)
+        configureFfglCatalog(ffglSettings);
     }
-    configureIsfLibrary(settings_); // pastas ISF (Documents\BSL Stage\ISF + extras); varredura em segundo plano
-    audio::AudioAnalyzer::instance().setConfig(settings_.audio); // analise de audio: thread propria (loopback por padrao)
+    configureIsfLibrary(settings_);
+    audio::AudioAnalyzer::instance().setConfig(settings_.audio);
     audio::AudioAnalyzer::instance().start();
 
     glfwSetErrorCallback(glfwErrorCallback);
@@ -206,9 +265,20 @@ bool App::init()
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
     const bool sizeOverride = options_.windowWidth > 0 && options_.windowHeight > 0;
+    if (!sizeOverride) {
+        if (settings_.windowMaximized)
+            glfwWindowHint(GLFW_MAXIMIZED, GLFW_TRUE);
+        if (settings_.hasWindowPos && windowPosVisible(settings_.windowX, settings_.windowY, settings_.windowWidth)) {
+            glfwWindowHint(GLFW_POSITION_X, settings_.windowX);
+            glfwWindowHint(GLFW_POSITION_Y, settings_.windowY);
+        }
+    }
     window_ = glfwCreateWindow(sizeOverride ? options_.windowWidth : settings_.windowWidth,
                                sizeOverride ? options_.windowHeight : settings_.windowHeight, kWindowTitle,
                                nullptr, nullptr);
+    glfwWindowHint(GLFW_MAXIMIZED, GLFW_FALSE);
+    glfwWindowHint(GLFW_POSITION_X, GLFW_ANY_POSITION);
+    glfwWindowHint(GLFW_POSITION_Y, GLFW_ANY_POSITION);
     if (!window_) {
         std::fprintf(stderr, "Nao foi possivel criar a janela (OpenGL 3.3 core).\n");
         return false;
@@ -225,7 +295,6 @@ bool App::init()
     glInfo_.version = glString(GL_VERSION);
     glInfo_.gpu = glString(GL_RENDERER);
 
-    // Resolucao de timer de 1 ms para o limitador de FPS
     timeBeginPeriod(1);
 
     try {
@@ -240,11 +309,12 @@ bool App::init()
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable | ImGuiConfigFlags_NavEnableKeyboard;
-    // Viewports multiplos ficam desabilitados (nao ligar ImGuiConfigFlags_ViewportsEnable)
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable | ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_ViewportsEnable;
+    io.ConfigViewportsNoDecoration = false;
+    io.ConfigViewportsNoTaskBarIcon = false;
     iniPath_ = paths::toUtf8(paths::appDataDir() / L"imgui.ini");
     io.IniFilename = iniPath_.c_str();
-    io.ConfigDebugHighlightIdConflicts = false; // so no --qa (qa::init liga): o usuario final nao ve o aviso vermelho
+    io.ConfigDebugHighlightIdConflicts = false;
     if (qaOn_)
         qa::init(options_.qaDir);
 
@@ -257,7 +327,6 @@ bool App::init()
     ImGui_ImplOpenGL3_Init("#version 330 core");
     imguiReady_ = true;
 
-    // Depois do ImGui: o OutputRenderer encadeia o callback de monitores que o backend instalou
     try {
         outputs_ = std::make_unique<OutputRenderer>(window_);
     } catch (const std::exception& e) {
@@ -275,7 +344,7 @@ bool App::init()
         s.monitorName = "Monitor Fantasma";
     }
     outputs_->setIdentify(options_.identify);
-    if (options_.canvasWidth > 0 && options_.canvasHeight > 0) { // syncCanvasSize recria o FBO no 1o frame
+    if (options_.canvasWidth > 0 && options_.canvasHeight > 0) {
         composition_.width = options_.canvasWidth;
         composition_.height = options_.canvasHeight;
     }
@@ -288,12 +357,14 @@ bool App::init()
         ui::requestFocusTab(options_.focusTab);
     if (!options_.fxOpen.empty())
         ui::setEffectsPanelOnlyOpen(options_.fxOpen);
+    if (!options_.dmxDemo.empty())
+        setupDmxDemo();
 
-    // Projeto: Novo/Abrir/Salvar, autosave e recuperação. Capturas de teste não mexem em lock/autosave.
     project_ = std::make_unique<ProjectSession>(
         ProjectSession::Targets{composition_, output_, selection_, mapping_, settings_},
         [this](int w, int h) { return OutputSetup::createDefault(w, h, outputs_->monitors()); });
     project_->setWindow(window_);
+    setupKeyHooks();
     const bool captureRun = !options_.screenshotPath.empty() || !options_.screenshotOutputPath.empty();
     if (!captureRun)
         project_->enableCrashRecovery(options_.projectPath.empty());
@@ -302,7 +373,6 @@ bool App::init()
         project_->openNow(options_.projectPath);
         project_->takeLoaded();
         afterProjectLoaded();
-        // Testes: --trigger <camada> <coluna> também vale com um projeto (dispara e seleciona o clip)
         for (const auto& [layer, column] : options_.triggers)
             composition_.trigger(layer - 1, column - 1);
         if (!options_.triggers.empty())
@@ -313,16 +383,18 @@ bool App::init()
 
 void App::shutdown()
 {
+    const bool testRun = qaOn_ || !options_.screenshotPath.empty() || !options_.screenshotOutputPath.empty();
+    updates_.shutdown();
     if (qaOn_) {
         qa::finish();
         qaOn_ = false;
     }
-    ffgl::Catalog::instance().shutdown(); // mata a varredura de plugin em andamento
+    ffgl::Catalog::instance().shutdown();
     audio::AudioAnalyzer::instance().stop();
+    dmx_.shutdown();
     if (project_)
-        project_->shutdown(); // encerramento normal: apaga o lock e os autosaves
+        project_->shutdown();
 
-    // Janelas de saída e senders Spout/NDI primeiro (precisam do contexto principal vivo)
     if (window_)
         outputs_.reset();
     ndi::Finder::shutdownShared();
@@ -335,24 +407,32 @@ void App::shutdown()
     }
 
     if (window_) {
-        // --window-size e so para testes: nao sobrescreve o tamanho salvo da janela
-        if (!glfwGetWindowAttrib(window_, GLFW_ICONIFIED)
-            && !glfwGetWindowAttrib(window_, GLFW_MAXIMIZED)
-            && !(options_.windowWidth > 0 && options_.windowHeight > 0)) {
-            glfwGetWindowSize(window_, &settings_.windowWidth, &settings_.windowHeight);
+        if (!glfwGetWindowAttrib(window_, GLFW_ICONIFIED) && !(options_.windowWidth > 0 && options_.windowHeight > 0)) {
+            if (fullscreen_) {
+                settings_.windowWidth = fsW_;
+                settings_.windowHeight = fsH_;
+                settings_.windowX = fsX_;
+                settings_.windowY = fsY_;
+                settings_.hasWindowPos = true;
+                settings_.windowMaximized = fsMaximized_;
+            } else if (glfwGetWindowAttrib(window_, GLFW_MAXIMIZED)) {
+                settings_.windowMaximized = true;
+            } else {
+                settings_.windowMaximized = false;
+                glfwGetWindowSize(window_, &settings_.windowWidth, &settings_.windowHeight);
+                glfwGetWindowPos(window_, &settings_.windowX, &settings_.windowY);
+                settings_.hasWindowPos = true;
+            }
         }
         settings_.save();
     }
 
-    // Tudo que tem recursos GL precisa ser liberado com o contexto ainda vivo
     if (window_) {
-        ui::releasePreview();         // fonte da Prévia
-        ai::AiEngine::instance().shutdown(); // thread da IA, texturas e sessões (precisa do contexto GL)
-        composition_ = Composition{}; // fecha as fontes abertas
+        ui::releasePreview();
+        ai::AiEngine::instance().shutdown();
+        composition_ = Composition{};
         thumbs_.reset();
         liveThumbs_.reset();
-        // Fontes fechadas acima pedem o encerramento dos workers (PDF/Office/Web); espera um pouco para nao deixar
-        // Office ou navegador abertos. O job object do app derruba o que sobrar quando o processo sair.
         media::WorkerHost::waitAllStopped(8000);
         ui::pixelMapRelease();
         ui::unloadBrand();
@@ -362,6 +442,15 @@ void App::shutdown()
         glfwTerminate();
         timeEndPeriod(1);
     }
+
+    if (!testRun && !updaterLaunched_ && updates_.readyToInstall()) {
+        updaterLaunched_ = true;
+        std::string error;
+        if (updates_.launchInstallerOnExit(updates_.restartRequested(), &error))
+            log::info("Atualização: instalador iniciado");
+        else
+            log::warn("Atualização: não foi possível iniciar a instalação (" + error + ")");
+    }
 }
 
 void App::applyProfile()
@@ -369,21 +458,16 @@ void App::applyProfile()
     applySwapInterval();
 }
 
-// vsync da janela principal: so no perfil Maximo e so se nao houver janela de saida com vsync.
-// Quando ha, o vsync fica na janela de saida (o canvas segue o monitor de verdade) e o swap da
-// principal nao espera; nos outros perfis o limitador manual controla o FPS.
 void App::applySwapInterval()
 {
-    const bool outputPaces = outputs_ && outputs_->hasVsyncWindow();
-    const int want = (!outputPaces && settingsFor(settings_.profile).uiFps == 0) ? 1 : 0;
+    const bool outputWindows = outputs_ && outputs_->hasWindowOutput();
+    const int want = (!outputWindows && settingsFor(settings_.profile).uiFps == 0) ? 1 : 0;
     if (want != swapInterval_) {
         glfwSwapInterval(want);
         swapInterval_ = want;
     }
 }
 
-// Teste automatico (--output-window): Screen em janela 1280x720 com 2 slices, metades do canvas;
-// a segunda com warp perspectivo e soft edge na esquerda.
 void App::setupOutputTest()
 {
     const int cw = composition_.width, ch = composition_.height;
@@ -415,7 +499,6 @@ void App::setupOutputTest()
     mapping_ = {0, 1, -1};
 }
 
-// Canvas redimensionado no Inspetor: recria os FBOs e acompanha os retangulos de entrada
 void App::syncCanvasSize()
 {
     composition_.width = std::clamp(composition_.width, 16, 8192);
@@ -435,8 +518,6 @@ void App::syncCanvasSize()
     log::info("Canvas: " + std::to_string(composition_.width) + "x" + std::to_string(composition_.height));
 }
 
-// Projeto novo/aberto: o canvas pode ter outro tamanho. Redimensiona o compositor direto (sem o
-// rescaleInputs do syncCanvasSize: os slices do projeto já estão no tamanho certo).
 void App::afterProjectLoaded()
 {
     try {
@@ -448,13 +529,14 @@ void App::afterProjectLoaded()
         composition_.height = compositor_->height();
     }
     applyDecoderOptions();
-    ui::mapEditorReset(output_); // o historico de desfazer do mapeamento e do projeto anterior
+    ui::mapEditorReset(output_);
+    ui::transformEditorReset(composition_);
     ui::pixelMapReset();
+    dmx_.engine().reset();
 }
 
 void App::applyDecoderOptions()
 {
-    // Perfil Eco: decoder leve e video reduzido ao tamanho do canvas
     media::VideoDecoderOptions opt;
     if (settings_.profile == PerformanceProfile::Eco) {
         opt.lowPower = true;
@@ -462,6 +544,7 @@ void App::applyDecoderOptions()
         opt.targetHeight = composition_.height;
     }
     composition_.decoderOptions = opt;
+    composition_.maxBackgroundSources = settingsFor(settings_.profile).maxBackground;
 }
 
 void App::setWindowIcon()
@@ -498,19 +581,17 @@ void App::setupDemo()
         if (!entry.is_regular_file(ec))
             continue;
         if (hasAlphaFile && entry.path().filename() == alphaFile.filename())
-            continue; // vai para a camada 2
+            continue;
         Clip clip = Clip::fromFile(entry.path());
         if (!clip.empty())
             found.push_back(std::move(clip));
     }
-    // Videos primeiro, depois imagens; alfabetico dentro de cada grupo
     std::sort(found.begin(), found.end(), [](const Clip& a, const Clip& b) {
         if (a.kind != b.kind)
             return a.kind == media::MediaKind::Video;
         return a.name < b.name;
     });
 
-    // Com a Fase 3B, a coluna 4 fica livre para os documentos (PDF, PPTX e Web ficam visíveis na grade)
     const bool docsDemo = fs::exists(options_.demoFolder / L"docs" / L"sample.pdf", ec);
     constexpr int kDocColumn = 3;
     for (size_t i = 0; i < found.size(); ++i) {
@@ -524,7 +605,6 @@ void App::setupDemo()
         composition_.layers[1].blendMode = BlendMode::Normal;
     }
 
-    // Fase 3A: Texto com letreiro na camada 3 (coluna 1), captura de tela e webcam ao lado, cor sólida na camada 2
     while (composition_.columnCount() < 3)
         composition_.addColumn();
     if (composition_.layerCount() >= 3) {
@@ -550,8 +630,6 @@ void App::setupDemo()
         composition_.setClip(1, 1, std::move(color));
     }
 
-    // Fase 4A: um clip com dois efeitos (desfoque + vinheta) e um gerador ISF numa célula (sem disparar: a camada 3
-    // continua mostrando o texto)
     if (!composition_.clip(0, 0).empty()) {
         fx::EffectChain& chain = composition_.clip(0, 0).effects;
         chain.add("native:blur").setParam("radius", media::param::floatJson(6.0f));
@@ -560,7 +638,6 @@ void App::setupDemo()
     if (composition_.layerCount() >= 3 && composition_.columnCount() >= 3)
         composition_.setClip(2, 2, Clip::generator("isf:Gradiente animado.fs"));
 
-    // Fase 4B: o primeiro plugin FFGL de efeito que houver nas pastas de plugins vai para o clip (0,1)
     if (!options_.pluginFolders.empty() || !ffgl::Catalog::instance().folders().empty()) {
         ffgl::Catalog& plugins = ffgl::Catalog::instance();
         plugins.waitIdle(60000);
@@ -573,31 +650,15 @@ void App::setupDemo()
         }
     }
 
-    // Plugins BSL Light nativos: o GenBackgrounds numa celula (camada 3, coluna 5) e o AlphaReactor no clip com alpha
-    // (ou no primeiro clip, se nao houver video com alpha)
-    while (composition_.columnCount() < 5)
+    while (composition_.columnCount() < 6)
         composition_.addColumn();
-    if (composition_.layerCount() >= 3) {
-        Clip bg = Clip::generator(fx::bsllight::kGenBackgroundsId);
-        bg.setParam("style", "aurora");
-        composition_.setClip(2, 4, std::move(bg));
-    }
-    // BSL WebBackgrounds (pagina no CEF do processo auxiliar) numa celula livre da camada 2, sem disparar
     if (fx::bsllight::bslWebAvailable() && composition_.layerCount() >= 2) {
-        while (composition_.columnCount() < 6)
-            composition_.addColumn();
-        if (composition_.clip(1, 5).empty()) // coluna 6: a coluna 4 e a dos documentos (Fase 3B, logo abaixo)
+        if (composition_.clip(1, 5).empty())
             composition_.setClip(1, 5, Clip::generator(fx::bsllight::kWebBackgroundsId));
-    }
-    {
-        Clip& alphaClip = !composition_.clip(1, 0).empty() ? composition_.clip(1, 0) : composition_.clip(0, 0);
-        if (!alphaClip.empty())
-            alphaClip.effects.add(fx::bsllight::kAlphaReactorId);
     }
 
     composition_.triggerColumn(0);
 
-    // Fase 3B: PDF, PPTX (convertido pelo Office) e página Web em <pasta>/docs, todos ativos na mesma coluna
     const fs::path docs = options_.demoFolder / L"docs";
     const fs::path samplePdf = docs / L"sample.pdf", samplePptx = docs / L"sample.pptx", sampleHtml = docs / L"sample.html";
     if (composition_.layerCount() >= 3 && fs::exists(samplePdf, ec)) {
@@ -612,20 +673,19 @@ void App::setupDemo()
             web.setParam("transparent", true);
             composition_.setClip(2, col, std::move(web));
         }
-        composition_.layers[1].opacity = 0.55f; // o slide deixa o PDF aparecer por baixo
+        composition_.layers[1].opacity = 0.55f;
         composition_.triggerColumn(col);
         selection_ = {Selection::Kind::Clip, 1, col};
     }
     for (const auto& [layer, column] : options_.triggers)
         composition_.trigger(layer - 1, column - 1);
-    if (selection_.kind != Selection::Kind::Clip) // a Fase 3B (acima) escolhe a própria célula
+    if (selection_.kind != Selection::Kind::Clip)
         selection_ = composition_.layerCount() >= 3 ? Selection{Selection::Kind::Clip, 2, 0}
                                                     : Selection{Selection::Kind::Clip, 0, 0};
     if (!options_.triggers.empty())
         selection_ = {Selection::Kind::Clip, options_.triggers.back().first - 1, options_.triggers.back().second - 1};
 }
 
-// Miniaturas das celulas de geradores/fontes ao vivo: saem da propria fonte enquanto ela esta ativa (1x/s)
 void App::updateLiveThumbs()
 {
     const double now = glfwGetTime();
@@ -641,6 +701,189 @@ void App::updateLiveThumbs()
         liveThumbs_->blit(src.texture(), src.width(), src.height(), c->liveThumb);
         c->liveThumbTime = now;
     }
+}
+
+void App::setupDmxDemo()
+{
+    if (options_.qaDir.empty()) {
+        log::warn("--dmx-demo só vale junto com --qa (não altera as configurações do usuário).");
+        return;
+    }
+    settings_.dmxNet.enabled = true;
+    settings_.dmxNet.interfaceIp = options_.dmxDemo;
+    settings_.dmxNet.universesText = "1-3";
+    dmx::Config& cfg = composition_.dmx;
+    if (cfg.empty() && composition_.layerCount() >= 3) {
+        const dmx::LayerMode modes[3] = {dmx::LayerMode::Full, dmx::LayerMode::Standard, dmx::LayerMode::Full16};
+        int channel = 1;
+        for (int i = 0; i < 3; ++i) {
+            dmx::Block b;
+            b.kind = dmx::BlockKind::Layer;
+            b.layerId = composition_.layers[static_cast<size_t>(i)].id;
+            b.mode = modes[i];
+            b.universe = 1;
+            b.channel = channel;
+            channel += b.channelCount();
+            cfg.addBlock(std::move(b));
+        }
+        dmx::Block master;
+        master.kind = dmx::BlockKind::Master;
+        master.universe = 1;
+        master.channel = channel;
+        cfg.addBlock(std::move(master));
+
+        dmx::Map blackout;
+        blackout.type = dmx::Map::Type::Action;
+        blackout.universe = 2;
+        blackout.channel = 1;
+        blackout.binding.action = "master.blackout";
+        blackout.binding.mode = control::Mode::Hold;
+        cfg.addMap(std::move(blackout));
+    }
+    ui::openDmxWindowTab(0);
+}
+
+void App::setupUpdates()
+{
+    const std::string repo = BSLSTAGE_GITHUB_REPO;
+    updates_.configure(BSLSTAGE_VERSION, repo, paths::localDataDir() / L"updates");
+    const bool offlineRun = qaOn_ || !options_.screenshotPath.empty() || !options_.screenshotOutputPath.empty();
+    bool fake = false;
+    if (offlineRun) {
+        auto http = std::make_unique<update::FakeHttp>();
+        if (!options_.fakeRelease.empty() && qaOn_) {
+            std::ifstream in(options_.fakeRelease / L"release.json", std::ios::binary);
+            const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            update::Release rel;
+            if (!text.empty() && update::parseRelease(text, rel)) {
+                const std::string base = "https://api.github.com/repos/" + repo + "/releases";
+                http->addBody(base + "/latest", text);
+                http->addBody(base + "?per_page=10", "[" + text + "]");
+                for (const update::Asset& a : rel.assets) {
+                    std::error_code ec;
+                    const std::filesystem::path f = options_.fakeRelease / std::filesystem::path(std::u8string(a.name.begin(), a.name.end()));
+                    if (std::filesystem::is_regular_file(f, ec))
+                        http->addFile(a.url, f);
+                }
+                fake = true;
+            } else {
+                log::warn("--fake-release: release.json ausente ou inválido em " + paths::toUtf8(options_.fakeRelease));
+            }
+        }
+        updates_.setHttp(std::move(http));
+    }
+    updates_.loadPersistedState(settings_.update);
+    bool ok = true;
+    const std::string last = updates_.takeLastUpdateMessage(&ok);
+    if (!last.empty())
+        (ok ? log::info(last) : log::warn(last));
+    nextAutoCheck_ = fake ? 1.5 : update::kAutoCheckDelaySeconds;
+}
+
+void App::updateTick()
+{
+    update::CheckOutcome outcome;
+    while (updates_.takeCheckOutcome(outcome)) {
+        if (outcome.ok) {
+            settings_.update.lastCheckUnix = outcome.checkedUnix;
+            settings_.save();
+            log::info("Atualizações: verificação concluída");
+        } else {
+            log::info("Atualizações: não foi possível verificar (" + outcome.error + ")");
+        }
+    }
+
+    if (updates_.restartRequested()) {
+        if (project_->busy())
+            restartSawModal_ = true;
+        else if (restartSawModal_ && !project_->quitApproved() && !quitRequested_) {
+            updates_.requestRestart(false);
+            restartSawModal_ = false;
+        }
+    } else {
+        restartSawModal_ = false;
+    }
+
+    const double elapsed = std::chrono::duration<double>(Clock::now() - startTime_).count();
+    if (elapsed < nextAutoCheck_)
+        return;
+    const bool offlineRun = qaOn_ || !options_.screenshotPath.empty() || !options_.screenshotOutputPath.empty();
+    const bool fakeRun = !options_.fakeRelease.empty() && qaOn_;
+    if (offlineRun && !fakeRun) {
+        nextAutoCheck_ = 1.0e18;
+        return;
+    }
+    if (fakeRun) {
+        nextAutoCheck_ = 1.0e18;
+        updates_.startCheck(settings_.update, false);
+        return;
+    }
+    const auto now = static_cast<int64_t>(std::time(nullptr));
+    if (!update::dueForAutoCheck(settings_.update, now)) {
+        nextAutoCheck_ = elapsed + 3600.0;
+        return;
+    }
+    update::ShowState show;
+    show.outputLive = OutputRenderer::anyLive(output_);
+    show.windowFullscreen = fullscreen_;
+    show.layoutLocked = ui::layoutLocked();
+    show.ecoProfile = settings_.profile == PerformanceProfile::Eco;
+    if (update::showBlocksAutoCheck(show)) {
+        nextAutoCheck_ = elapsed + 300.0;
+        return;
+    }
+    updates_.startCheck(settings_.update, false);
+    nextAutoCheck_ = elapsed + update::kAutoCheckRetrySeconds;
+}
+
+void App::setupKeyHooks()
+{
+    control::AppHooks& hooks = keyService_.hooks;
+    hooks.project = [this](int what) {
+        switch (what) {
+        case 0: project_->requestNew(); break;
+        case 1: project_->requestOpen(); break;
+        case 2: project_->requestSave(); break;
+        default: project_->requestSaveAs(); break;
+        }
+    };
+    hooks.setMode = [this](int mode) {
+        mode_ = mode == 1 ? AppMode::Mapping : mode == 2 ? AppMode::PixelMap : AppMode::Composition;
+    };
+    hooks.identify = [this] { return outputs_ && outputs_->identify(); };
+    hooks.setIdentify = [this](bool on) {
+        if (outputs_)
+            outputs_->setIdentify(on);
+    };
+    hooks.layoutPreset = [](int index) { return ui::applyLayoutPresetIndex(index); };
+    hooks.panelVisible = [](const char* key) { return ui::view::findPanel(key) ? (ui::panelVisibleKey(key) ? 1 : 0) : -1; };
+    hooks.setPanelVisible = [](const char* key, bool on) { ui::setPanelVisible(key, on); };
+    hooks.fullscreen = [] { return ui::isFullscreen(); };
+    hooks.setFullscreen = [](bool on) { ui::requestFullscreen(on); };
+    hooks.layoutLocked = [] { return ui::layoutLocked(); };
+    hooks.setLayoutLocked = [](bool on) { ui::setLayoutLocked(on); };
+    hooks.showAllPanels = [this] { ui::showAllPanels(mode_); };
+    hooks.resetLayout = [] { ui::requestResetLayout(); };
+    hooks.clearClipSelection = [this] {
+        if (selection_.kind == Selection::Kind::Clip)
+            selection_ = {};
+    };
+}
+
+void App::pollSystemHotkeys()
+{
+    if (!window_ || !project_)
+        return;
+    bool focused = glfwGetWindowAttrib(window_, GLFW_FOCUSED) != 0 && glfwGetWindowAttrib(window_, GLFW_ICONIFIED) == 0;
+    if (!focused && imguiReady_) {
+        for (const ImGuiViewport* vp : ImGui::GetPlatformIO().Viewports) {
+            auto* w = static_cast<GLFWwindow*>(vp->PlatformHandle);
+            if (w && w != window_ && glfwGetWindowAttrib(w, GLFW_FOCUSED))
+                focused = true;
+        }
+    }
+    keyService_.pollSystem(composition_, ui::selectionRef(selection_), settings_.keys, composition_.keys, focused,
+                           project_->busy());
 }
 
 void App::saveScreenshot()
@@ -660,7 +903,6 @@ void App::saveScreenshotTo(const std::filesystem::path& file)
     glReadBuffer(GL_BACK);
     glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
 
-    // glReadPixels devolve de baixo para cima; alpha opaco
     std::vector<unsigned char> flipped(pixels.size());
     const size_t stride = static_cast<size_t>(w) * 4;
     for (int y = 0; y < h; ++y) {
@@ -669,7 +911,6 @@ void App::saveScreenshotTo(const std::filesystem::path& file)
     writePng(file, w, h, flipped);
 }
 
-// --screenshot-output: conteudo do FBO da primeira Screen (o que vai para a janela / Spout)
 void App::saveOutputScreenshot()
 {
     if (output_.screens.empty()) {
@@ -685,7 +926,6 @@ void App::saveOutputScreenshot()
     writePng(options_.screenshotOutputPath, w, h, rgba);
 }
 
-// Fechar a janela: cancela o fechamento e pede ao projeto (que pergunta se há alterações não salvas)
 void App::onClose(GLFWwindow* window)
 {
     auto* app = static_cast<App*>(glfwGetWindowUserPointer(window));
@@ -693,7 +933,7 @@ void App::onClose(GLFWwindow* window)
         return;
     glfwSetWindowShouldClose(window, GLFW_FALSE);
     if (glfwGetWindowAttrib(window, GLFW_ICONIFIED))
-        glfwRestoreWindow(window); // o modal precisa de uma janela visível
+        glfwRestoreWindow(window);
     app->project_->requestQuit();
 }
 
@@ -703,18 +943,23 @@ void App::onDrop(GLFWwindow* window, int count, const char** droppedPaths)
     if (!app)
         return;
     double x = 0.0, y = 0.0;
-    glfwGetCursorPos(window, &x, &y); // GLFW ja atualiza a posicao do mouse para o ponto do drop
-    app->drop_.x = static_cast<float>(x);
-    app->drop_.y = static_cast<float>(y);
+    glfwGetCursorPos(window, &x, &y);
+    const ImVec2 origin = app->imguiReady_ ? ImGui::GetMainViewport()->Pos : ImVec2(0.0f, 0.0f);
+    app->drop_.x = static_cast<float>(x) + origin.x;
+    app->drop_.y = static_cast<float>(y) + origin.y;
     for (int i = 0; i < count; ++i) {
         const std::string utf8(droppedPaths[i]);
         std::filesystem::path file{std::u8string(utf8.begin(), utf8.end())};
         std::wstring ext = file.extension().wstring();
         std::transform(ext.begin(), ext.end(), ext.begin(),
                        [](wchar_t c) { return static_cast<wchar_t>(::towlower(c)); });
-        if (ext == L".bslstage") { // projeto solto na janela: abre (passando pelo modal de não salvos)
+        if (ext == L".bslstage") {
             if (app->project_)
                 app->project_->requestOpenPath(file);
+            continue;
+        }
+        if (ext == L".bslplugin") {
+            ui::openImportPluginWindow(file);
             continue;
         }
         app->drop_.files.push_back(std::move(file));
@@ -740,13 +985,19 @@ void App::frame()
     const double dt = std::clamp(std::chrono::duration<double>(now - lastUpdate_).count(), 0.0, 0.1);
     lastUpdate_ = now;
     const PerformanceProfile before = settings_.profile;
+    frameWatch_.enter(FrameWatch::Update);
 
-    // Pedidos de projeto (Novo/Abrir/Salvar/fechar) rodam aqui, fora do desenho do ImGui
+    if (const int fs = ui::takeFullscreenRequest(); fs >= 0)
+        applyFullscreen(fs == 1);
+
     if (quitRequested_) {
         quitRequested_ = false;
         project_->requestQuit();
     }
+    frameWatch_.enter(FrameWatch::Idle);
     project_->update();
+    frameWatch_.enter(FrameWatch::Update);
+    updateTick();
     if (project_->quitApproved())
         glfwSetWindowShouldClose(window_, GLFW_TRUE);
     if (project_->takeLoaded())
@@ -754,17 +1005,15 @@ void App::frame()
 
     applyDecoderOptions();
     thumbs_->pump();
+    pixelmap::syncInput(composition_.pixelMap, composition_.width, composition_.height);
+    fx::bsllight::PixelMapFeed::instance().set(composition_.pixelMap);
+    dmx_.update(settings_.dmxNet, composition_, keyService_, ui::selectionRef(selection_));
     composition_.update(dt);
     updateLiveThumbs();
     syncCanvasSize();
-    // O Slice Refiner 2 desenha os slices do proprio BSL Stage (OutputSetup)
     fx::bsllight::SliceFeed::instance().set(fx::bsllight::sliceFeedFromOutput(output_), composition_.width,
                                             composition_.height);
-    // A fonte "Padrao de calibracao BSL" desenha os paineis do Pixel Map (o input acompanha o canvas enquanto ligado)
-    pixelmap::syncInput(composition_.pixelMap, composition_.width, composition_.height);
-    fx::bsllight::PixelMapFeed::instance().set(composition_.pixelMap);
 
-    // IA local: taxa do perfil (Eco = desligada), taxa e dispositivo escolhidos em Ver > IA
     {
         ai::AiEngine& aiEngine = ai::AiEngine::instance();
         aiEngine.setProfileRate(settingsFor(settings_.profile).aiFps);
@@ -774,36 +1023,51 @@ void App::frame()
                                                              : ai::DevicePref::Auto);
     }
 
-    // Com saida real o canvas e renderizado a 100% (a escala reduzida do perfil so vale para a previa)
     const bool wantOutputShot = !options_.screenshotOutputPath.empty() && !outputShotDone_;
     const bool outputLive = OutputRenderer::anyLive(output_) || wantOutputShot;
-    compositor_->render(composition_, outputLive ? 1.0f : settingsFor(settings_.profile).previewScale,
-                        settings_.profile == PerformanceProfile::Eco);
 
-    // Screen que o editor de mapeamento mostra (renderizada mesmo sem destino)
     int previewScreenId = -1;
     if (mode_ == AppMode::Mapping && mapping_.screen >= 0 && mapping_.screen < static_cast<int>(output_.screens.size()))
         previewScreenId = output_.screens[static_cast<size_t>(mapping_.screen)].id;
     else if (wantOutputShot && !output_.screens.empty())
         previewScreenId = output_.screens.front().id;
+
+    std::vector<LayerViewRequest> layerViews = collectLayerViews(output_, previewScreenId);
+    if (mode_ == AppMode::Composition) {
+        if (const int wanted = ui::previewWantedLayerId(); wanted > 0) {
+            const LayerViewRequest rq{wanted, false, true};
+            if (std::find(layerViews.begin(), layerViews.end(), rq) == layerViews.end())
+                layerViews.push_back(rq);
+        }
+    }
+    frameWatch_.enter(FrameWatch::Compositor);
+    compositor_->render(composition_, outputLive ? 1.0f : settingsFor(settings_.profile).previewScale,
+                        settings_.profile == PerformanceProfile::Eco, layerViews);
     outputs_->setFrameRate(composition_.fps);
+    frameWatch_.enter(FrameWatch::Outputs);
     outputs_->render(output_, *compositor_, previewScreenId);
+    frameWatch_.enter(FrameWatch::Update);
     applySwapInterval();
 
     updateUiScale();
-    ui::runLayoutDialogs(glfwGetWin32Window(window_)); // Exportar/Importar layout: dialogos de arquivo fora do desenho
+    frameWatch_.enter(FrameWatch::Idle);
+    ui::runLayoutDialogs(glfwGetWin32Window(window_));
+    ui::runKeysDialogs(glfwGetWin32Window(window_));
+    ui::runDmxDialogs(glfwGetWin32Window(window_));
+    frameWatch_.enter(FrameWatch::Update);
     if (qaOn_) {
         runQaCommands();
         qa::beginFrame();
     }
 
+    frameWatch_.enter(FrameWatch::Ui);
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
     PanelContext ctx{composition_, selection_, *compositor_, settings_.profile, stats_, glInfo_,
                      compositor_->uvMax(), settings_, *thumbs_, drop_,
-                     quitRequested_, output_, *outputs_, mapping_, mode_, *project_};
+                     quitRequested_, output_, *outputs_, mapping_, mode_, *project_, keyService_, dmx_, updates_};
     ui::drawUi(ctx);
     if (qaOn_) {
         int fw = 0, fh = 0, ww = 0, wh = 0;
@@ -812,7 +1076,7 @@ void App::frame()
         qa::endFrame(frameCount_, qaStateJson(), ui::uiScale(), fw, fh, ww, wh);
     }
 
-    if (drop_.pending) { // ninguem consumiu (soltou fora das celulas da Composicao)
+    if (drop_.pending) {
         log::warn("Solte os arquivos sobre uma célula da Composição.");
         drop_.pending = false;
         drop_.files.clear();
@@ -827,7 +1091,15 @@ void App::frame()
     glClear(GL_COLOR_BUFFER_BIT);
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
-    if (!qaShotPath_.empty()) { // comando "shot" do driver de teste
+    frameWatch_.enter(FrameWatch::FloatingWindows);
+    if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+        GLFWwindow* backup = glfwGetCurrentContext();
+        ImGui::UpdatePlatformWindows();
+        ImGui::RenderPlatformWindowsDefault();
+        glfwMakeContextCurrent(backup);
+    }
+
+    if (!qaShotPath_.empty()) {
         saveScreenshotTo(qaShotPath_);
         qaShotPath_.clear();
     }
@@ -849,7 +1121,9 @@ void App::frame()
         && (options_.screenshotOutputPath.empty() || outputShotDone_))
         glfwSetWindowShouldClose(window_, GLFW_TRUE);
 
+    frameWatch_.enter(FrameWatch::Present);
     glfwSwapBuffers(window_);
+    frameWatch_.enter(FrameWatch::Update);
 
     if (settings_.profile != before) {
         applyProfile();
@@ -857,12 +1131,37 @@ void App::frame()
     }
 }
 
-// Escala da interface (Ver > Tamanho da interface):
-//  Window: acompanha a janela, min(largura/1600, altura/900) sobre o framebuffer em pixels fisicos
-//          (a DPI do Windows ja entra na conta), em passos de 0,05 com histerese para nao recriar o tema a cada
-//          pixel do arraste;
-//  System: escala do Windows (DPI do monitor);
-//  Fixed:  valor escolhido.
+void App::applyFullscreen(bool on)
+{
+    if (!window_ || on == fullscreen_)
+        return;
+    if (on) {
+        fsMaximized_ = glfwGetWindowAttrib(window_, GLFW_MAXIMIZED) != 0;
+        if (fsMaximized_)
+            glfwRestoreWindow(window_);
+        glfwGetWindowPos(window_, &fsX_, &fsY_);
+        glfwGetWindowSize(window_, &fsW_, &fsH_);
+        GLFWmonitor* monitor = monitorOfWindow(window_);
+        const GLFWvidmode* mode = monitor ? glfwGetVideoMode(monitor) : nullptr;
+        if (!mode)
+            return;
+        int mx = 0, my = 0;
+        glfwGetMonitorPos(monitor, &mx, &my);
+        glfwSetWindowAttrib(window_, GLFW_DECORATED, GLFW_FALSE);
+        glfwSetWindowPos(window_, mx, my);
+        glfwSetWindowSize(window_, mode->width, mode->height);
+    } else {
+        glfwSetWindowAttrib(window_, GLFW_DECORATED, GLFW_TRUE);
+        glfwSetWindowSize(window_, fsW_, fsH_);
+        glfwSetWindowPos(window_, fsX_, fsY_);
+        if (fsMaximized_)
+            glfwMaximizeWindow(window_);
+    }
+    fullscreen_ = on;
+    ui::setFullscreenState(on);
+    log::info(on ? "Tela cheia" : "Janela restaurada");
+}
+
 void App::updateUiScale()
 {
     float scale = ui::uiScale();
@@ -882,7 +1181,7 @@ void App::updateUiScale()
         int fbH = 0;
         glfwGetFramebufferSize(window_, &fbW, &fbH);
         if (fbW <= 0 || fbH <= 0)
-            return; // minimizada
+            return;
         const float raw = std::clamp(std::min(static_cast<float>(fbW) / 1600.0f, static_cast<float>(fbH) / 900.0f),
                                      0.75f, 3.0f);
         if (std::abs(raw - scale) >= 0.035f)
@@ -894,10 +1193,6 @@ void App::updateUiScale()
         ui::applyTheme(scale);
 }
 
-// Comandos do driver de teste (tools/uiqa.py): shot <arquivo.png> | drop <arquivo>[|<arquivo>...] | quit
-//  drop: monta um DROPFILES (como o Explorer) e manda WM_DROPFILES para a janela; o GLFW o converte em
-//  glfwSetDropCallback -> App::onDrop, exatamente o caminho de um arquivo solto de verdade (a posicao
-//  e a do cursor real, que o driver colocou sobre a celula).
 void App::runQaCommands()
 {
     for (const std::string& line : qa::takeCommands()) {
@@ -911,7 +1206,7 @@ void App::runQaCommands()
         } else if (cmd == "drop") {
             std::wstring files;
             size_t pos = 0;
-            while (pos < arg.size()) { // arquivos separados por '|'
+            while (pos < arg.size()) {
                 const size_t bar = arg.find('|', pos);
                 const std::string one = arg.substr(pos, bar == std::string::npos ? std::string::npos : bar - pos);
                 files += std::filesystem::path{std::u8string(one.begin(), one.end())}.wstring();
@@ -934,7 +1229,7 @@ void App::runQaCommands()
             df->pt = pt;
             std::memcpy(reinterpret_cast<char*>(df) + sizeof(DropFilesHeader), files.data(), files.size() * sizeof(wchar_t));
             GlobalUnlock(mem);
-            SendMessageW(glfwGetWin32Window(window_), WM_DROPFILES, reinterpret_cast<WPARAM>(mem), 0); // o DragFinish libera
+            SendMessageW(glfwGetWin32Window(window_), WM_DROPFILES, reinterpret_cast<WPARAM>(mem), 0);
         }
     }
 }
@@ -955,7 +1250,6 @@ std::string App::qaStateJson() const
     for (const Deck& d : c.decks)
         decks.push_back({{"name", d.name}, {"clips", d.clipCount()}});
     j["decks"] = decks;
-    // Cadeias de efeitos: [{type, bypass}] (testes de interface conferem a ordem e o bypass)
     auto chainJson = [](const fx::EffectChain& chain) {
         json arr = json::array();
         for (const fx::EffectInstance& e : chain.items)
@@ -966,9 +1260,16 @@ std::string App::qaStateJson() const
     for (int li = 0; li < c.layerCount(); ++li) {
         const Layer& l = c.layers[static_cast<size_t>(li)];
         const Clip* active = c.activeClip(li);
-        layers.push_back({{"name", l.name}, {"activeDeck", l.activeDeck}, {"activeColumn", l.activeColumn},
+        layers.push_back({{"id", l.id}, {"sliceOnly", l.sliceOnly},
+                          {"name", l.name}, {"activeDeck", l.activeDeck}, {"activeColumn", l.activeColumn},
                           {"opacity", l.opacity}, {"bypass", l.bypass}, {"solo", l.solo},
                           {"blend", static_cast<int>(l.blendMode)},
+                          {"transform", {{"x", l.transform.x}, {"y", l.transform.y}, {"w", l.transform.width(c.width)},
+                                         {"h", l.transform.height(c.height)}, {"rotation", l.transform.rotation},
+                                         {"anchor", {l.transform.anchorX, l.transform.anchorY}},
+                                         {"crop", {l.transform.cropL, l.transform.cropT, l.transform.cropR, l.transform.cropB}},
+                                         {"identity", l.transform.isIdentity(c.width, c.height)}}},
+                          {"ownTransform", active ? active->ownTransform : false},
                           {"clipPlaying", active && active->isOpen() ? active->source->isPlaying() : false},
                           {"clipPosition", active && active->isOpen() ? active->source->position() : 0.0},
                           {"effects", chainJson(l.effects)}});
@@ -998,7 +1299,6 @@ std::string App::qaStateJson() const
                  {"entries", ffgl::Catalog::instance().entries().size()},
                  {"blocked", ffgl::Catalog::instance().blocked().size()}};
     {
-        // NDI e Spout: situação do runtime, fontes da rede e senders ativos (testes de interface)
         ndi::Runtime& rt = ndi::Runtime::instance();
         json sources = json::array();
         if (rt.available()) {
@@ -1020,6 +1320,7 @@ std::string App::qaStateJson() const
     j["masterOpacity"] = c.masterOpacity;
     j["paused"] = c.paused;
     j["canvas"] = {c.width, c.height};
+    j["layerViews"] = compositor_ ? compositor_->layerViewCount() : 0;
     json cells = json::array();
     if (c.validDeck(c.currentDeck))
         for (int l = 0; l < c.layerCount(); ++l)
@@ -1042,6 +1343,10 @@ std::string App::qaStateJson() const
             slices.push_back({{"name", sl.name},
                               {"zFilter", sl.zFilter},
                               {"zSource", sl.zSource},
+                              {"source", sl.source},
+                              {"layerId", sl.layerId},
+                              {"includeMaster", sl.includeMaster},
+                              {"applyLayerTransform", sl.applyLayerTransform},
                               {"input", {sl.input.x, sl.input.y, sl.input.w, sl.input.h}},
                               {"corners", {sl.corners[0].x, sl.corners[0].y, sl.corners[1].x, sl.corners[1].y,
                                            sl.corners[2].x, sl.corners[2].y, sl.corners[3].x, sl.corners[3].y}}});
@@ -1057,7 +1362,6 @@ std::string App::qaStateJson() const
                     {"gridStep", mapInfo.gridStep},  {"inputZoom", mapInfo.inputZoom},   {"outputZoom", mapInfo.outputZoom},
                     {"dragging", mapInfo.dragging},  {"guides", mapInfo.guides}};
     {
-        // Pixel Map: configuracao, retangulos calculados (Math.round do HTML), validacao e estado da interface
         const pixelmap::Config& pmc = c.pixelMap;
         const pixelmap::Validation pmv = pixelmap::validate(pmc);
         const ui::PixelMapUiInfo pmi = ui::pixelMapUiInfo();
@@ -1085,6 +1389,85 @@ std::string App::qaStateJson() const
                          {"zoom", pmi.zoom},
                          {"status", pmi.status}};
     }
+    {
+        const control::KeyService::Info& ki = keyService_.info();
+        const ui::KeysUiInfo kui = ui::keysUiInfo();
+        j["keys"] = {{"project", control::bindingsToJson(composition_.keys)},
+                     {"app", control::bindingsToJson(settings_.keys)},
+                     {"fired", ki.firedCount},
+                     {"lastAction", ki.lastAction},
+                     {"lastKey", ki.lastKey},
+                     {"lastHit", ki.lastHit},
+                     {"held", keyService_.dispatcher.heldCount()},
+                     {"systemRegistered", keyService_.system.registeredCount()},
+                     {"editorOpen", kui.editorOpen},
+                     {"capturing", kui.capturing},
+                     {"conflictOpen", kui.conflictOpen},
+                     {"rows", kui.rows}};
+        j["blackout"] = c.blackout;
+    }
+    {
+        const dmx::Snapshot& ds = dmx_.snapshot();
+        const ui::DmxUiInfo du = ui::dmxUiInfo();
+        json universes = json::array();
+        for (const dmx::UniverseView& u : ds.universes)
+            universes.push_back({{"universe", u.universe}, {"active", u.active}, {"packets", u.packets}, {"pps", u.packetsPerSec}});
+        j["dmx"] = {{"state", static_cast<int>(dmx_.state())}, {"running", ds.running}, {"status", ds.status},
+                    {"universes", universes},               {"windowOpen", du.open},  {"tab", du.tab},
+                    {"learning", du.learning},              {"blocks", du.blocks},    {"maps", du.maps},
+                    {"applied", dmx_.engine().info().applied}, {"enabled", settings_.dmxNet.enabled}};
+    }
+    {
+        const ui::TransformEditorInfo te = ui::transformEditorInfo();
+        j["transformEditor"] = {{"output", te.onOutput}, {"preview", te.onPreview}, {"crop", te.crop},    {"snap", te.snap},
+                                {"undo", te.undo},       {"redo", te.redo},         {"dragging", te.dragging},
+                                {"drag", te.drag},       {"guides", te.guides}};
+    }
+    {
+        const ui::ViewInfo vi = ui::viewInfo();
+        json panels = json::array();
+        for (const ui::ViewInfo::PanelRow& p : vi.panels)
+            panels.push_back({{"key", p.key},
+                              {"visible", p.visible},
+                              {"detached", p.detached},
+                              {"seen", p.seen},
+                              {"docked", p.docked},
+                              {"rect", {p.rect[0] - vi.mainPos[0], p.rect[1] - vi.mainPos[1], p.rect[2], p.rect[3]}}});
+        j["view"] = {{"panels", panels}, {"hidden", vi.hidden}, {"detached", vi.detached}, {"locked", vi.locked},
+                     {"fullscreen", vi.fullscreen}, {"viewports", vi.viewports}, {"mainPos", {vi.mainPos[0], vi.mainPos[1]}}};
+    }
+    {
+        const update::Status us = updates_.status();
+        const ui::UpdateUiInfo uu = ui::updateUiInfo();
+        const ui::ReportUiInfo ru = ui::reportUiInfo();
+        j["update"] = {{"phase", static_cast<int>(us.phase)}, {"checking", us.checking}, {"hasUpdate", us.hasUpdate},
+                       {"version", us.hasUpdate ? us.release.version.toString() : std::string()},
+                       {"asset", us.assetName},            {"error", us.error},       {"checkError", us.checkError},
+                       {"windowOpen", uu.windowOpen},      {"notice", uu.noticeShown}, {"noticeText", uu.noticeText},
+                       {"autoCheck", settings_.update.autoCheck}, {"beta", settings_.update.beta},
+                       {"skipped", settings_.update.skippedVersion}, {"lastCheck", settings_.update.lastCheckUnix},
+                       {"reminded", updates_.reminded()}, {"current", BSLSTAGE_VERSION}, {"repo", BSLSTAGE_GITHUB_REPO}};
+        j["report"] = {{"open", ru.open},         {"kind", ru.kind},           {"system", ru.includeSystem}, {"log", ru.includeLog},
+                       {"bodyLength", ru.bodyLength}, {"urlLength", ru.urlLength}, {"truncated", ru.truncated},
+                       {"lastUrl", ru.lastUrl},   {"lastClipboard", ru.lastClipboard}};
+    }
+    {
+        const ui::LegalUiInfo li = ui::legalUiInfo();
+        j["legal"] = {{"windowOpen", li.windowOpen},     {"tab", li.tab},
+                      {"noticeVersion", legal::kNoticeVersion},
+                      {"thirdParty", li.thirdPartyCount}, {"licenseFull", li.licenseFullOpen},
+                      {"openedTexts", li.openedTexts},  {"docsFound", li.docsFound},
+                      {"lastUrl", li.lastUrl}};
+    }
+    {
+        const ui::PluginUiInfo pi = ui::pluginUiInfo();
+        j["plugins"] = {{"wizardOpen", pi.wizardOpen},   {"created", pi.created},       {"createdFile", pi.createdFile},
+                        {"createdId", pi.createdId},     {"error", pi.error},           {"rows", pi.rows},
+                        {"importOpen", pi.importOpen},   {"importValid", pi.importValid}, {"importName", pi.importName},
+                        {"importLicense", pi.importLicense}, {"importAuthor", pi.importAuthor}, {"importError", pi.importError},
+                        {"installedFolder", pi.installedFolder}, {"exportOpen", pi.exportOpen}, {"exportedFile", pi.exportedFile},
+                        {"lastAction", pi.lastAction},   {"lastPath", pi.lastPath},     {"message", pi.message}};
+    }
     j["dirty"] = project_ ? project_->dirty() : false;
     j["project"] = project_ ? paths::toUtf8(project_->path()) : std::string();
     j["busy"] = project_ ? project_->busy() : false;
@@ -1093,13 +1476,14 @@ std::string App::qaStateJson() const
 
 void App::limitFrameRate(Clock::time_point frameStart) const
 {
-    const int fps = settingsFor(settings_.profile).uiFps;
+    int fps = settingsFor(settings_.profile).uiFps;
+    if (fps <= 0 && outputs_ && outputs_->hasWindowOutput())
+        fps = kOutputWindowUiFps;
     if (fps <= 0)
-        return; // vsync cuida disso
+        return;
 
     const auto target = frameStart + std::chrono::duration_cast<Clock::duration>(
                                          std::chrono::duration<double>(1.0 / fps));
-    // Dorme o grosso do tempo e espera o resto ativamente (precisao sub-ms)
     while (true) {
         const auto now = Clock::now();
         if (now >= target)
@@ -1111,4 +1495,4 @@ void App::limitFrameRate(Clock::time_point frameStart) const
     }
 }
 
-} // namespace bsl
+}

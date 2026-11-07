@@ -51,4 +51,4 @@ size_t FboPool::inUse() const
     return static_cast<size_t>(std::count_if(entries_.begin(), entries_.end(), [](const Entry& e) { return e.used; }));
 }
 
-} // namespace bsl
+}

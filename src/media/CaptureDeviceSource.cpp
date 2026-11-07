@@ -41,7 +41,6 @@ std::string formatLabel(const CaptureFormat& f, double fps)
            " fps | " + upper(name);
 }
 
-// Descarta o decoder numa thread solta: fechar um dispositivo travado nao pode congelar a UI
 void retire(std::unique_ptr<VideoDecoder> dec)
 {
     if (!dec)
@@ -49,7 +48,7 @@ void retire(std::unique_ptr<VideoDecoder> dec)
     std::thread([d = std::move(dec)]() mutable { d.reset(); }).detach();
 }
 
-} // namespace
+}
 
 CaptureDeviceSource::CaptureDeviceSource() = default;
 
@@ -140,7 +139,7 @@ std::string CaptureDeviceSource::deviceName() const
     return device;
 }
 
-bool CaptureDeviceSource::open(const std::filesystem::path& /*path*/, std::string* /*error*/)
+bool CaptureDeviceSource::open(const std::filesystem::path& , std::string* )
 {
     close();
     clock_ = ClipClock{};
@@ -149,7 +148,7 @@ bool CaptureDeviceSource::open(const std::filesystem::path& /*path*/, std::strin
     frames_ = framesThisConnection_ = 0;
     lastError_.clear();
     DeviceCatalog::instance().ensureListed();
-    showBlack(); // textura valida desde o primeiro quadro
+    showBlack();
     state_ = State::Connecting;
     stateSince_ = Clock::now();
     startConnect();
@@ -222,7 +221,7 @@ void CaptureDeviceSource::startConnect()
     state_ = State::Connecting;
     stateSince_ = Clock::now();
     if (device_.empty())
-        return; // ainda sem lista de dispositivos (update() tenta de novo)
+        return;
 
     auto pending = std::make_shared<Pending>();
     pending_ = pending;
@@ -258,7 +257,7 @@ void CaptureDeviceSource::startConnect()
         bool ok = tryOpen(chosen, dec, error);
         if (!ok && !chosen.automatic) {
             ChosenFormat none;
-            ok = tryOpen(none, dec, error); // formato recusado: tenta o padrao do dispositivo
+            ok = tryOpen(none, dec, error);
             if (ok)
                 log::warn("Placa de captura: o formato escolhido (" + std::to_string(chosen.width) + "x" + std::to_string(chosen.height) +
                           "@" + std::to_string(chosen.fps) + " " + chosen.format + ") foi recusado por \"" + device +
@@ -272,7 +271,7 @@ void CaptureDeviceSource::startConnect()
     }).detach();
 }
 
-void CaptureDeviceSource::update(double /*dt*/)
+void CaptureDeviceSource::update(double )
 {
     if (!open_)
         return;
@@ -280,7 +279,6 @@ void CaptureDeviceSource::update(double /*dt*/)
 
     if (paramsDirty_) {
         paramsDirty_ = false;
-        // So reconecta se o dispositivo ou o formato mudaram de verdade
         const ParamSet p = currentParams();
         if (deviceName() != device_ || p.s("format") != formatValue_) {
             lastError_.clear();
@@ -290,7 +288,7 @@ void CaptureDeviceSource::update(double /*dt*/)
 
     switch (state_) {
     case State::Connecting: {
-        if (!pending_) { // esperando a lista de dispositivos
+        if (!pending_) {
             const DeviceCatalog& cat = DeviceCatalog::instance();
             if (cat.listed()) {
                 if (!cat.deviceNames().empty()) {
@@ -336,7 +334,7 @@ void CaptureDeviceSource::update(double /*dt*/)
             nextRetry_ = now + kRetryInterval;
             if (framesThisConnection_ == 0) {
                 log::warn("Placa de captura \"" + device_ + "\": sem sinal (" + lastError_ + "); tentando de novo a cada 2 s");
-                framesThisConnection_ = 1; // um aviso so
+                framesThisConnection_ = 1;
             }
             showBlack();
         }
@@ -358,7 +356,7 @@ void CaptureDeviceSource::update(double /*dt*/)
             retire(std::move(decoder_));
             decoder_.reset();
             lastError_ = "dispositivo desconectado";
-            framesThisConnection_ = 1; // evita repetir o aviso a cada tentativa
+            framesThisConnection_ = 1;
             state_ = State::NoSignal;
             nextRetry_ = now + kRetryInterval;
             showBlack();
@@ -389,4 +387,4 @@ SourceStatus CaptureDeviceSource::status() const
     return {};
 }
 
-} // namespace bsl::media
+}

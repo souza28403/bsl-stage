@@ -111,4 +111,4 @@ bool isOfficeExtension(const std::string& ext)
     return false;
 }
 
-} // namespace bsl::worker
+}

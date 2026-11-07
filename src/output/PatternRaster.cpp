@@ -19,14 +19,13 @@ namespace fs = std::filesystem;
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
-constexpr long long kMaxPixels = 160'000'000; // ~640 MB de RGBA: acima disso nao desenha (evita estourar a memoria)
+constexpr long long kMaxPixels = 160'000'000;
 
 inline std::uint8_t toByte(float v)
 {
     return static_cast<std::uint8_t>(std::clamp(v * 255.0f + 0.5f, 0.0f, 255.0f));
 }
 
-// "Over" com alpha reta: 'cov' = cobertura do pixel (0..1)
 inline void blendPx(std::uint8_t* p, const Color& c, float cov)
 {
     const float a = c.a * cov;
@@ -49,8 +48,6 @@ inline void blendPx(std::uint8_t* p, const Color& c, float cov)
     p[2] = toByte((c.b * a + (static_cast<float>(p[2]) / 255.0f) * k) / outA);
     p[3] = toByte(outA);
 }
-
-// ------------------------------------------------------------------------------------------------ fontes
 
 struct FontData
 {
@@ -120,9 +117,7 @@ double advanceOf(const FontData& f, float scale, const std::vector<unsigned>& cp
     return a;
 }
 
-} // namespace
-
-// ------------------------------------------------------------------------------------------------ Image / Color
+}
 
 Image::Image(int width, int height, std::uint32_t rgbHex) : w(std::max(width, 0)), h(std::max(height, 0))
 {
@@ -140,8 +135,6 @@ Color rgb(std::uint32_t hex, float alpha)
     return {static_cast<float>((hex >> 16) & 0xFF) / 255.0f, static_cast<float>((hex >> 8) & 0xFF) / 255.0f,
             static_cast<float>(hex & 0xFF) / 255.0f, alpha};
 }
-
-// ------------------------------------------------------------------------------------------------ Surface
 
 void Surface::fillRect(double x, double y, double w, double h, Color c)
 {
@@ -166,10 +159,10 @@ void Surface::fillRect(double x, double y, double w, double h, Color c)
 void Surface::strokeRect(double x, double y, double w, double h, double lw, Color c)
 {
     const double e = lw * 0.5;
-    fillRect(x - e, y - e, w + lw, lw, c);              // topo
-    fillRect(x - e, y + h - e, w + lw, lw, c);          // base
-    fillRect(x - e, y + e, lw, h - lw, c);              // esquerda
-    fillRect(x + w - e, y + e, lw, h - lw, c);          // direita
+    fillRect(x - e, y - e, w + lw, lw, c);
+    fillRect(x - e, y + h - e, w + lw, lw, c);
+    fillRect(x - e, y + e, lw, h - lw, c);
+    fillRect(x + w - e, y + e, lw, h - lw, c);
 }
 
 void Surface::hline(double y, double x0, double x1, double lw, Color c)
@@ -274,7 +267,7 @@ Premult fetch(const Image& s, int x, int y)
             static_cast<float>(p[2]) / 255.0f * a, a};
 }
 
-Premult bilinear(const Image& s, double u, double v) // u, v em px da origem (centro do pixel 0 = 0,5)
+Premult bilinear(const Image& s, double u, double v)
 {
     const double fu = u - 0.5, fv = v - 0.5;
     const int x0 = static_cast<int>(std::floor(fu)), y0 = static_cast<int>(std::floor(fv));
@@ -288,7 +281,7 @@ Premult bilinear(const Image& s, double u, double v) // u, v em px da origem (ce
     return {mix(&Premult::r), mix(&Premult::g), mix(&Premult::b), mix(&Premult::a)};
 }
 
-} // namespace
+}
 
 void Surface::drawImage(const Image& src, double x, double y, double w, double h, float alpha, bool smooth)
 {
@@ -355,7 +348,6 @@ void Surface::text(const std::string& utf8, double cx, double cy, double sizePx,
     for (size_t i = 0; i < cps.size(); ++i)
         total += advanceOf(f, scale, cps, i);
     double pen = cx - total * 0.5;
-    // "middle" do canvas: o meio da caixa em (ascent .. descent)
     const double baseline = cy + (static_cast<double>(asc) + static_cast<double>(desc)) * 0.5 * static_cast<double>(scale);
     const int oy = static_cast<int>(std::floor(baseline));
     const float shy = static_cast<float>(baseline - oy);
@@ -405,8 +397,6 @@ bool fontsAvailable()
     return fontOf(FontId::Bold).ok && fontOf(FontId::Mono).ok;
 }
 
-// ------------------------------------------------------------------------------------------------ desenhos
-
 Image renderPattern(const Panel& p, const Image* logo)
 {
     const int w = p.w, h = p.h;
@@ -416,10 +406,8 @@ Image renderPattern(const Panel& p, const Image* logo)
     Image img(w, h);
     Surface s(img);
 
-    // Fundo: degrade radial escuro
     s.fillRadial(cx, cy, std::max(W, H), rgb(0x140003), rgb(0x020000));
 
-    // Grade fina (10 px) e grade de 50 px
     const Color fine = rgb(0xFFFFFF, 0.03f);
     for (int i = 0; i < w; i += 10)
         s.vline(i, 0, H, 1.0, fine);
@@ -431,20 +419,17 @@ Image renderPattern(const Panel& p, const Image* logo)
     for (int i = 0; i < h; i += 50)
         s.hline(i, 0, W, 1.0, mid);
 
-    // Circulos
     const double radius = std::min(W, H) * 0.4;
     s.ring(cx, cy, radius, 3.0, rgb(0xFF0A33));
     s.ring(cx, cy, radius * 0.8, 1.0, rgb(0x00E5FF), 5.0, 10.0);
 
-    // Cruz central
     const Color cross = rgb(0x00E5FF, 0.3f);
     s.vline(cx, 0, H, 1.0, cross);
     s.hline(cy, 0, W, 1.0, cross);
 
-    // Marcas nos cantos (linha de 4 px, juncao em esquadro)
     const double len = std::min(W, H) * 0.15;
     const Color red = rgb(0xFF0A33);
-    const double e = 2.0; // metade da largura da linha
+    const double e = 2.0;
     s.vline(15, 15 - e, 15 + len, 4.0, red);
     s.hline(15, 15, 15 + len, 4.0, red);
     s.vline(W - 15, 15 - e, 15 + len, 4.0, red);
@@ -454,7 +439,6 @@ Image renderPattern(const Panel& p, const Image* logo)
     s.vline(W - 15, H - 15 - len, H - 15 + e, 4.0, red);
     s.hline(H - 15, W - 15 - len, W - 15, 4.0, red);
 
-    // Xadrez de 20x20 px nas bordas (1 px por casa: confere o mapeamento pixel a pixel)
     constexpr int kChk = 20;
     auto checker = [&](double x, double y) {
         for (int i = 0; i < kChk; ++i)
@@ -466,10 +450,8 @@ Image renderPattern(const Panel& p, const Image* logo)
     checker(20, cy - kChk / 2.0);
     checker(W - 20 - kChk, cy - kChk / 2.0);
 
-    // Borda
     s.strokeRect(0, 0, W, H, 2.0, red);
 
-    // Barras RGBWK com rampa
     if (h > 120 && w > 300) {
         const double barW = std::min(W * 0.8, 1000.0);
         const double barH = std::min(H * 0.12, 60.0);
@@ -483,7 +465,6 @@ Image renderPattern(const Panel& p, const Image* logo)
         s.strokeRect(startX, startY, barW, barH, 1.0, rgb(0x222222));
     }
 
-    // Caixa central
     const double boxW = std::min(W * 0.6, 600.0);
     const double boxH = std::min(H * 0.5, 240.0);
     const double boxX = cx - boxW / 2.0;
@@ -498,7 +479,7 @@ Image renderPattern(const Panel& p, const Image* logo)
         const double logoW = logoH * aspect;
         s.drawImage(*logo, cx - logoW / 2.0, boxY + 15.0, logoW, logoH);
     } else {
-        logoH = 10.0; // sem logo: so o espaco
+        logoH = 10.0;
     }
 
     const double base = std::min({boxW * 0.08, boxH * 0.15, 32.0});
@@ -552,8 +533,6 @@ Image renderOverview(const Config& c, const Image* watermark)
     }
     return img;
 }
-
-// ------------------------------------------------------------------------------------------------ arquivos
 
 bool loadImageFile(const fs::path& file, Image& out, std::string* error)
 {
@@ -629,4 +608,4 @@ bool writePng(const fs::path& file, const Image& img, std::string* error)
     return true;
 }
 
-} // namespace bsl::pixelmap
+}

@@ -16,7 +16,7 @@ using Microsoft::WRL::ComPtr;
 
 namespace {
 
-constexpr GLenum kWglAccessReadOnly = 0x0000; // WGL_ACCESS_READ_ONLY_NV
+constexpr GLenum kWglAccessReadOnly = 0x0000;
 
 using PfnGetExtensionsString = const char*(WINAPI*)(HDC);
 using PfnDxOpenDevice = HANDLE(WINAPI*)(void*);
@@ -37,7 +37,6 @@ struct WglDx
     bool loaded = false;
     bool tried = false;
 
-    // Precisa do contexto GL corrente
     void load()
     {
         if (tried && loaded)
@@ -73,7 +72,6 @@ std::string toUtf8(const wchar_t* w)
     return s;
 }
 
-// Fabricante (PCI vendor id) deduzido do GL_VENDOR / GL_RENDERER
 UINT vendorFromGl(const std::string& text)
 {
     auto has = [&](const char* needle) {
@@ -98,9 +96,7 @@ bool sameVendor(UINT adapterVendor, UINT wanted)
     return adapterVendor == wanted;
 }
 
-} // namespace
-
-// ----------------------------------------------------------------------------- InteropTexture
+}
 
 InteropTexture::~InteropTexture()
 {
@@ -127,7 +123,7 @@ void InteropTexture::endD3D()
 {
     ID3D11DeviceContext* ctx = owner_->context();
     if (shareHandle_) {
-        ctx->Flush(); // os comandos D3D precisam ter sido enviados antes de o GL pegar a textura
+        ctx->Flush();
         HANDLE h = shareHandle_;
         locked_ = g_wgl.lock(owner_->interopDevice_, 1, &h) != FALSE;
         if (!locked_)
@@ -135,7 +131,6 @@ void InteropTexture::endD3D()
         return;
     }
 
-    // Fallback: textura -> staging -> memoria do sistema -> glTexSubImage2D
     ctx->CopyResource(staging_.Get(), tex_.Get());
     D3D11_MAPPED_SUBRESOURCE mapped{};
     if (FAILED(ctx->Map(staging_.Get(), 0, D3D11_MAP_READ, 0, &mapped)))
@@ -162,8 +157,6 @@ void InteropTexture::clear(float r, float g, float b, float a)
     endD3D();
 }
 
-// ----------------------------------------------------------------------------- D3D11Interop
-
 D3D11Interop::~D3D11Interop()
 {
     closeInterop();
@@ -177,7 +170,6 @@ void D3D11Interop::closeInterop()
     }
 }
 
-// Abre o device no interop e confirma com um registro de verdade (a extensao existir nao basta)
 bool D3D11Interop::openInterop()
 {
     g_wgl.load();
@@ -232,7 +224,7 @@ bool D3D11Interop::initOnAdapter(IDXGIAdapter1* adapter, bool testInterop)
     HRESULT hr = D3D11CreateDevice(adapter, adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE, nullptr,
                                    D3D11_CREATE_DEVICE_BGRA_SUPPORT, levels, static_cast<UINT>(std::size(levels)),
                                    D3D11_SDK_VERSION, &dev, nullptr, &ctx);
-    if (hr == E_INVALIDARG) // sem 11_1 no runtime
+    if (hr == E_INVALIDARG)
         hr = D3D11CreateDevice(adapter, adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE, nullptr,
                                D3D11_CREATE_DEVICE_BGRA_SUPPORT, levels + 1, static_cast<UINT>(std::size(levels)) - 1,
                                D3D11_SDK_VERSION, &dev, nullptr, &ctx);
@@ -241,7 +233,7 @@ bool D3D11Interop::initOnAdapter(IDXGIAdapter1* adapter, bool testInterop)
 
     ComPtr<ID3D11Multithread> mt;
     if (SUCCEEDED(dev.As(&mt)))
-        mt->SetMultithreadProtected(TRUE); // a captura (WinRT) pode tocar no device de outras threads
+        mt->SetMultithreadProtected(TRUE);
 
     device_ = dev;
     context_ = ctx;
@@ -301,7 +293,6 @@ std::shared_ptr<D3D11Interop> D3D11Interop::create(std::string* error)
         c.match = wanted != 0 && sameVendor(d.VendorId, wanted);
         candidates.push_back(std::move(c));
     }
-    // Adaptadores do mesmo fabricante do GL primeiro; os outros so entram como ultimo recurso
     std::stable_sort(candidates.begin(), candidates.end(),
                      [](const Candidate& a, const Candidate& b) { return a.match && !b.match; });
 
@@ -309,11 +300,10 @@ std::shared_ptr<D3D11Interop> D3D11Interop::create(std::string* error)
     const bool anyMatch = !candidates.empty() && candidates.front().match;
     for (const Candidate& c : candidates) {
         if (anyMatch && !c.match)
-            break; // nao tenta adaptadores de outro fabricante quando ha um do mesmo do GL
+            break;
         if (self->initOnAdapter(c.adapter.Get(), true) && self->interopAvailable())
             return self;
     }
-    // Sem interop em nenhum candidato: device no adaptador do fabricante do GL (ou no primeiro) e copia por CPU
     if (!candidates.empty() && self->initOnAdapter(candidates.front().adapter.Get(), false))
         return self;
     if (self->initOnAdapter(nullptr, false))
@@ -370,7 +360,6 @@ std::unique_ptr<InteropTexture> D3D11Interop::createTexture(int width, int heigh
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    // A captura de tela e opaca: alpha sempre 1 (o canal alpha do BGRA nao e confiavel)
     if (!keepAlpha)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_ONE);
 
@@ -397,4 +386,4 @@ std::unique_ptr<InteropTexture> D3D11Interop::createTexture(int width, int heigh
     return t;
 }
 
-} // namespace bsl::render
+}

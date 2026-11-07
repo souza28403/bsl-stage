@@ -1,9 +1,3 @@
-// Plugins FFGL de teste que se comportam mal, para o bslstage_ffgltest. Um unico arquivo compilado tres vezes:
-//   -DFAIL_CRASH   efeito valido que da violacao de acesso no FF_PROCESS_OPENGL (o host deve sobreviver e bloquear)
-//   -DFAIL_HANG    trava em FF_GET_INFO (a varredura em processo separado deve estourar o tempo)
-//   -DFAIL_NOMAIN  DLL x64 que nao exporta plugMain (o filtro de PE deve ignorar sem carregar)
-// Nao usa o SDK: so os cabecalhos de third_party/ffgl.
-
 #include <windows.h>
 
 #if defined(FAIL_NOMAIN)
@@ -26,7 +20,7 @@ PluginInfoStruct g_info = {2, 1, {'F', 'A', 'I', 'L'}, {'F', 'a', 'i', 'l', ' ',
 PluginExtendedInfoStruct g_ext = {1, 0, "Plugin de teste que falha", "BSL Stage (teste)", 0, nullptr};
 char g_instance[16];
 
-} // namespace
+}
 
 extern "C" __declspec(dllexport) FFMixed __stdcall plugMain(FFUInt32 code, FFMixed in, FFInstanceID instance)
 {
@@ -39,7 +33,7 @@ extern "C" __declspec(dllexport) FFMixed __stdcall plugMain(FFUInt32 code, FFMix
     case FF_GET_INFO:
 #if defined(FAIL_HANG)
         for (;;)
-            Sleep(1000); // nunca volta
+            Sleep(1000);
 #endif
         out.PointerValue = &g_info;
         break;
@@ -60,7 +54,7 @@ extern "C" __declspec(dllexport) FFMixed __stdcall plugMain(FFUInt32 code, FFMix
         break;
     case FF_PROCESS_OPENGL:
 #if defined(FAIL_CRASH)
-        *static_cast<volatile int*>(nullptr) = 42; // violacao de acesso
+        *static_cast<volatile int*>(nullptr) = 42;
 #endif
         out.UIntValue = FF_SUCCESS;
         break;

@@ -7,8 +7,6 @@
 
 namespace bsl::media {
 
-// Imagem estatica ou animada (GIF/WEBP) como textura RGBA. Imagens estaticas liberam a copia em CPU
-// depois do upload. Em animadas, duration() e a soma dos delays e os modos Loop/Once/PingPong valem.
 class ImageSource final : public ISource {
 public:
     ImageSource() = default;
@@ -41,9 +39,9 @@ private:
     int width_ = 0;
     int height_ = 0;
     bool hasAlpha_ = false;
-    std::vector<Frame> frames_;      // vazio para imagem estatica (ja enviada a GPU)
-    std::vector<double> starts_;     // inicio de cada frame (s)
+    std::vector<Frame> frames_;
+    std::vector<double> starts_;
     size_t current_ = static_cast<size_t>(-1);
 };
 
-} // namespace bsl::media
+}

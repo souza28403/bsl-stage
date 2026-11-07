@@ -105,7 +105,6 @@ bool FrameConverter::convert(const AVFrame* src, int outW, int outH, bool forceR
     const bool detailsChanged = sws_ != prev || key != detailsKey_;
     detailsKey_ = key;
 
-    // Informa matriz/range de origem; destino RGB e sempre full range.
     if (detailsChanged && (!av_pix_fmt_desc_get(sf) || !(av_pix_fmt_desc_get(sf)->flags & AV_PIX_FMT_FLAG_RGB))) {
         int cs = SWS_CS_DEFAULT;
         switch (colorSpaceOf(src)) {
@@ -129,4 +128,4 @@ bool FrameConverter::convert(const AVFrame* src, int outW, int outH, bool forceR
     return h > 0;
 }
 
-} // namespace bsl::media
+}

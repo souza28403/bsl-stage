@@ -1,8 +1,11 @@
 #include "ui/panels/EffectChainWidget.h"
+#include "ui/panels/PluginWizard.h"
 
 #include "app/Qa.h"
+#include "ui/KeysUi.h"
 #include "ui/Theme.h"
 #include "ui/Widgets.h"
+#include "ui/panels/DmxWindow.h"
 #include "ui/panels/ParamWidgets.h"
 
 #include "fx/EffectRegistry.h"
@@ -30,13 +33,11 @@ struct Pending
     std::string typeId;
 };
 
-// "##<cadeia>_efeito_<n>_<parte>": ID estavel que o uiqa clica
 std::string itemId(const char* chain, int index, const char* part)
 {
     return std::string("##") + chain + "_efeito_" + std::to_string(index + 1) + "_" + part;
 }
 
-// Ellipsize simples: corta o texto para caber em maxW (nao parte UTF-8)
 std::string fitText(const std::string& text, float maxW)
 {
     ImFont* font = ImGui::GetFont();
@@ -69,8 +70,7 @@ void acceptDropsOnHeader(const fx::EffectChain& chain, int index, Pending& pendi
     ImGui::EndDragDropTarget();
 }
 
-// Cabecalho de um efeito: alca, seta, icone, nome, bypass (olho) e menu
-void drawHeader(fx::EffectChain& chain, int index, const char* chainId, Pending& pending)
+void drawHeader(fx::EffectChain& chain, int index, const char* chainId, Pending& pending, const EffectOwner& owner)
 {
     fx::EffectInstance& inst = chain.items[static_cast<size_t>(index)];
     const std::optional<fx::EffectTypeInfo> info = fx::EffectRegistry::instance().find(inst.typeId);
@@ -88,7 +88,6 @@ void drawHeader(fx::EffectChain& chain, int index, const char* chainId, Pending&
 
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, ImGui::GetStyle().ItemSpacing.y));
 
-    // Alca de arrastar (reordenar)
     ImGui::InvisibleButton(itemId(chainId, index, "alca").c_str(), ImVec2(gripW, h));
     const bool gripHovered = ImGui::IsItemHovered();
     if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
@@ -102,7 +101,6 @@ void drawHeader(fx::EffectChain& chain, int index, const char* chainId, Pending&
     drawIcon(dl, ICON_GRIP, ImVec2(p0.x + gripW * 0.5f, p0.y + h * 0.5f),
              ImGui::GetColorU32(gripHovered ? theme::kText : theme::kTextDim));
 
-    // Corpo do cabecalho: clicar recolhe/expande; aceita efeitos soltos (entram antes deste)
     ImGui::SameLine(0.0f, 0.0f);
     const float bodyW = std::max(dp(20.0f), full - gripW - 2.0f * h);
     ImGui::InvisibleButton(itemId(chainId, index, "cabecalho").c_str(), ImVec2(bodyW, h));
@@ -124,16 +122,29 @@ void drawHeader(fx::EffectChain& chain, int index, const char* chainId, Pending&
     x += dp(20.0f);
     drawIcon(dl, info && info->icon && info->icon[0] ? info->icon : ICON_SPARKLES, ImVec2(x + dp(8.0f), cy), fg);
     x += dp(24.0f);
-    const std::string title = fitText(inst.displayName(), p0.x + gripW + bodyW - x - dp(4.0f));
+    const control::Target keyTarget = owner.scope >= 0
+                                          ? control::Target::effectOf(owner.scope, owner.deck, owner.layer, owner.column, index)
+                                          : control::Target{};
+    const std::string hint = keyTarget.valid() ? keyHint(keyTarget) : std::string();
+    const float hintW = hint.empty() ? 0.0f : keyHintWidth(hint) + dp(3.0f);
+    const std::string title = fitText(inst.displayName(), p0.x + gripW + bodyW - x - dp(4.0f) - hintW);
     dl->AddText(ImVec2(x, cy - ImGui::GetFontSize() * 0.5f), fg, title.c_str());
+    if (!hint.empty())
+        drawKeyHint(dl, ImVec2(p0.x + gripW + bodyW - hintW + dp(1.0f), p0.y + dp(3.0f)), hint);
 
-    // Bypass (olho) e menu
     ImGui::SameLine(0.0f, 0.0f);
     iconButton(inst.bypass ? ICON_EYE_OFF : ICON_EYE, itemId(chainId, index, "bypass").c_str(),
                inst.bypass ? "Efeito em bypass (ignorado). Clique para ativar" : "Efeito ativo. Clique para pôr em bypass",
                ImVec2(h, h), IconButton_Flat, ImGui::GetColorU32(inst.bypass ? theme::kTextDim : theme::kText));
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
         inst.bypass = !inst.bypass;
+    if (keyTarget.valid() && ImGui::BeginPopupContextItem("##efeito_bypass_ctx")) {
+        keyAssignMenu(keyTarget, false);
+        dmxActionMenu(keyTarget);
+        ImGui::EndPopup();
+    }
+    if (keyTarget.valid())
+        drawKeyFlash(dl, p0, ImVec2(p0.x + full, p0.y + h), keyFlash(keyTarget), rounding());
     ImGui::SameLine(0.0f, 0.0f);
     if (iconButton(ICON_ELLIPSIS, itemId(chainId, index, "menu").c_str(), "Menu do efeito", ImVec2(h, h), IconButton_Flat))
         ImGui::OpenPopup("##efeito_menu");
@@ -152,7 +163,7 @@ void drawHeader(fx::EffectChain& chain, int index, const char* chainId, Pending&
     }
 }
 
-} // namespace
+}
 
 std::string foldSearchText(const std::string& s)
 {
@@ -160,7 +171,7 @@ std::string foldSearchText(const std::string& s)
     out.reserve(s.size());
     for (size_t i = 0; i < s.size(); ++i) {
         const unsigned char c = static_cast<unsigned char>(s[i]);
-        if (c == 0xC3 && i + 1 < s.size()) { // letras acentuadas do Latin-1 em UTF-8
+        if (c == 0xC3 && i + 1 < s.size()) {
             const unsigned char d = static_cast<unsigned char>(s[++i]);
             char base = '?';
             if ((d >= 0x80 && d <= 0x85) || (d >= 0xA0 && d <= 0xA5)) base = 'a';
@@ -179,7 +190,6 @@ std::string foldSearchText(const std::string& s)
 
 namespace {
 
-// Menu "Adicionar efeito": busca + catálogo (Nativos, ISF e FFGL) agrupado por categoria. Devolve o typeId escolhido.
 std::string drawAddPopup(const char* chainId)
 {
     static char filter[64] = {};
@@ -231,7 +241,7 @@ std::string drawAddPopup(const char* chainId)
     return chosen;
 }
 
-} // namespace
+}
 
 std::string acceptEffectDrop()
 {
@@ -253,7 +263,7 @@ void drawEffectsBadge(ImDrawList* dl, ImVec2 center, const fx::EffectChain& chai
     drawIcon(dl, ICON_SPARKLES, center, ImGui::GetColorU32(chain.hasActive() ? theme::kText : theme::kTextDim), 0.8f);
 }
 
-bool drawEffectChain(fx::EffectChain& chain, const char* id, PanelContext* ctx, int zoneSource)
+bool drawEffectChain(fx::EffectChain& chain, const char* id, PanelContext* ctx, int zoneSource, const EffectOwner& owner)
 {
     bool changed = false;
     Pending pending;
@@ -261,7 +271,7 @@ bool drawEffectChain(fx::EffectChain& chain, const char* id, PanelContext* ctx, 
     for (int i = 0; i < chain.size(); ++i) {
         fx::EffectInstance& inst = chain.items[static_cast<size_t>(i)];
         ImGui::PushID(inst.uid);
-        drawHeader(chain, i, id, pending);
+        drawHeader(chain, i, id, pending, owner);
 
         if (inst.uiOpen) {
             const media::SourceStatus st = inst.status();
@@ -273,16 +283,42 @@ bool drawEffectChain(fx::EffectChain& chain, const char* id, PanelContext* ctx, 
                                    "%s", st.text.c_str());
                 ImGui::PopTextWrapPos();
             }
+            if (const auto info = fx::EffectRegistry::instance().find(inst.typeId);
+                info && info->section == fx::EffectSection::Isf && !info->sourceFile.empty()) {
+                const std::filesystem::path file{std::u8string(info->sourceFile.begin(), info->sourceFile.end())};
+                const std::string base = std::string(id) + "_efeito_" + std::to_string(i + 1);
+                if (ImGui::SmallButton(("Abrir no editor##" + base + "_editar").c_str()))
+                    openPluginInEditor(file);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Abre o arquivo .fs deste efeito. Ao salvar, ele recompila sozinho.");
+                ImGui::SameLine();
+                if (ImGui::SmallButton(("Mostrar na pasta##" + base + "_pasta").c_str()))
+                    showPluginInFolder(file);
+                ImGui::SameLine();
+                if (ImGui::SmallButton(("Duplicar plugin##" + base + "_duplicar_plugin").c_str()))
+                    duplicateUserPlugin(file);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Cria uma cópia do arquivo para você alterar (em Meus plugins, se este for um exemplo).");
+            }
             const std::vector<media::ParamDesc> descs = inst.paramDescs();
             if (!descs.empty()) {
                 ImGui::Indent(dp(8.0f));
-                // Z-Slice: o assistente que liga cada zona a um slice fica no alto, antes dos parâmetros
                 if (ctx && zoneSource != kNoZoneSource && inst.typeId == fx::bsllight::kZSliceId) {
                     drawZoneRoutingButton(*ctx, media::ParamSet(descs, inst.params), zoneSource,
                                           std::string(id) + "_efeito_" + std::to_string(i + 1));
                     ImGui::Spacing();
                 }
-                for (ParamEdit& e : drawParams(descs, inst.params)) {
+                DmxParamOwner dmxOwner;
+                dmxOwner.valid = owner.scope >= 0 && (owner.scope == 2 || owner.layer >= 0);
+                dmxOwner.scope = owner.scope;
+                dmxOwner.layerIndex = owner.layer;
+                dmxOwner.deck = owner.deck;
+                dmxOwner.column = std::max(0, owner.column);
+                dmxOwner.effect = i;
+                dmxSetParamOwner(dmxOwner);
+                std::vector<ParamEdit> paramEdits = drawParams(descs, inst.params);
+                dmxSetParamOwner({});
+                for (ParamEdit& e : paramEdits) {
                     inst.setParam(e.id, std::move(e.value));
                     changed = true;
                 }
@@ -293,7 +329,6 @@ bool drawEffectChain(fx::EffectChain& chain, const char* id, PanelContext* ctx, 
         ImGui::PopID();
     }
 
-    // Área do fim: soltar um efeito aqui o coloca no fim da cadeia; ao lado, o botão que abre o catálogo
     {
         const float h = chain.empty() ? dp(56.0f) : dp(28.0f);
         const float full = std::max(ImGui::GetContentRegionAvail().x, dp(60.0f));
@@ -353,4 +388,4 @@ bool drawEffectChain(fx::EffectChain& chain, const char* id, PanelContext* ctx, 
     return changed;
 }
 
-} // namespace bsl::ui
+}

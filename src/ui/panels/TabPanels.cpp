@@ -4,7 +4,9 @@
 #include "ui/Theme.h"
 #include "ui/Ui.h"
 #include "ui/Widgets.h"
+#include "ui/panels/DmxWindow.h"
 #include "ui/panels/EffectChainWidget.h"
+#include "ui/panels/TransformEditor.h"
 
 #include <imgui.h>
 
@@ -16,8 +18,6 @@ namespace bsl::ui {
 
 namespace {
 
-// Tamanho do canvas: presets + personalizado. O App recria o FBO do Compositor quando
-// width/height mudam (e reescala os retângulos de entrada dos slices).
 void canvasControls(Composition& comp)
 {
     struct Preset
@@ -46,9 +46,8 @@ void canvasControls(Composition& comp)
         ImGui::EndCombo();
     }
 
-    // Campos para o tamanho personalizado; só vale ao clicar em Aplicar (recriar o FBO é caro)
     static int editW = 0, editH = 0, lastW = 0, lastH = 0;
-    if (comp.width != lastW || comp.height != lastH) { // mudou por fora (preset, projeto)
+    if (comp.width != lastW || comp.height != lastH) {
         editW = lastW = comp.width;
         editH = lastH = comp.height;
     }
@@ -81,7 +80,7 @@ std::string destinationLabel(const Screen& s, const std::vector<MonitorInfo>& mo
     }
 }
 
-} // namespace
+}
 
 void drawCompositionTabPanel(PanelContext& ctx)
 {
@@ -100,12 +99,13 @@ void drawCompositionTabPanel(PanelContext& ctx)
         comp.bpm = bpm;
 
     dimLabel("Master");
+    hotDmx({dmx::ParamKind::MasterOpacity});
     hotPercent("##masterTab", comp.masterOpacity, 1.0f, -1.0f);
     ImGui::Checkbox("Bypass master", &comp.masterBypass);
 
     ImGui::Spacing();
     ImGui::SeparatorText("Efeitos do master");
-    drawEffectChain(comp.masterEffects, "master", &ctx, kZoneSourceMaster);
+    drawEffectChain(comp.masterEffects, "master", &ctx, kZoneSourceMaster, EffectOwner{2, -1, -1, -1});
 
     endPanel();
 }
@@ -127,6 +127,7 @@ void drawLayerTabPanel(PanelContext& ctx)
             layer.name = name;
 
         dimLabel("Opacidade");
+        hotDmx({dmx::ParamKind::LayerOpacity, layer.id});
         hotPercent("##opacidade", layer.opacity, 1.0f, -1.0f);
 
         dimLabel("Blend mode");
@@ -138,6 +139,10 @@ void drawLayerTabPanel(PanelContext& ctx)
                     layer.blendMode = mode;
             }
             ImGui::EndCombo();
+        }
+        if (ImGui::BeginPopupContextItem("##blendctx_aba")) {
+            dmxParamMenu({dmx::ParamKind::LayerBlend, layer.id});
+            ImGui::EndPopup();
         }
 
         ImGui::Checkbox("Bypass", &layer.bypass);
@@ -151,8 +156,11 @@ void drawLayerTabPanel(PanelContext& ctx)
         ImGui::EndDisabled();
 
         ImGui::Spacing();
+        drawTransformFields(ctx, sel.layer);
+
+        ImGui::Spacing();
         ImGui::SeparatorText("Efeitos da camada");
-        drawEffectChain(layer.effects, "camada", &ctx, sel.layer);
+        drawEffectChain(layer.effects, "camada", &ctx, sel.layer, EffectOwner{1, -1, sel.layer, -1});
     } else {
         ImGui::TextColored(theme::kTextDim, "Selecione uma camada ou um clip para editar a camada.");
     }
@@ -197,4 +205,4 @@ void drawOutputTabPanel(PanelContext& ctx)
     endPanel();
 }
 
-} // namespace bsl::ui
+}

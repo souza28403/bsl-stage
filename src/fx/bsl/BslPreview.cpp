@@ -39,7 +39,6 @@ void PreviewCapture::capture(GLuint tex, int w, int h, bool topOrigin)
     } catch (const std::exception&) {
         return;
     }
-    // Reduz (linear) ja na orientacao "linha 0 = topo"
     blit_.copy(tex, w, h, *small_, true, !topOrigin);
     std::vector<unsigned char> rgba(static_cast<size_t>(tw) * static_cast<size_t>(th) * 4);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, small_->id());
@@ -47,7 +46,6 @@ void PreviewCapture::capture(GLuint tex, int w, int h, bool topOrigin)
     glReadPixels(0, 0, tw, th, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-    // Alpha reto sobre cinza escuro (o JPEG nao tem alpha)
     std::vector<unsigned char> rgb(static_cast<size_t>(tw) * static_cast<size_t>(th) * 3);
     for (size_t i = 0, n = static_cast<size_t>(tw) * static_cast<size_t>(th); i < n; ++i) {
         const unsigned a = rgba[i * 4 + 3];
@@ -64,7 +62,6 @@ void PreviewCapture::capture(GLuint tex, int w, int h, bool topOrigin)
 bool PreviewCapture::jpeg(std::string& out, int waitMs)
 {
     touch();
-    // Sem quadro recente (a captura estava parada): da um instante para a thread de GL produzir um
     if (!hasFrame() || nowMs() - lastCapture_.load() > 1500) {
         const std::uint64_t before = seq_.load();
         for (int waited = 0; waited < waitMs && seq_.load() == before; waited += 20)
@@ -86,4 +83,4 @@ bool PreviewCapture::jpeg(std::string& out, int waitMs)
     return !out.empty();
 }
 
-} // namespace bsl::fx::bsllight
+}

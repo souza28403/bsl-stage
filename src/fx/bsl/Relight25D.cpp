@@ -1,8 +1,3 @@
-// BSL Relight 2.5D: iluminação virtual em vídeo 2D. A profundidade estimada pela IA local (Depth Anything V2 Small, ver
-// src/ai) vira um mapa de normais por derivadas (Sobel) com intensidade de relevo; até 4 luzes pontuais 3D (posição X/Y/Z,
-// cor, intensidade, raio e falloff, especular e brilho) iluminam a imagem como se ela tivesse volume. Luz ambiente, mistura
-// com o original e modo de depuração (ver profundidade ou normais).
-
 #include "fx/bsl/BslCommon.h"
 #include "fx/bsl/BslEffects.h"
 
@@ -19,18 +14,17 @@ using namespace media::param;
 
 constexpr int kLights = 4;
 
-// Coordenadas: x e y em "alturas da imagem" (x de 0 a aspecto, y de cima para baixo), z para fora da tela.
 const char* const kRelightBody = R"(
-uniform sampler2D uDepth;    // R16F 0..1 (maior = mais perto), linha 0 = topo
+uniform sampler2D uDepth;
 uniform float uAspect;
-uniform float uBump;         // intensidade do relevo nas normais
-uniform float uRelief;       // altura 3D da superficie (em alturas da imagem) quando a profundidade = 1
+uniform float uBump;
+uniform float uRelief;
 uniform float uAmbient;
 uniform float uMix;
-uniform int uDebug;          // 0 = luz, 1 = profundidade, 2 = normais
-uniform vec4 uLpos[4];       // xyz = posicao, w = ligada
-uniform vec3 uLcol[4];       // cor * intensidade
-uniform vec4 uLpar[4];       // x = raio, y = falloff, z = especular, w = brilho (expoente)
+uniform int uDebug;
+uniform vec4 uLpos[4];
+uniform vec3 uLcol[4];
+uniform vec4 uLpar[4];
 
 float depthAt(vec2 uv) { return texture(uDepth, uv).r; }
 
@@ -40,7 +34,6 @@ void main()
     vec4 src = samp(uv);
     float d = depthAt(uv);
 
-    // Normais por Sobel sobre a profundidade (inclinacao media por texel -> inclinacao por altura de imagem)
     vec2 ts = 1.0 / vec2(textureSize(uDepth, 0));
     float tl = depthAt(uv + ts * vec2(-1.0, -1.0)), tc = depthAt(uv + ts * vec2(0.0, -1.0)), tr = depthAt(uv + ts * vec2(1.0, -1.0));
     float ml = depthAt(uv + ts * vec2(-1.0, 0.0)),                                          mr = depthAt(uv + ts * vec2(1.0, 0.0));
@@ -78,10 +71,10 @@ void main()
 struct LightDefault
 {
     bool on;
-    float x, y, z;       // %
+    float x, y, z;
     media::Color color;
-    float intensity;     // %
-    float radius;        // % da altura
+    float intensity;
+    float radius;
 };
 constexpr LightDefault kLightDefaults[kLights] = {
     {true, 22.0f, 35.0f, 35.0f, {1.0f, 0.88f, 0.70f, 1.0f}, 130.0f, 130.0f},
@@ -137,7 +130,7 @@ private:
     float aspect_ = 1.0f;
 };
 
-} // namespace
+}
 
 std::vector<media::ParamDesc> describeRelight()
 {
@@ -167,8 +160,6 @@ std::vector<media::ParamDesc> describeRelight()
         add(makeFloat(pre + "x", "Posição X", def.x, -50.0f, 150.0f, "%.0f %%"), "0 % = borda esquerda da imagem, 100 % = borda direita");
         add(makeFloat(pre + "y", "Posição Y", def.y, -50.0f, 150.0f, "%.0f %%"), "0 % = topo da imagem, 100 % = base");
         add(makeFloat(pre + "z", "Posição Z", def.z, 5.0f, 200.0f, "%.0f %%"), "Distância da luz à imagem, em % da altura. Perto = foco pequeno e forte");
-        // Fase 5 (DMX / Art-Net): mapear os canais de cor e de intensidade de cada luz nestes parametros
-        // (l1_color / l1_intensity ... l4_color / l4_intensity); eles sao parametros normais, como qualquer outro.
         add(makeColor(pre + "color", "Cor", def.color));
         add(makeFloat(pre + "intensity", "Intensidade", def.intensity, 0.0f, 400.0f, "%.0f %%"));
         add(makeFloat(pre + "radius", "Raio", def.radius, 5.0f, 400.0f, "%.0f %%"), "Alcance da luz, em % da altura da imagem");
@@ -184,4 +175,4 @@ std::unique_ptr<IEffect> makeRelight()
     return std::make_unique<RelightEffect>();
 }
 
-} // namespace bsl::fx::bsllight
+}

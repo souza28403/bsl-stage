@@ -38,7 +38,6 @@ std::string lowerAscii(std::string s)
     return s;
 }
 
-// Categorias comuns do ISF em portugues; as demais ficam como estao
 std::string categoryPt(const std::vector<std::string>& cats, bool isEffect)
 {
     if (cats.empty())
@@ -57,6 +56,34 @@ std::string categoryPt(const std::vector<std::string>& cats, bool isEffect)
     return cats.front();
 }
 
+std::int64_t toTicks(const fs::file_time_type& t)
+{
+    return static_cast<std::int64_t>(t.time_since_epoch().count());
+}
+
+void stampOf(const fs::path& file, std::int64_t& time, std::uint64_t& size)
+{
+    time = 0;
+    size = 0;
+    std::error_code ec;
+    const auto t = fs::last_write_time(file, ec);
+    if (!ec)
+        time = toTicks(t);
+    const auto sz = fs::file_size(file, ec);
+    if (!ec)
+        size = sz;
+    fs::path vs = file;
+    vs.replace_extension(".vs");
+    if (fs::is_regular_file(vs, ec)) {
+        const auto t2 = fs::last_write_time(vs, ec);
+        if (!ec)
+            time ^= toTicks(t2) * 31;
+        const auto sz2 = fs::file_size(vs, ec);
+        if (!ec)
+            size += sz2 * 7919;
+    }
+}
+
 std::string idFor(const fs::path& root, const fs::path& file)
 {
     std::error_code ec;
@@ -65,7 +92,7 @@ std::string idFor(const fs::path& root, const fs::path& file)
     return "isf:" + std::string(u.begin(), u.end());
 }
 
-} // namespace
+}
 
 IsfLibrary& IsfLibrary::instance()
 {
@@ -75,6 +102,7 @@ IsfLibrary& IsfLibrary::instance()
 
 IsfLibrary::~IsfLibrary()
 {
+    stopWatcher();
     if (worker_.joinable())
         worker_.join();
 }
@@ -84,7 +112,7 @@ void IsfLibrary::configure(std::vector<fs::path> dirs, const fs::path& samplesDi
     std::error_code ec;
     if (!dirs.empty() && !dirs.front().empty() && !fs::exists(dirs.front(), ec)) {
         fs::create_directories(dirs.front(), ec);
-        if (!ec && !samplesDir.empty() && fs::is_directory(samplesDir, ec)) { // primeiro uso: copia os exemplos
+        if (!ec && !samplesDir.empty() && fs::is_directory(samplesDir, ec)) {
             for (const auto& e : fs::directory_iterator(samplesDir, ec)) {
                 const std::string ext = lowerAscii(paths::toUtf8(e.path().extension()));
                 if (e.is_regular_file(ec) && (ext == ".fs" || ext == ".vs" || ext == ".png" || ext == ".jpg"))
@@ -93,8 +121,13 @@ void IsfLibrary::configure(std::vector<fs::path> dirs, const fs::path& samplesDi
             log::info("ISF: pasta criada com os shaders de exemplo em " + paths::toUtf8(dirs.front()));
         }
     }
-    std::lock_guard lock(mutex_);
-    dirs_ = std::move(dirs);
+    {
+        std::lock_guard lock(mutex_);
+        dirs_ = std::move(dirs);
+    }
+    std::lock_guard watch(watchMutex_);
+    seenValid_ = false;
+    pendingStamps_.clear();
 }
 
 std::vector<fs::path> IsfLibrary::directories() const
@@ -103,12 +136,37 @@ std::vector<fs::path> IsfLibrary::directories() const
     return dirs_;
 }
 
+std::optional<std::string> IsfLibrary::idForFile(const fs::path& file) const
+{
+    std::vector<fs::path> dirs;
+    {
+        std::lock_guard lock(mutex_);
+        dirs = dirs_;
+    }
+    std::error_code ec;
+    const fs::path target = fs::weakly_canonical(file, ec);
+    if (ec)
+        return std::nullopt;
+    for (const fs::path& dir : dirs) {
+        const fs::path root = fs::weakly_canonical(dir, ec);
+        if (ec || root.empty())
+            continue;
+        const fs::path rel = target.lexically_relative(root);
+        if (rel.empty() || *rel.begin() == "..")
+            continue;
+        const std::u8string u = rel.generic_u8string();
+        return "isf:" + std::string(u.begin(), u.end());
+    }
+    return std::nullopt;
+}
+
 IsfEntry IsfLibrary::loadFile(const fs::path& file, const std::string& id)
 {
     IsfEntry e;
     e.id = id;
     e.file = file;
     e.name = paths::toUtf8(file.stem());
+    stampOf(file, e.stampTime, e.stampSize);
     std::string fragment;
     if (!readText(file, fragment)) {
         e.error = "Não foi possível ler o arquivo.";
@@ -162,6 +220,12 @@ void IsfLibrary::scanWorker(std::vector<fs::path> dirs)
     for (;;) {
         std::vector<IsfEntry> found;
         std::vector<std::string> ids;
+        std::vector<FileStamp> stamps = listStamps(dirs);
+        std::vector<IsfEntry> previous;
+        {
+            std::lock_guard lock(mutex_);
+            previous = entries_;
+        }
         for (const fs::path& dir : dirs) {
             std::error_code ec;
             if (dir.empty() || !fs::is_directory(dir, ec))
@@ -175,9 +239,18 @@ void IsfLibrary::scanWorker(std::vector<fs::path> dirs)
                     break;
                 const std::string id = idFor(dir, it->path());
                 if (std::find(ids.begin(), ids.end(), id) != ids.end())
-                    continue; // a pasta principal vence
+                    continue;
                 ids.push_back(id);
-                found.push_back(loadFile(it->path(), id));
+                std::int64_t st = 0;
+                std::uint64_t sz = 0;
+                stampOf(it->path(), st, sz);
+                const auto old = std::find_if(previous.begin(), previous.end(), [&](const IsfEntry& p) {
+                    return p.id == id && p.file == it->path() && p.stampTime == st && p.stampSize == sz;
+                });
+                if (old != previous.end() && (old->doc || !old->error.empty()))
+                    found.push_back(*old);
+                else
+                    found.push_back(loadFile(it->path(), id));
             }
         }
         std::sort(found.begin(), found.end(), [](const IsfEntry& a, const IsfEntry& b) {
@@ -186,6 +259,12 @@ void IsfLibrary::scanWorker(std::vector<fs::path> dirs)
             return lowerAscii(a.name) < lowerAscii(b.name);
         });
 
+        {
+            std::lock_guard watch(watchMutex_);
+            seenStamps_ = std::move(stamps);
+            pendingStamps_.clear();
+            seenValid_ = true;
+        }
         std::lock_guard lock(mutex_);
         entries_ = std::move(found);
         version_.fetch_add(1);
@@ -205,6 +284,99 @@ std::vector<IsfEntry> IsfLibrary::entries() const
     return entries_;
 }
 
+std::vector<IsfLibrary::FileStamp> IsfLibrary::listStamps(const std::vector<fs::path>& dirs)
+{
+    std::vector<FileStamp> out;
+    for (const fs::path& dir : dirs) {
+        std::error_code ec;
+        if (dir.empty() || !fs::is_directory(dir, ec))
+            continue;
+        for (fs::recursive_directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec), end;
+             !ec && it != end; it.increment(ec)) {
+            std::error_code ec2;
+            if (!it->is_regular_file(ec2))
+                continue;
+            const std::string ext = lowerAscii(paths::toUtf8(it->path().extension()));
+            if (ext != ".fs" && ext != ".vs")
+                continue;
+            if (out.size() >= kMaxEntries * 2)
+                break;
+            FileStamp f;
+            f.path = paths::toUtf8(it->path());
+            const auto t = it->last_write_time(ec2);
+            f.time = ec2 ? 0 : toTicks(t);
+            const auto sz = it->file_size(ec2);
+            f.size = ec2 ? 0 : sz;
+            out.push_back(std::move(f));
+        }
+    }
+    std::sort(out.begin(), out.end(), [](const FileStamp& a, const FileStamp& b) { return a.path < b.path; });
+    return out;
+}
+
+bool IsfLibrary::checkForChanges(bool immediate)
+{
+    std::vector<fs::path> dirs;
+    {
+        std::lock_guard lock(mutex_);
+        if (scanning_.load())
+            return false;
+        dirs = dirs_;
+    }
+    std::vector<FileStamp> now = listStamps(dirs);
+    {
+        std::lock_guard watch(watchMutex_);
+        if (!seenValid_) {
+            seenStamps_ = std::move(now);
+            seenValid_ = true;
+            return false;
+        }
+        if (now == seenStamps_) {
+            pendingStamps_.clear();
+            return false;
+        }
+        if (!immediate && pendingStamps_ != now) {
+            pendingStamps_ = std::move(now);
+            return false;
+        }
+        pendingStamps_.clear();
+        seenStamps_ = std::move(now);
+    }
+    rescan();
+    return true;
+}
+
+void IsfLibrary::startWatcher(int intervalMs)
+{
+    std::lock_guard lock(stopMutex_);
+    if (watcher_.joinable())
+        return;
+    stopWatcher_ = false;
+    watcher_ = std::thread([this, intervalMs]() {
+        for (;;) {
+            {
+                std::unique_lock lk(stopMutex_);
+                if (stopCv_.wait_for(lk, std::chrono::milliseconds(intervalMs), [this] { return stopWatcher_; }))
+                    return;
+            }
+            checkForChanges(false);
+        }
+    });
+}
+
+void IsfLibrary::stopWatcher()
+{
+    std::thread t;
+    {
+        std::lock_guard lock(stopMutex_);
+        stopWatcher_ = true;
+        t = std::move(watcher_);
+    }
+    stopCv_.notify_all();
+    if (t.joinable())
+        t.join();
+}
+
 std::optional<IsfEntry> IsfLibrary::find(const std::string& id)
 {
     std::vector<fs::path> dirs;
@@ -217,7 +389,6 @@ std::optional<IsfEntry> IsfLibrary::find(const std::string& id)
     }
     if (id.rfind("isf:", 0) != 0)
         return std::nullopt;
-    // Ainda nao varrido (projeto aberto antes do fim da varredura): le o arquivo direto
     const std::string rel = id.substr(4);
     const fs::path relPath{std::u8string(rel.begin(), rel.end())};
     for (const fs::path& dir : dirs) {
@@ -225,7 +396,7 @@ std::optional<IsfEntry> IsfLibrary::find(const std::string& id)
         const fs::path file = dir / relPath;
         if (fs::is_regular_file(file, ec)) {
             IsfEntry e = loadFile(file, id);
-            std::lock_guard lock(mutex_); // guarda: as proximas consultas nao releem o disco
+            std::lock_guard lock(mutex_);
             if (std::none_of(entries_.begin(), entries_.end(), [&](const IsfEntry& x) { return x.id == id; }))
                 entries_.push_back(e);
             return e;
@@ -240,4 +411,4 @@ std::shared_ptr<const IsfDoc> IsfLibrary::doc(const std::string& id)
     return e ? e->doc : nullptr;
 }
 
-} // namespace bsl::fx
+}

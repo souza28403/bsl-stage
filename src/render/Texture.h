@@ -6,7 +6,6 @@
 
 namespace bsl {
 
-// Textura GL com dono unico (RAII). Precisa do contexto GL vivo ao ser destruida.
 struct Texture
 {
     GLuint id = 0;
@@ -42,4 +41,4 @@ struct Texture
     explicit operator bool() const { return id != 0; }
 };
 
-} // namespace bsl
+}

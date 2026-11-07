@@ -8,9 +8,6 @@
 
 namespace bsl::media {
 
-// Video (qualquer formato do FFmpeg) como textura RGBA. Decodifica em thread propria;
-// frames YUV viram RGBA via shader (YuvConverter), os demais ja chegam em RGBA.
-// Limitacao: so toca para frente (supportsReverse() == false): ping-pong vira Loop e speed < 0 vira 0.
 class VideoSource final : public ISource {
 public:
     explicit VideoSource(VideoDecoderOptions options = {});
@@ -38,7 +35,7 @@ private:
     VideoDecoderOptions options_;
     VideoDecoder decoder_;
     std::unique_ptr<YuvConverter> yuv_;
-    GLuint rgbaTex_ = 0; // caminho RGBA e placeholder 1x1 antes do primeiro frame
+    GLuint rgbaTex_ = 0;
     int rgbaW_ = 0;
     int rgbaH_ = 0;
     bool usingYuv_ = false;
@@ -46,4 +43,4 @@ private:
     int height_ = 0;
 };
 
-} // namespace bsl::media
+}

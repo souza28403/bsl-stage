@@ -1,12 +1,12 @@
-// Efeito ISF (shader com inputImage) e o provedor "isf:" do registro de efeitos.
-
 #include "fx/EffectRegistry.h"
 #include "fx/FxGl.h"
 #include "fx/IsfLibrary.h"
+#include "fx/IsfReload.h"
 #include "fx/IsfRenderer.h"
 #include "ui/Icons.h"
 
 #include "app/Log.h"
+#include "app/Paths.h"
 
 namespace bsl::fx {
 
@@ -31,17 +31,19 @@ public:
 
     void process(const EffectContext& ctx, GLuint inputTex, int w, int h, Fbo& output) override
     {
-        refresh(false);
+        refresh(false, true);
         if (renderer_ && renderer_->render(ctx, inputTex, w, h, w, h, output))
             return;
         if (inputTex != 0)
-            blit_.copy(inputTex, w, h, output); // shader sem compilar: passa a imagem adiante
+            blit_.copy(inputTex, w, h, output);
     }
 
     media::SourceStatus status() const override
     {
         if (!renderer_)
             return {media::SourceStatus::Level::Warning, "Shader ISF não encontrado: " + typeId_};
+        if (!reload_.error.empty())
+            return {media::SourceStatus::Level::Warning, isfReloadMessage(reload_)};
         if (!renderer_->error().empty())
             return {media::SourceStatus::Level::Warning, renderer_->error()};
         if (!renderer_->warnings().empty())
@@ -50,8 +52,7 @@ public:
     }
 
 private:
-    // Troca o renderer se o arquivo foi relido ("Recarregar") e mudou
-    void refresh(bool force)
+    void refresh(bool force, bool glReady = false)
     {
         IsfLibrary& lib = IsfLibrary::instance();
         const std::uint64_t v = lib.version();
@@ -59,14 +60,11 @@ private:
             return;
         seenVersion_ = v;
         const auto entry = lib.find(typeId_);
-        if (!entry || !entry->doc)
-            return; // arquivo sumiu ou com erro: mantem o que ja funcionava
-        if (renderer_ && renderer_->docPtr() == entry->doc)
+        if (isfReload(renderer_, entry, glReady, true, reload_) != IsfReloadResult::Replaced)
             return;
         name_ = entry->name;
         category_ = entry->category;
         descs_ = isfParamDescs(*entry->doc);
-        renderer_ = std::make_unique<IsfRenderer>(entry->doc, entry->file.parent_path());
         renderer_->setParams(media::ParamSet(descs_, values_));
     }
 
@@ -76,6 +74,7 @@ private:
     std::vector<media::ParamDesc> descs_;
     media::ParamValues values_;
     std::unique_ptr<IsfRenderer> renderer_;
+    IsfReloadState reload_;
     std::uint64_t seenVersion_ = 0;
     TexBlitter blit_;
 };
@@ -95,6 +94,7 @@ public:
         t.section = EffectSection::Isf;
         t.description = e.description;
         t.error = e.error;
+        t.sourceFile = paths::toUtf8(e.file);
         t.generator = e.error.empty() && !e.isEffect;
         return t;
     }
@@ -132,11 +132,11 @@ public:
     std::uint64_t version() const override { return IsfLibrary::instance().version(); }
 };
 
-} // namespace
+}
 
 std::shared_ptr<IEffectProvider> makeIsfProvider()
 {
     return std::make_shared<IsfProvider>();
 }
 
-} // namespace bsl::fx
+}

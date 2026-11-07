@@ -94,7 +94,7 @@ IEffect* EffectInstance::ensureEffect()
         return effect_.get();
     const unsigned version = static_cast<unsigned>(EffectRegistry::instance().version());
     if (createFailed_ && version == registryVersion_)
-        return nullptr; // nao insiste enquanto o catalogo nao mudar (ex.: o ISF foi corrigido e reescaneado)
+        return nullptr;
     effect_ = EffectRegistry::instance().create(typeId);
     createFailed_ = effect_ == nullptr;
     registryVersion_ = version;
@@ -256,4 +256,4 @@ EffectChain EffectChain::fromJson(const media::Json& j, std::vector<std::string>
     return chain;
 }
 
-} // namespace bsl::fx
+}

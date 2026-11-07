@@ -7,13 +7,9 @@
 
 namespace bsl {
 
-// Pool de FBOs RGBA8 por tamanho: os efeitos e o Compositor pegam um FBO emprestado (acquire) e devolvem (release /
-// Lease). Nada e alocado por quadro em regime: os mesmos FBOs voltam a ser usados. Entradas que ficam sem uso por
-// muitos quadros (tamanho que ninguem pede mais) sao liberadas em endFrame(). Precisa do contexto GL.
 class FboPool
 {
 public:
-    // Emprestimo com devolucao automatica
     class Lease
     {
     public:
@@ -61,13 +57,11 @@ public:
 
     Lease acquire(int width, int height);
     void release(Fbo* fbo);
-    // Uma vez por quadro: libera o que ficou parado ha mais de 'maxIdleFrames' quadros
     void endFrame(int maxIdleFrames = 240);
     void clear();
 
     size_t size() const { return entries_.size(); }
     size_t inUse() const;
-    // Quantos FBOs novos foram criados desde o inicio (teste: em regime nao deve crescer)
     size_t created() const { return created_; }
 
 private:
@@ -81,4 +75,4 @@ private:
     size_t created_ = 0;
 };
 
-} // namespace bsl
+}

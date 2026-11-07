@@ -1,0 +1,4 @@
+# Fixtures binarios dos testes de atualizacao: nunca converter fim de linha
+tools/fixtures/update/*.zip binary
+tools/fixtures/update/*.txt -text
+tools/fixtures/update/*.json -text

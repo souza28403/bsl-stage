@@ -1,11 +1,3 @@
-// Plugin FFGL de teste do BSL Stage (baseado na estrutura do exemplo AddSubtract do SDK), compilado como efeito ou fonte:
-//   efeito (padrao):   mantem a METADE DE BAIXO da imagem de entrada e pinta a de cima de azul (nivel = "Level").
-//                      Mostra se o host entrega a imagem na orientacao FFGL (linha 0 na base) com e sem inversao.
-//   -DPROBE_SOURCE:    fonte que pinta r = altura (0 na base, 1 no topo), b = "Level".
-// Parametros: 0 "Level" (padrao 0,5), 1 "BPM" (= bpm / 1000) e 2 "BarPhase": os dois ultimos so mudam pelo
-// FF_SET_BEATINFO, entao provam que a informacao de batida chega ao plugin e que o host le de volta o que o plugin
-// muda por conta propria (FF_GET_PARAMETER).
-
 #include <FFGLSDK.h>
 
 using namespace ffglex;

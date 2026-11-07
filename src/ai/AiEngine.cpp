@@ -25,14 +25,12 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-// Reducao da entrada para o tamanho do modelo: 16 amostras bilineares por pixel (caixa 8x8 efetiva), na orientacao
-// "linha 0 = topo da imagem", seja qual for a da textura de entrada. Alpha vira preto (sobre fundo preto).
 const char* const kCaptureFrag = R"(#version 330 core
 in vec2 vUv;
 out vec4 fragColor;
 uniform sampler2D uTex;
 uniform int uTop;
-uniform vec2 uStep; // uma amostra de saida, em UV da entrada
+uniform vec2 uStep;
 void main()
 {
     vec3 sum = vec3(0.0);
@@ -48,21 +46,20 @@ void main()
 }
 )";
 
-constexpr float kDepthSmooth = 0.55f;  // peso do resultado novo na suavizacao temporal da profundidade
-constexpr float kPersonSmooth = 0.65f; // idem, mascara
-constexpr float kRangeSmooth = 0.25f;  // faixa (minimo/maximo) da normalizacao da profundidade
-constexpr double kIdleSeconds = 4.0;   // fonte sem pedidos por tanto tempo e liberada
+constexpr float kDepthSmooth = 0.55f;
+constexpr float kPersonSmooth = 0.65f;
+constexpr float kRangeSmooth = 0.25f;
+constexpr double kIdleSeconds = 4.0;
 
-// Resultado de uma (fonte, modelo), compartilhado entre a thread de render e a da IA (sob o mutex do motor)
 struct Slot
 {
-    std::uint64_t submitted = 0; // jobs enviados
-    std::uint64_t finished = 0;  // jobs concluidos (com ou sem sucesso)
-    std::uint64_t version = 0;   // muda a cada resultado novo
+    std::uint64_t submitted = 0;
+    std::uint64_t finished = 0;
+    std::uint64_t version = 0;
     int w = 0, h = 0;
-    std::vector<float> data;          // profundidade 0..1 ou alfa 0..1, suavizado no tempo
-    std::vector<std::uint8_t> bytes;  // so da pessoa (R8)
-    float lo = 0.0f, hi = 1.0f;       // faixa da normalizacao
+    std::vector<float> data;
+    std::vector<std::uint8_t> bytes;
+    float lo = 0.0f, hi = 1.0f;
     bool haveRange = false;
 };
 
@@ -73,7 +70,6 @@ struct Job
     std::vector<std::uint8_t> rgba;
 };
 
-// Lado GL de uma (fonte, modelo)
 struct Capture
 {
     std::unique_ptr<Fbo> fbo;
@@ -111,7 +107,6 @@ void destroyEntry(Entry& e)
     }
 }
 
-// Cena sintetica para o "Testar": degrade de fundo com listras e uma caixa clara em primeiro plano (linha 0 = topo)
 std::vector<std::uint8_t> makeTestScene(int w, int h)
 {
     std::vector<std::uint8_t> rgb(static_cast<size_t>(w) * static_cast<size_t>(h) * 3);
@@ -133,11 +128,10 @@ std::vector<std::uint8_t> makeTestScene(int w, int h)
     return rgb;
 }
 
-} // namespace
+}
 
 struct AiEngine::Impl
 {
-    // --- Estado compartilhado (mutex) ---
     mutable std::mutex m;
     std::condition_variable cv;
     std::deque<Job> queue;
@@ -160,19 +154,16 @@ struct AiEngine::Impl
     Clock::time_point failedAt[kModelKindCount]{};
     bool retryFlag[kModelKindCount] = {false, false};
 
-    // --- So a thread de render ---
     std::unordered_map<std::uint64_t, Entry> entries;
     std::unique_ptr<Shader> capShader;
     std::unique_ptr<fx::ScreenVao> vao;
     Clock::time_point lastCleanup{};
 
-    // --- Thread da IA ---
     std::thread worker;
     std::unique_ptr<Session> session[kModelKindCount];
     std::uint64_t sessionGeneration[kModelKindCount] = {0, 0};
     bool sessionFailed[kModelKindCount] = {false, false};
 
-    // ---------------------------------------------------------------------------------------------- comuns
     int effectiveRate() const
     {
         if (!profileOn)
@@ -198,8 +189,6 @@ struct AiEngine::Impl
             presentCache[k] = modelPresent(static_cast<ModelKind>(k));
     }
 
-    // ---------------------------------------------------------------------------------------------- thread da IA
-    // Cria (ou recria) a sessao do modelo. Devolve nullptr se falhou (sessionFailed = true).
     Session* ensureSession(int k, bool forceReload = false)
     {
         DevicePref wantPref;
@@ -244,7 +233,6 @@ struct AiEngine::Impl
         return session[k].get();
     }
 
-    // Roda um modelo; se a GPU falhar no meio do show (driver, device removed), cai para a CPU e repete uma vez
     bool runModel(int k, const std::uint8_t* rgb, std::vector<float>& out, double& ms)
     {
         Session* s = ensureSession(k);
@@ -302,7 +290,6 @@ struct AiEngine::Impl
 
     static void normalizeDepth(Slot& s, const std::vector<float>& raw, int w, int h)
     {
-        // Faixa robusta (1% a 99%) suavizada no tempo: a escala nao oscila quando um objeto entra no quadro
         std::vector<float> tmp = raw;
         const size_t n = tmp.size();
         const size_t iLo = n / 100, iHi = n - 1 - n / 100;
@@ -360,7 +347,7 @@ struct AiEngine::Impl
         std::lock_guard lock(m);
         const auto it = slots.find(job.source);
         if (it == slots.end())
-            return; // a fonte sumiu durante a inferencia
+            return;
         Slot& s = it->second[static_cast<size_t>(k)];
         ++s.finished;
         if (!ok)
@@ -385,7 +372,7 @@ struct AiEngine::Impl
                 presentChecked = {};
                 refreshPresence();
             }
-            Session* s = ensureSession(k, true); // forca nova tentativa
+            Session* s = ensureSession(k, true);
             if (!s) {
                 std::lock_guard lock(m);
                 report += std::string(spec.label) + ": FALHOU (" + model[k].error + ")\n";
@@ -394,13 +381,12 @@ struct AiEngine::Impl
             const std::vector<std::uint8_t> rgb = makeTestScene(spec.inputW, spec.inputH);
             std::vector<float> out;
             std::string err;
-            s->run(rgb.data(), out, err); // aquecimento
+            s->run(rgb.data(), out, err);
             const bool ok = s->run(rgb.data(), out, err);
             char line[256];
             if (!ok) {
                 std::snprintf(line, sizeof(line), "%s: FALHOU (%s)\n", spec.label, err.c_str());
             } else {
-                // caixa em primeiro plano x fundo
                 double box = 0.0, bg = 0.0;
                 size_t nb = 0, ng = 0;
                 for (int y = 0; y < spec.inputH; ++y)
@@ -458,7 +444,6 @@ struct AiEngine::Impl
                 std::lock_guard lock(m);
                 testRunning = false;
                 if (!doTest) {
-                    // o job nao vai mais concluir: libera a fonte para a proxima captura
                     const auto it = slots.find(job.source);
                     if (it != slots.end()) {
                         Slot& s = it->second[static_cast<size_t>(job.kind)];
@@ -468,12 +453,10 @@ struct AiEngine::Impl
                 }
             }
         }
-        // sessoes morrem na propria thread
         for (auto& s : session)
             s.reset();
     }
 
-    // ---------------------------------------------------------------------------------------------- thread de render
     void cleanup(Clock::time_point now)
     {
         if (now - lastCleanup < std::chrono::seconds(1))
@@ -501,13 +484,11 @@ struct AiEngine::Impl
             vao = std::make_unique<fx::ScreenVao>();
     }
 
-    // Captura (reduz + le por PBO) e entrega ao worker quando o PBO ficar pronto; envia o resultado novo para a textura
     void service(Entry& e, std::uint64_t source, int k, GLuint inputTex, bool topOrigin, Clock::time_point now, int rate)
     {
         const ModelSpec& spec = modelSpec(static_cast<ModelKind>(k));
         Capture& c = e.cap[static_cast<size_t>(k)];
 
-        // 1) PBO pronto -> job
         if (c.pending && c.fence) {
             const GLenum r = glClientWaitSync(c.fence, 0, 0);
             if (r == GL_ALREADY_SIGNALED || r == GL_CONDITION_SATISFIED || r == GL_WAIT_FAILED) {
@@ -536,7 +517,6 @@ struct AiEngine::Impl
             }
         }
 
-        // 2) hora de uma captura nova? (sem job em voo e com o intervalo cumprido)
         bool inflight;
         {
             std::lock_guard lock(m);
@@ -583,7 +563,6 @@ struct AiEngine::Impl
             glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
         }
 
-        // 3) resultado novo -> textura
         std::vector<float> fdata;
         std::vector<std::uint8_t> bdata;
         int rw = 0, rh = 0;
@@ -651,7 +630,6 @@ AiEngine::~AiEngine()
 
 AiEngine& AiEngine::instance()
 {
-    // Nunca destruido: o destrutor estatico rodaria depois do contexto GL
     static AiEngine* engine = new AiEngine();
     return *engine;
 }
@@ -717,7 +695,7 @@ void AiEngine::setOverride(std::uint64_t sourceId, GLuint depthTex, GLuint maskT
         impl_->overrides[sourceId] = {depthTex, maskTex};
 }
 
-AiFrame AiEngine::acquire(std::uint64_t sourceId, std::uint64_t /*frameIndex*/, GLuint inputTex, int w, int h,
+AiFrame AiEngine::acquire(std::uint64_t sourceId, std::uint64_t , GLuint inputTex, int w, int h,
                           bool topOrigin, unsigned need, bool eco)
 {
     Impl& im = *impl_;
@@ -753,7 +731,7 @@ AiFrame AiEngine::acquire(std::uint64_t sourceId, std::uint64_t /*frameIndex*/, 
     e.lastUsed = now;
     {
         std::lock_guard lock(im.m);
-        im.slots[sourceId]; // garante o slot
+        im.slots[sourceId];
         im.activeSources = static_cast<int>(im.entries.size());
         im.refreshPresence();
     }
@@ -774,7 +752,7 @@ AiFrame AiEngine::acquire(std::uint64_t sourceId, std::uint64_t /*frameIndex*/, 
                     unavailable = im.model[k].error;
                     continue;
                 }
-                im.retryFlag[k] = true; // tenta de novo (o arquivo pode ter sido colocado na pasta)
+                im.retryFlag[k] = true;
                 im.failedAt[k] = now;
             }
         }
@@ -782,7 +760,6 @@ AiFrame AiEngine::acquire(std::uint64_t sourceId, std::uint64_t /*frameIndex*/, 
         im.service(e, sourceId, k, inputTex, topOrigin, now, rate);
     }
 
-    // Texturas disponiveis
     if (need & kNeedDepth) {
         f.depth = e.tex[static_cast<size_t>(ModelKind::Depth)];
         f.depthW = e.texW[static_cast<size_t>(ModelKind::Depth)];
@@ -874,4 +851,4 @@ void AiEngine::shutdown()
     im.stop = false;
 }
 
-} // namespace bsl::ai
+}

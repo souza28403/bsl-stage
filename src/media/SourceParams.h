@@ -1,14 +1,5 @@
 #pragma once
 
-// Parametros genericos de fonte: o descritor (o que a fonte expoe), os valores (o que o clip guarda)
-// e a leitura tipada com padrao. O ClipPanel desenha qualquer lista de ParamDesc sem conhecer a fonte.
-//
-// Valores no JSON (um objeto id -> valor):
-//   Float/Int: numero          Bool: true/false       Color: [r, g, b, a] (0..1, alpha reta)
-//   Text/TextMultiline: string (UTF-8)                Enum: string = ParamOption::value
-//   Font: string = nome do arquivo da fonte (ex.: "Barlow-Bold.ttf")      File: string = caminho UTF-8
-//   Custom: qualquer JSON (o editor e escolhido por ParamDesc::custom)
-
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -27,38 +18,35 @@ enum class ParamType { Float, Int, Bool, Color, Text, TextMultiline, Enum, Font,
 
 struct ParamOption
 {
-    std::string value; // gravado no projeto
-    std::string label; // exibido (PT)
+    std::string value;
+    std::string label;
 };
 
 struct Color
 {
-    float r = 1.0f, g = 1.0f, b = 1.0f, a = 1.0f; // alpha reta (nao premultiplicada)
+    float r = 1.0f, g = 1.0f, b = 1.0f, a = 1.0f;
 };
 
 struct ParamDesc
 {
     std::string id;
-    std::string label;          // rotulo em portugues
+    std::string label;
     ParamType type = ParamType::Float;
-    std::string group;          // titulo de secao; muda de um parametro para o outro = nova secao
-    double min = 0.0;           // Float/Int
+    std::string group;
+    double min = 0.0;
     double max = 1.0;
-    Json def;                   // valor padrao
-    std::vector<ParamOption> options; // Enum
-    std::string format;         // Float/Int: formato do slider (ex.: "%.0f px")
+    Json def;
+    std::vector<ParamOption> options;
+    std::string format;
     std::string tooltip;
-    // Habilita o controle so quando a condicao vale: "id" (Bool ligado), "!id" ou "id=valor" / "id!=valor"
     std::string enabledIf;
-    std::string custom;         // Custom: nome do editor ("screen-target", ...)
-    std::string fileFilter;     // File: ex. "Imagens (*.png;*.jpg)|*.png;*.jpg"
-    int maxLength = 0;          // Text/TextMultiline: 0 = padrao (4096)
+    std::string custom;
+    std::string fileFilter;
+    int maxLength = 0;
 };
 
-// --- Construtores de descritores ---
 namespace param {
 
-// float -> JSON na menor representacao decimal que volta ao mesmo float (0.1f vira 0.1, nao 0.10000000149)
 inline Json floatJson(float v)
 {
     if (!std::isfinite(v))
@@ -185,9 +173,8 @@ inline ParamDesc makeCustom(std::string id, std::string label, std::string edito
     return d;
 }
 
-} // namespace param
+}
 
-// Valores guardados no clip: um objeto JSON id -> valor.
 class ParamValues
 {
 public:
@@ -205,7 +192,6 @@ public:
     void erase(const std::string& id) { j_.erase(id); }
     const Json& json() const { return j_; }
 
-    // Acrescenta o padrao dos parametros que ainda nao tem valor
     void fillDefaults(const std::vector<ParamDesc>& descs)
     {
         for (const ParamDesc& d : descs)
@@ -220,8 +206,6 @@ private:
     Json j_;
 };
 
-// Leitura tipada: valor do clip se existir e tiver o tipo certo, senao o padrao do descritor.
-// Numeros respeitam a faixa do descritor.
 class ParamSet
 {
 public:
@@ -274,7 +258,6 @@ public:
         return out;
     }
 
-    // Text, TextMultiline, Enum, Font e File
     std::string s(const std::string& id) const
     {
         const ParamDesc* d = desc(id);
@@ -284,7 +267,6 @@ public:
         return (d && d->def.is_string()) ? d->def.get<std::string>() : std::string();
     }
 
-    // Custom (ou qualquer valor cru)
     Json raw(const std::string& id) const
     {
         const ParamDesc* d = desc(id);
@@ -312,12 +294,11 @@ private:
     ParamValues values_;
 };
 
-// Estado que a fonte mostra no ClipPanel (ex.: "Sem sinal")
 struct SourceStatus
 {
-    enum class Level { Ok, Info, Warning, Error }; // Error: vermelho (ex.: plugin FFGL que falhou)
+    enum class Level { Ok, Info, Warning, Error };
     Level level = Level::Ok;
-    std::string text; // vazio = nada a mostrar
+    std::string text;
 };
 
-} // namespace bsl::media
+}

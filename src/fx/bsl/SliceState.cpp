@@ -90,7 +90,6 @@ std::string limitBytes(std::string s, size_t maxLen)
 {
     if (s.size() > maxLen) {
         s.resize(maxLen);
-        // nao corta uma sequencia UTF-8 no meio
         while (!s.empty() && (static_cast<unsigned char>(s.back()) & 0xC0) == 0x80)
             s.pop_back();
         if (!s.empty() && static_cast<unsigned char>(s.back()) >= 0xC0)
@@ -181,7 +180,7 @@ Json num(float v)
     return media::param::floatJson(v);
 }
 
-} // namespace
+}
 
 bool parseHexColor(const std::string& s, float rgb[3])
 {
@@ -245,7 +244,7 @@ bool sliceStateFromJson(const Json& v, SliceState& out, std::string* error)
             *error = "o estado precisa ser um objeto JSON";
         return false;
     }
-    SliceState s; // padroes, depois sobrepoe
+    SliceState s;
     if (const Json* a = getObj(&v, "assign")) {
         for (auto it = a->begin(); it != a->end() && s.assign.size() < 256; ++it) {
             if (!it.value().is_number() || it.key().empty() || it.key().size() > 256)
@@ -318,4 +317,4 @@ Json defaultSliceStateJson()
     return sliceStateToJson(SliceState());
 }
 
-} // namespace bsl::fx::bsllight
+}

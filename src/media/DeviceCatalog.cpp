@@ -28,7 +28,7 @@ void captureLog(void* ptr, int level, const char* fmt, va_list vl)
         return;
     char line[2048];
     std::lock_guard lk(g_sinkMutex);
-    static int printPrefix = 1; // continua a linha entre chamadas (o dshow monta uma linha em varios av_log)
+    static int printPrefix = 1;
     av_log_format_line(ptr, level, fmt, vl, line, static_cast<int>(sizeof(line)), &printPrefix);
     if (g_sink)
         g_sink->append(line);
@@ -43,11 +43,11 @@ const AVInputFormat* dshow()
     return fmt;
 }
 
-} // namespace
+}
 
 DeviceCatalog& DeviceCatalog::instance()
 {
-    static DeviceCatalog* catalog = new DeviceCatalog(); // nunca destruido: as threads de leitura sao soltas
+    static DeviceCatalog* catalog = new DeviceCatalog();
     return *catalog;
 }
 
@@ -73,7 +73,7 @@ void DeviceCatalog::refresh()
         listing_ = true;
         for (auto& [name, caps] : caps_)
             if (!caps.pending)
-                caps.ready = false; // formatos podem mudar (outro modo, dispositivo reconectado)
+                caps.ready = false;
     }
     std::thread([this] { readDevices(); }).detach();
 }
@@ -116,7 +116,7 @@ void DeviceCatalog::readDevices()
                             hasVideo = true;
                     }
                     if (any && !hasVideo)
-                        continue; // microfones
+                        continue;
                     const std::string name = d->device_description;
                     if (std::find(names.begin(), names.end(), name) == names.end())
                         names.push_back(name);
@@ -196,7 +196,7 @@ void DeviceCatalog::readFormats(const std::string& device)
             av_dict_set(&opts, "list_options", "true", 0);
             AVFormatContext* ctx = nullptr;
             const std::string url = "video=" + device;
-            avformat_open_input(&ctx, url.c_str(), ifmt, &opts); // sempre "falha": so queremos o log
+            avformat_open_input(&ctx, url.c_str(), ifmt, &opts);
             av_dict_free(&opts);
             if (ctx)
                 avformat_close_input(&ctx);
@@ -279,7 +279,7 @@ ChosenFormat DeviceCatalog::parseValue(const std::string& value)
 ChosenFormat DeviceCatalog::pickBest(const std::vector<CaptureFormat>& formats)
 {
     const CaptureFormat* best = nullptr;
-    auto better = [](const CaptureFormat& a, const CaptureFormat& b) { // a melhor que b?
+    auto better = [](const CaptureFormat& a, const CaptureFormat& b) {
         const bool okA = a.fpsMax >= 25.0, okB = b.fpsMax >= 25.0;
         if (okA != okB)
             return okA;
@@ -311,4 +311,4 @@ ChosenFormat DeviceCatalog::pickBest(const std::vector<CaptureFormat>& formats)
     return c;
 }
 
-} // namespace bsl::media
+}

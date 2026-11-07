@@ -25,15 +25,14 @@ FboPool::Lease ChainRunner::run(EffectChain& chain, const EffectContext& ctx, GL
         try {
             effect->process(ctx, cur, w, h, *out);
         } catch (const std::exception& e) {
-            inst.faulted = true; // nao insiste a cada quadro
+            inst.faulted = true;
             log::warn("Efeito \"" + inst.typeId + "\" falhou e foi desligado: " + e.what());
             continue;
         }
         inst.pollEffect();
-        held = std::move(out); // devolve ao pool o FBO que era a entrada deste efeito
+        held = std::move(out);
         cur = held->texture();
 
-        // Efeitos (principalmente plugins) podem deixar o GL em qualquer estado
         glBindVertexArray(0);
         glUseProgram(0);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -46,4 +45,4 @@ FboPool::Lease ChainRunner::run(EffectChain& chain, const EffectContext& ctx, GL
     return held;
 }
 
-} // namespace bsl::fx
+}

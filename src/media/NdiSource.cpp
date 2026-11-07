@@ -35,10 +35,6 @@ void main()
 }
 )";
 
-// UYVY (bytes U Y0 V Y1) visto como textura RGBA de metade da largura -> RGBA. Linha 0 = topo da imagem (v=0),
-// como no resto das fontes. A crominância é interpolada entre os pares vizinhos (amostra alinhada à esquerda).
-// Faixa limitada e BT.709 em qualquer altura: é a matriz que o decodificador do runtime do NDI usa
-// (conferido no bslstage_ndittest, de 32 a 1080 linhas).
 const char* const kFragment = R"(#version 330 core
 out vec4 fragColor;
 uniform sampler2D uPacked;
@@ -67,8 +63,6 @@ void setupTexture(GLuint tex, GLint filter)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
 
-// Sobe 'rows' linhas de 'rowBytes' bytes (stride arbitrário) para a textura RGBA8 já vinculada. GL_UNPACK_ROW_LENGTH
-// só aceita múltiplos de 4 bytes aqui; o resto cai para linha a linha.
 void uploadRows(GLuint tex, int& texW, int& texH, int w, int h, GLenum format, const unsigned char* data, int stride)
 {
     glBindTexture(GL_TEXTURE_2D, tex);
@@ -91,7 +85,6 @@ void uploadRows(GLuint tex, int& texW, int& texH, int w, int h, GLenum format, c
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
 }
 
-// Destruir o receptor pode demorar (espera as threads do NDI): numa thread solta, para não travar a UI
 void retire(const NDIlib_v5_t* api, NDIlib_recv_instance_t inst)
 {
     if (!api || !inst)
@@ -109,7 +102,7 @@ std::string shortName(std::string name, size_t maxChars)
     return name.substr(0, cut) + "…";
 }
 
-} // namespace
+}
 
 NdiSource::NdiSource(ndi::Runtime* runtime) : runtime_(runtime) {}
 
@@ -118,7 +111,7 @@ NdiSource::~NdiSource()
     close();
 }
 
-std::vector<ParamDesc> NdiSource::describe(const ParamValues& /*values*/)
+std::vector<ParamDesc> NdiSource::describe(const ParamValues& )
 {
     using namespace param;
     std::vector<ParamDesc> d;
@@ -145,7 +138,7 @@ GLuint NdiSource::texture() const
     return (usingFbo_ && fbo_) ? fbo_->texture() : rgbaTex_;
 }
 
-bool NdiSource::open(const std::filesystem::path& /*path*/, std::string* /*error*/)
+bool NdiSource::open(const std::filesystem::path& , std::string* )
 {
     close();
     clock_ = ClipClock{};
@@ -213,7 +206,7 @@ void NdiSource::connect()
         return;
     }
     if (!runtime_)
-        ndi::Finder::shared().start(); // deixa a lista de fontes pronta para o seletor
+        ndi::Finder::shared().start();
     if (sourceName_.empty()) {
         state_ = State::NoSource;
         return;
@@ -222,7 +215,7 @@ void NdiSource::connect()
     NDIlib_recv_create_v3_t c{};
     c.source_to_connect_to.p_ndi_name = sourceName_.c_str();
     c.source_to_connect_to.p_url_address = nullptr;
-    c.color_format = NDIlib_recv_color_format_UYVY_BGRA; // UYVY quando não há alpha: metade da banda da CPU
+    c.color_format = NDIlib_recv_color_format_UYVY_BGRA;
     c.bandwidth = lowBandwidth_ ? NDIlib_recv_bandwidth_lowest : NDIlib_recv_bandwidth_highest;
     c.allow_video_fields = false;
     c.p_ndi_recv_name = "BSL Stage";
@@ -248,7 +241,6 @@ void NdiSource::presentPacked(const unsigned char* data, int stride, int w, int 
         rgbaW_ = rgbaH_ = 0;
     }
     uploadRows(rgbaTex_, rgbaW_, rgbaH_, w, h, format, data, stride);
-    // Formatos "X" (BGRX/RGBX): o canal alfa não vale nada, vira opaco
     if (opaque != opaqueSwizzle_) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, opaque ? GL_ONE : GL_ALPHA);
         opaqueSwizzle_ = opaque;
@@ -299,7 +291,7 @@ void NdiSource::presentUyvy(const unsigned char* data, int stride, int w, int h)
     height_ = h;
 }
 
-void NdiSource::update(double /*dt*/)
+void NdiSource::update(double )
 {
     if (!open_)
         return;
@@ -317,7 +309,6 @@ void NdiSource::update(double /*dt*/)
     }
 
     if (!recv_) {
-        // Sem receptor (sem runtime, sem fonte escolhida, ou a criação falhou): tenta de novo a cada 10 s
         if (state_ != State::NoRuntime && state_ != State::NoSource && now - lastFrame_ > kReconnectInterval)
             connect();
         return;
@@ -326,8 +317,6 @@ void NdiSource::update(double /*dt*/)
     const NDIlib_v5_t* api = recv_->api;
     const NDIlib_recv_instance_t inst = recv_->inst;
 
-    // Quantos quadros consumir agora: baixa latência = sempre o mais novo; normal = um por vez, a menos que a fila
-    // esteja crescendo (app mais lento que a fonte), quando salta para o mais novo
     int limit = 1;
     if (lowLatency_) {
         limit = 16;
@@ -381,7 +370,7 @@ void NdiSource::update(double /*dt*/)
                 fmt = "RGBX";
                 break;
             default:
-                break; // formato que não pedimos: ignora o quadro
+                break;
             }
             if (fmt[0] != '?') {
                 const double fps = keep.frame_rate_D > 0 ? static_cast<double>(keep.frame_rate_N) / keep.frame_rate_D : 0.0;
@@ -405,13 +394,11 @@ void NdiSource::update(double /*dt*/)
         }
     }
 
-    // Segurança: muito tempo sem nenhum quadro, refaz o receptor (o NDI normalmente reconecta sozinho)
     if (state_ != State::Live && now - lastFrame_ > kReconnectInterval && now - connectedAt_ > kReconnectInterval) {
         connect();
         return;
     }
 
-    // A cada segundo: a fonte ainda aparece na rede? (só para a mensagem de status)
     if (now - lastCheck_ > std::chrono::seconds(1)) {
         lastCheck_ = now;
         if (state_ != State::Live && !runtime_) {
@@ -437,4 +424,4 @@ SourceStatus NdiSource::status() const
     return {};
 }
 
-} // namespace bsl::media
+}

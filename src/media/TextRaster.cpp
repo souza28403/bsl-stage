@@ -21,7 +21,6 @@ namespace {
 
 constexpr float kInf = 1e20f;
 
-// --- Fonte carregada (cache por arquivo; os dados precisam ficar vivos enquanto o stbtt_fontinfo existir) ---
 struct Font
 {
     std::vector<unsigned char> data;
@@ -50,15 +49,14 @@ std::shared_ptr<Font> loadFont(const fs::path& path)
     return font;
 }
 
-// Metricas e avancos na escala escolhida
 struct Face
 {
     const stbtt_fontinfo* info = nullptr;
     float scale = 1.0f;
-    float ascent = 0.0f;  // px, acima da linha de base
-    float descent = 0.0f; // px, negativo
+    float ascent = 0.0f;
+    float descent = 0.0f;
     float lineGap = 0.0f;
-    float spacing = 0.0f; // tracking: somado a cada avanco (definido antes do primeiro uso)
+    float spacing = 0.0f;
     std::unordered_map<char32_t, float> advCache;
 
     float advance(char32_t cp)
@@ -81,12 +79,10 @@ struct Face
 struct Line
 {
     size_t begin = 0;
-    size_t end = 0; // [begin, end)
+    size_t end = 0;
     float width = 0.0f;
 };
 
-// Quebra em linhas: '\n' explicito e, se wrapW > 0, quebra automatica por palavra (palavra maior que a
-// linha e partida no caractere).
 std::vector<Line> layoutLines(const std::vector<char32_t>& cps, Face& face, float wrapW)
 {
     std::vector<Line> lines;
@@ -142,7 +138,6 @@ std::vector<Line> layoutLines(const std::vector<char32_t>& cps, Face& face, floa
     return lines;
 }
 
-// --- Mascaras de 8 bits ---
 struct Mask
 {
     int w = 0, h = 0;
@@ -157,7 +152,6 @@ struct Mask
     unsigned char& at(int x, int y) { return v[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)]; }
 };
 
-// Transformada de distancia euclidiana (Felzenszwalb): d[q] = min_p ((q-p)^2 + f[p])
 void edt1d(const float* f, float* d, int n, int* v, float* z)
 {
     int k = 0;
@@ -189,8 +183,6 @@ void edt1d(const float* f, float* d, int n, int* v, float* z)
     }
 }
 
-// Contorno: dilata a mascara 'fill' por 'radius' px com distancia euclidiana exata. Devolve cobertura 0..255
-// (inclui o miolo; quem usa recorta o miolo).
 Mask dilate(const Mask& fill, float radius)
 {
     const int w = fill.w, h = fill.h;
@@ -239,7 +231,6 @@ void boxBlurLine(const unsigned char* src, unsigned char* dst, int n, int stride
     }
 }
 
-// Desfoque aproximado (gaussiano) por 2 passadas de media em caixa em cada eixo
 void blur(Mask& m, int radius)
 {
     if (radius <= 0)
@@ -255,7 +246,6 @@ void blur(Mask& m, int radius)
     }
 }
 
-// Desenha um glifo na mascara (uniao das coberturas). Atualiza a caixa dos pixels tocados.
 struct Bounds
 {
     int x0 = 1 << 30, y0 = 1 << 30, x1 = -1, y1 = -1;
@@ -301,7 +291,7 @@ void blitGlyph(const Face& face, char32_t cp, float penX, int baseline, Mask& ds
     }
 }
 
-} // namespace
+}
 
 std::vector<char32_t> decodeUtf8(const std::string& text)
 {
@@ -360,14 +350,12 @@ bool rasterizeText(const TextStyle& style, int canvasW, int canvasH, int maxText
         if (error)
             *error = "não foi possível abrir a fonte";
         out.fontMissing = true;
-        // Faixa transparente do tamanho do canvas: a fonte continua valida (so sem texto)
         out.width = canvasW;
         out.height = canvasH;
         out.rgba.assign(static_cast<size_t>(canvasW) * static_cast<size_t>(canvasH) * 4, 0);
         return false;
     }
 
-    // --- Layout ---
     Face face;
     face.info = &font->info;
     const float sizePx = std::clamp(style.sizePx, 4.0f, 1500.0f);
@@ -383,7 +371,6 @@ bool rasterizeText(const TextStyle& style, int canvasW, int canvasH, int maxText
     const bool horizontal = style.marquee == TextMarquee::Horizontal;
     const bool vertical = style.marquee == TextMarquee::Vertical;
 
-    // Folga para contorno/sombra nao serem cortados (e para o letreiro nao ter emenda visivel)
     int effectPad = 2;
     if (style.outline)
         effectPad += static_cast<int>(std::ceil(std::clamp(style.outlineWidth, 0.0f, 100.0f))) + 1;
@@ -391,7 +378,7 @@ bool rasterizeText(const TextStyle& style, int canvasW, int canvasH, int maxText
         effectPad += std::max(std::abs(style.shadowX), std::abs(style.shadowY)) + 2 * std::clamp(style.shadowBlur, 0, 100);
 
     const std::vector<char32_t> cps = decodeUtf8(style.text);
-    float wrapW = 0.0f; // 0 = sem quebra automatica
+    float wrapW = 0.0f;
     if (style.wrap && !horizontal)
         wrapW = std::max(8.0f, static_cast<float>(canvasW - 2 * margin));
     std::vector<Line> lines = layoutLines(cps, face, wrapW);
@@ -403,7 +390,6 @@ bool rasterizeText(const TextStyle& style, int canvasW, int canvasH, int maxText
         blockW = std::max(blockW, l.width);
     const float blockH = glyphH + static_cast<float>(lines.size() - 1) * lineAdv;
 
-    // --- Tamanho da faixa e posicao do bloco ---
     int sw = canvasW, sh = canvasH;
     float areaL = static_cast<float>(margin), areaR = static_cast<float>(canvasW - margin);
     float blockX = 0.0f, blockY = 0.0f;
@@ -439,7 +425,6 @@ bool rasterizeText(const TextStyle& style, int canvasW, int canvasH, int maxText
         }
     }
 
-    // --- Cobertura do texto ---
     Mask fill;
     fill.reset(sw, sh);
     Bounds bounds;
@@ -464,8 +449,7 @@ bool rasterizeText(const TextStyle& style, int canvasW, int canvasH, int maxText
         }
     }
 
-    // --- Efeitos na regiao do texto ---
-    int rx0 = 0, ry0 = 0, rx1 = -1, ry1 = -1; // regiao inclusiva em coordenadas da faixa
+    int rx0 = 0, ry0 = 0, rx1 = -1, ry1 = -1;
     if (!bounds.empty()) {
         rx0 = std::max(0, bounds.x0 - effectPad);
         ry0 = std::max(0, bounds.y0 - effectPad);
@@ -474,9 +458,9 @@ bool rasterizeText(const TextStyle& style, int canvasW, int canvasH, int maxText
     }
     const int rw = std::max(0, rx1 - rx0 + 1), rh = std::max(0, ry1 - ry0 + 1);
 
-    Mask region; // cobertura do preenchimento recortada na regiao
-    Mask ring;   // contorno (sem o miolo)
-    Mask shade;  // sombra
+    Mask region;
+    Mask ring;
+    Mask shade;
     if (rw > 0 && rh > 0) {
         region.reset(rw, rh);
         for (int y = 0; y < rh; ++y)
@@ -505,21 +489,20 @@ bool rasterizeText(const TextStyle& style, int canvasW, int canvasH, int maxText
         }
     }
 
-    // --- Composicao: fundo -> sombra -> contorno -> texto ---
     out.width = sw;
     out.height = sh;
     out.rgba.assign(static_cast<size_t>(sw) * static_cast<size_t>(sh) * 4, 0);
 
     const float bgA = std::clamp(style.bgColor.a * style.bgOpacity, 0.0f, 1.0f);
     const bool bgOn = style.background && bgA > 0.0f;
-    int boxX0 = 0, boxY0 = 0, boxX1 = -1, boxY1 = -1; // caixa do fundo (inclusiva)
+    int boxX0 = 0, boxY0 = 0, boxX1 = -1, boxY1 = -1;
     if (bgOn && !style.bgFullScreen && !bounds.empty()) {
         const int pad = std::clamp(style.bgPadding, 0, 2000);
         boxX0 = static_cast<int>(std::floor(blockX)) - pad;
         boxX1 = static_cast<int>(std::ceil(blockX + blockW)) + pad;
         boxY0 = static_cast<int>(std::floor(blockY)) - pad;
         boxY1 = static_cast<int>(std::ceil(blockY + blockH)) + pad;
-        if (horizontal) { // a caixa tem de caber no periodo para repetir sem emenda
+        if (horizontal) {
             boxX0 = std::max(0, boxX0);
             boxX1 = std::min(sw - 1, boxX1);
         }
@@ -540,7 +523,7 @@ bool rasterizeText(const TextStyle& style, int canvasW, int canvasH, int maxText
         const bool yInRegion = rh > 0 && y >= ry0 && y <= ry1;
         const bool yInBox = bgOn && !style.bgFullScreen && y >= boxY0 && y <= boxY1;
         for (int x = 0; x < sw; ++x) {
-            float r = 0.0f, g = 0.0f, b = 0.0f, a = 0.0f; // premultiplicado
+            float r = 0.0f, g = 0.0f, b = 0.0f, a = 0.0f;
             auto over = [&](float lr, float lg, float lb, float la) {
                 if (la <= 0.0f)
                     return;
@@ -571,4 +554,4 @@ bool rasterizeText(const TextStyle& style, int canvasW, int canvasH, int maxText
     return true;
 }
 
-} // namespace bsl::media
+}

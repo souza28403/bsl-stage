@@ -1,7 +1,5 @@
 #pragma once
 
-// Lista de fontes NDI da rede, atualizada numa thread de fundo (a UI só lê o último resultado).
-
 #include "ndi/NdiRuntime.h"
 
 #include <atomic>
@@ -14,8 +12,8 @@ namespace bsl::ndi {
 
 struct SourceInfo
 {
-    std::string name; // "MAQUINA (Nome)"
-    std::string url;  // endereço (pode vir vazio)
+    std::string name;
+    std::string url;
     bool operator==(const SourceInfo&) const = default;
 };
 
@@ -23,22 +21,18 @@ class Finder
 {
 public:
     explicit Finder(Runtime& runtime);
-    ~Finder(); // para a thread
+    ~Finder();
     Finder(const Finder&) = delete;
     Finder& operator=(const Finder&) = delete;
 
-    // Finder global (usa Runtime::instance())
     static Finder& shared();
-    // Para a thread do finder global, se existir (chamar no encerramento do app)
     static void shutdownShared();
 
-    // Inicia a busca em segundo plano (idempotente). Sem runtime não faz nada.
     void start();
     void stop();
     bool running() const { return running_.load(); }
 
     std::vector<SourceInfo> sources() const;
-    // Aumenta a cada vez que a lista muda
     unsigned long long generation() const { return generation_.load(); }
 
 private:
@@ -53,4 +47,4 @@ private:
     std::vector<SourceInfo> sources_;
 };
 
-} // namespace bsl::ndi
+}

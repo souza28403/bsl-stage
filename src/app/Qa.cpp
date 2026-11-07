@@ -36,7 +36,7 @@ struct State
     bool on = false;
     std::filesystem::path dir;
     std::vector<Item> items;
-    std::unordered_map<unsigned, size_t> seen; // id -> indice em items (neste frame)
+    std::unordered_map<unsigned, size_t> seen;
     std::set<std::string> conflictKeys;
     std::vector<std::string> conflicts;
     std::set<unsigned> idDebugLogged;
@@ -44,6 +44,11 @@ struct State
     std::string pendingLabel;
 };
 State g_qa;
+
+ImVec2 origin(const ImGuiContext* g)
+{
+    return g->Viewports.Size > 0 ? g->Viewports[0]->Pos : ImVec2(0.0f, 0.0f);
+}
 
 int g_assertCount = 0;
 std::vector<std::string> g_asserts;
@@ -101,7 +106,7 @@ void addConflict(const std::string& window, const std::string& label, unsigned i
     log::warn("[qa] " + msg);
 }
 
-} // namespace
+}
 
 bool enabled()
 {
@@ -142,10 +147,11 @@ void note(const std::string& name)
     it.label = name;
     it.window = g.CurrentWindow ? g.CurrentWindow->Name : "";
     const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
-    it.r[0] = a.x;
-    it.r[1] = a.y;
-    it.r[2] = b.x;
-    it.r[3] = b.y;
+    const ImVec2 o = origin(&g);
+    it.r[0] = a.x - o.x;
+    it.r[1] = a.y - o.y;
+    it.r[2] = b.x - o.x;
+    it.r[3] = b.y - o.y;
     it.visible = g.CurrentWindow ? g.CurrentWindow->ClipRect.Overlaps(ImRect(a, b)) : true;
     g_qa.items.push_back(std::move(it));
 }
@@ -158,10 +164,11 @@ void noteRect(const std::string& name, float x0, float y0, float x1, float y1)
     Item it;
     it.label = name;
     it.window = g.CurrentWindow ? g.CurrentWindow->Name : "";
-    it.r[0] = x0;
-    it.r[1] = y0;
-    it.r[2] = x1;
-    it.r[3] = y1;
+    const ImVec2 o = origin(&g);
+    it.r[0] = x0 - o.x;
+    it.r[1] = y0 - o.y;
+    it.r[2] = x1 - o.x;
+    it.r[3] = y1 - o.y;
     g_qa.items.push_back(std::move(it));
 }
 
@@ -169,7 +176,6 @@ void endFrame(int frame, const std::string& stateJson, float scale, int fbW, int
 {
     ImGuiContext& g = *ImGui::GetCurrentContext();
 
-    // Deteccao embutida do ImGui (so enxerga o item sob o mouse)
     if (g.DebugDrawIdConflictsId != 0 && g_qa.idDebugLogged.insert(g.DebugDrawIdConflictsId).second) {
         std::string label;
         for (const Item& it : g_qa.items)
@@ -182,7 +188,6 @@ void endFrame(int frame, const std::string& stateJson, float scale, int fbW, int
     if (frame % 3 != 0)
         return;
 
-    // Abas dos nos de docking: o ImGui nao informa o rotulo delas, entao sai daqui ("tab:<nome da janela>")
     std::set<const ImGuiTabBar*> doneBars;
     for (ImGuiWindow* w : g.Windows) {
         if (!w->DockNode || !w->DockNode->TabBar || !doneBars.insert(w->DockNode->TabBar).second)
@@ -198,11 +203,20 @@ void endFrame(int frame, const std::string& stateJson, float scale, int fbW, int
             Item it;
             it.window = "dock-tabs";
             it.label = "tab:" + name;
-            it.r[0] = bar->BarRect.Min.x + tab.Offset - bar->ScrollingAnim;
-            it.r[1] = bar->BarRect.Min.y;
+            const ImVec2 o = origin(&g);
+            it.r[0] = bar->BarRect.Min.x + tab.Offset - bar->ScrollingAnim - o.x;
+            it.r[1] = bar->BarRect.Min.y - o.y;
             it.r[2] = it.r[0] + tab.Width;
-            it.r[3] = bar->BarRect.Max.y;
-            it.visible = it.r[2] > bar->BarRect.Min.x && it.r[0] < bar->BarRect.Max.x;
+            it.r[3] = bar->BarRect.Max.y - o.y;
+            it.visible = it.r[2] + o.x > bar->BarRect.Min.x && it.r[0] + o.x < bar->BarRect.Max.x;
+            if ((tab.Flags & ImGuiTabItemFlags_NoCloseButton) == 0) {
+                const float closeW = std::min(tab.Width * 0.5f, g.FontSize + g.Style.FramePadding.x * 2.0f);
+                Item x = it;
+                x.label = "tabx:" + name;
+                x.r[0] = it.r[2] - closeW;
+                it.r[2] -= closeW;
+                g_qa.items.push_back(std::move(x));
+            }
             g_qa.items.push_back(std::move(it));
         }
     }
@@ -271,7 +285,7 @@ void finish()
     g_qa.on = false;
 }
 
-} // namespace bsl::qa
+}
 
 void bslImGuiAssertFailed(const char* expr, const char* file, int line)
 {
@@ -283,8 +297,6 @@ void bslImGuiAssertFailed(const char* expr, const char* file, int line)
     }
 }
 
-// --- Hooks do ImGui (IMGUI_ENABLE_TEST_ENGINE): chamados so quando TestEngineHookItems = true ---
-
 void ImGuiTestEngineHook_ItemAdd(ImGuiContext* ctx, ImGuiID id, const ImRect& bb, const ImGuiLastItemData* itemData)
 {
     using namespace bsl::qa;
@@ -292,10 +304,11 @@ void ImGuiTestEngineHook_ItemAdd(ImGuiContext* ctx, ImGuiID id, const ImRect& bb
         return;
     Item it;
     it.id = id;
-    it.r[0] = bb.Min.x;
-    it.r[1] = bb.Min.y;
-    it.r[2] = bb.Max.x;
-    it.r[3] = bb.Max.y;
+    const ImVec2 o = origin(ctx);
+    it.r[0] = bb.Min.x - o.x;
+    it.r[1] = bb.Min.y - o.y;
+    it.r[2] = bb.Max.x - o.x;
+    it.r[3] = bb.Max.y - o.y;
     ImGuiWindow* window = ctx->CurrentWindow;
     it.window = window ? window->Name : "";
     it.isWindow = itemData == nullptr && window && id == window->ID;
@@ -311,8 +324,6 @@ void ImGuiTestEngineHook_ItemAdd(ImGuiContext* ctx, ImGuiID id, const ImRect& bb
     auto found = g_qa.seen.find(id);
     if (id != 0 && itemData && !allowDup && found != g_qa.seen.end() && !g_qa.items[found->second].isWindow) {
         const Item& prev = g_qa.items[found->second];
-        // Mesmo retangulo = o proprio ImGui registrando duas vezes o mesmo item (InputTextMultiline: o child e o
-        // campo usam o mesmo ID); nao e conflito de verdade.
         const bool sameRect = prev.r[0] == it.r[0] && prev.r[1] == it.r[1] && prev.r[2] == it.r[2] && prev.r[3] == it.r[3];
         if (prev.window == it.window && !sameRect)
             addConflict(it.window, prev.label, id, it.r);

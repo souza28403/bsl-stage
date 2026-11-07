@@ -6,7 +6,6 @@ class FFGLGradients : public CFFGLPlugin
 public:
 	FFGLGradients();
 
-	//CFFGLPlugin
 	FFResult InitGL( const FFGLViewportStruct* vp ) override;
 	FFResult ProcessOpenGL( ProcessOpenGLStruct* pGL ) override;
 	FFResult DeInitGL() override;
@@ -33,8 +32,8 @@ private:
 	RGBA rgba1;
 	HSBA hsba2;
 
-	ffglex::FFGLShader shader;  //!< Utility to help us compile and link some shaders into a program.
-	ffglex::FFGLScreenQuad quad;//!< Utility to help us render a full screen quad.
+	ffglex::FFGLShader shader;
+	ffglex::FFGLScreenQuad quad;
 	GLint rgbLeftLocation;
 	GLint rgbRightLocation;
 };

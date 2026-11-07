@@ -1,6 +1,7 @@
 #include "io/ProjectFile.h"
 
 #include "app/Paths.h"
+#include "control/ActionRegistry.h"
 
 #include <nlohmann/json.hpp>
 
@@ -19,18 +20,15 @@
 namespace bsl::project {
 
 namespace fs = std::filesystem;
-using Json = nlohmann::ordered_json; // mantem a ordem de insercao: "format" e "version" no topo
+using Json = nlohmann::ordered_json;
 
 namespace {
 
-// Limites de sanidade: um arquivo corrompido nao pode pedir gigabytes de memoria
 constexpr int kMaxLayers = 64;
 constexpr int kMaxDecks = 64;
 constexpr int kMaxColumns = 256;
 constexpr int kMaxScreens = 32;
 constexpr int kMaxSlices = 128;
-
-// --- Nomes estaveis (independem da ordem dos enums e do idioma da interface) ---
 
 struct BlendKey { BlendMode mode; const char* key; };
 constexpr BlendKey kBlendKeys[] = {
@@ -73,11 +71,9 @@ E fromKey(const Table& table, const std::string& key, E fallback)
     return fallback;
 }
 
-// --- Escrita ---
-
 std::string u8(const fs::path& p)
 {
-    const std::u8string s = p.generic_u8string(); // barras "/" funcionam no Windows e leem melhor
+    const std::u8string s = p.generic_u8string();
     return std::string(s.begin(), s.end());
 }
 
@@ -86,7 +82,6 @@ fs::path pathFromU8(const std::string& s)
     return fs::path(std::u8string(s.begin(), s.end()));
 }
 
-// float -> JSON na menor representacao decimal que volta ao mesmo float (0.1f vira 0.1, nao 0.10000000149)
 Json num(float v)
 {
     if (!std::isfinite(v))
@@ -99,7 +94,25 @@ Json num(float v)
     return Json(d);
 }
 
-Json clipToJson(int layer, int column, const Clip& clip, const fs::path& projectDirAbs)
+Json transformToJson(const LayerTransform& t)
+{
+    Json j = Json::object();
+    j["x"] = num(t.x);
+    j["y"] = num(t.y);
+    j["w"] = num(t.w);
+    j["h"] = num(t.h);
+    j["rotation"] = num(t.rotation);
+    j["anchor"] = Json::array({num(t.anchorX), num(t.anchorY)});
+    j["crop"] = Json::array({num(t.cropL), num(t.cropT), num(t.cropR), num(t.cropB)});
+    return j;
+}
+
+bool transformIsDefault(const LayerTransform& t, int canvasW, int canvasH)
+{
+    return t.settled(canvasW, canvasH).isDefault();
+}
+
+Json clipToJson(int layer, int column, const Clip& clip, const fs::path& projectDirAbs, int canvasW, int canvasH)
 {
     Json j = Json::object();
     j["layer"] = layer;
@@ -107,7 +120,7 @@ Json clipToJson(int layer, int column, const Clip& clip, const fs::path& project
     if (clip.type == Clip::Type::Generator) {
         j["generator"] = clip.generatorId;
         if (!clip.params.empty())
-            j["params"] = Json(clip.params.json()); // ordered_json a partir do json (chaves em ordem alfabetica)
+            j["params"] = Json(clip.params.json());
     } else {
         std::error_code ec;
         const fs::path abs = fs::absolute(clip.path, ec).lexically_normal();
@@ -117,14 +130,20 @@ Json clipToJson(int layer, int column, const Clip& clip, const fs::path& project
             if (!rel.empty())
                 j["relPath"] = u8(rel);
         }
-        if (!clip.params.empty()) // PDF/Office/Web: pagina, avanco, URL...
+        if (!clip.params.empty())
             j["params"] = Json(clip.params.json());
     }
     j["speed"] = num(clip.speed);
     j["loopMode"] = keyOf(kLoopKeys, clip.loop);
     j["fitMode"] = keyOf(kFitKeys, clip.fit);
+    if (clip.replay != clip.defaultReplay())
+        j["replayMode"] = clip.replay == ReplayMode::Resume ? "resume" : "restart";
     if (!clip.effects.empty())
         j["effects"] = Json(clip.effects.toJson());
+    if (clip.ownTransform || !transformIsDefault(clip.transform, canvasW, canvasH)) {
+        j["ownTransform"] = clip.ownTransform;
+        j["transform"] = transformToJson(clip.transform.settled(canvasW, canvasH));
+    }
     return j;
 }
 
@@ -146,11 +165,17 @@ Json sliceToJson(const Slice& s)
     Json edges = Json::array();
     for (const SoftEdge& e : s.edges)
         edges.push_back({{"width", num(e.width)}, {"gamma", num(e.gamma)}});
-    j["softEdges"] = std::move(edges); // esquerda, topo, direita, baixo
-    // Roteamento por profundidade (Z-Slice): so entra no arquivo quando foi usado (projetos antigos ficam iguais)
+    j["softEdges"] = std::move(edges);
     if (s.zFilter != kZoneAll || s.zSource != kZoneSourceMaster) {
         j["zFilter"] = keyOf(kZoneKeys, s.zFilter);
-        j["zSource"] = s.zSource; // -1 = Master; >= 0 = camada (0 = a de baixo)
+        j["zSource"] = s.zSource;
+    }
+    if (s.source == kSliceFromLayer) {
+        j["source"] = "layer";
+        j["layerId"] = s.layerId;
+        j["includeMaster"] = s.includeMaster;
+        if (s.applyLayerTransform)
+            j["applyLayerTransform"] = true;
     }
     return j;
 }
@@ -173,8 +198,6 @@ Json screenToJson(const Screen& s)
     j["slices"] = std::move(slices);
     return j;
 }
-
-// --- Leitura tolerante: tipo errado ou ausente = padrao ---
 
 const Json* member(const Json& j, const char* key)
 {
@@ -248,7 +271,7 @@ Slice sliceFromJson(const Json& j, int index, int canvasW, int canvasH, int scre
             s.corners[i].y = getFloat(c, "y", s.corners[i].y, -1.0e6f, 1.0e6f);
         }
     } else if (hasInput) {
-        fitOutputToInput(s); // sem cantos no arquivo: quad = retangulo de entrada
+        fitOutputToInput(s);
     }
 
     s.flipH = getBool(j, "flipH", false);
@@ -265,6 +288,12 @@ Slice sliceFromJson(const Json& j, int index, int canvasW, int canvasH, int scre
         }
     s.zFilter = fromKey(kZoneKeys, getStr(j, "zFilter"), static_cast<int>(kZoneAll));
     s.zSource = getInt(j, "zSource", kZoneSourceMaster, kZoneSourceMaster, 1023);
+    if (getStr(j, "source") == "layer") {
+        s.source = kSliceFromLayer;
+        s.layerId = getInt(j, "layerId", 0, 0, 1 << 30);
+        s.includeMaster = getBool(j, "includeMaster", false);
+        s.applyLayerTransform = getBool(j, "applyLayerTransform", false);
+    }
     return s;
 }
 
@@ -295,8 +324,6 @@ Screen screenFromJson(const Json& j, int index, int canvasW, int canvasH)
     return s;
 }
 
-// Acha o arquivo do clip: primeiro o relPath (a partir da pasta do projeto), depois o path absoluto.
-// Devolve o caminho que existe; senao 'found' = false e o path guardado (para exibir/gravar de novo).
 fs::path resolveClipPath(const fs::path& projectDirAbs, const std::string& relPath, const std::string& path,
                          bool& found)
 {
@@ -319,7 +346,29 @@ fs::path resolveClipPath(const fs::path& projectDirAbs, const std::string& relPa
     return {};
 }
 
-// "effects" do objeto (clip, camada ou master): cadeia de efeitos; ausente = vazia
+LayerTransform transformFromJson(const Json* tj, int canvasW, int canvasH)
+{
+    LayerTransform t;
+    if (!tj || !tj->is_object())
+        return t;
+    t.x = getFloat(*tj, "x", 0.0f, -1.0e6f, 1.0e6f);
+    t.y = getFloat(*tj, "y", 0.0f, -1.0e6f, 1.0e6f);
+    t.w = getFloat(*tj, "w", 0.0f, 0.0f, 1.0e6f);
+    t.h = getFloat(*tj, "h", 0.0f, 0.0f, 1.0e6f);
+    t.rotation = getFloat(*tj, "rotation", 0.0f, -36000.0f, 36000.0f);
+    if (const Json* a = getArr(*tj, "anchor"); a && a->size() == 2 && (*a)[0].is_number() && (*a)[1].is_number()) {
+        t.anchorX = std::clamp((*a)[0].get<float>(), 0.0f, 1.0f);
+        t.anchorY = std::clamp((*a)[1].get<float>(), 0.0f, 1.0f);
+    }
+    if (const Json* c = getArr(*tj, "crop"); c && c->size() == 4) {
+        float* dst[4] = {&t.cropL, &t.cropT, &t.cropR, &t.cropB};
+        for (size_t i = 0; i < 4; ++i)
+            *dst[i] = (*c)[i].is_number() ? std::clamp((*c)[i].get<float>(), 0.0f, 1.0e6f) : 0.0f;
+    }
+    t.clampCrop(canvasW, canvasH);
+    return t.settled(canvasW, canvasH);
+}
+
 fx::EffectChain effectsFromJson(const Json& j, std::vector<std::string>& warnings)
 {
     const Json* arr = getArr(j, "effects");
@@ -328,7 +377,8 @@ fx::EffectChain effectsFromJson(const Json& j, std::vector<std::string>& warning
     return fx::EffectChain::fromJson(media::Json::parse(arr->dump(), nullptr, false), &warnings);
 }
 
-Clip clipFromJson(const Json& j, const fs::path& projectDirAbs, std::vector<std::string>& warnings, int& missing)
+Clip clipFromJson(const Json& j, const fs::path& projectDirAbs, std::vector<std::string>& warnings, int& missing,
+                  int canvasW, int canvasH)
 {
     Clip clip;
     if (!j.is_object())
@@ -337,10 +387,9 @@ Clip clipFromJson(const Json& j, const fs::path& projectDirAbs, std::vector<std:
     if (const Json* gen = member(j, "generator"); gen && gen->is_string()) {
         clip = Clip::generator(gen->get<std::string>());
         if (clip.empty()) {
-            warnings.push_back("Gerador desconhecido ignorado: " + gen->get<std::string>());
-            return clip;
+            clip = Clip::absentGenerator(gen->get<std::string>());
+            warnings.push_back("Plugin ausente: " + gen->get<std::string>() + " (a célula fica em âmbar; os parâmetros são mantidos).");
         }
-        // Valores do arquivo por cima do padrao (tipos errados sao tratados na leitura pela fonte)
         if (const Json* params = getObj(j, "params")) {
             for (const auto& [key, value] : params->items())
                 clip.params.set(key, media::Json::parse(value.dump(), nullptr, false));
@@ -379,6 +428,13 @@ Clip clipFromJson(const Json& j, const fs::path& projectDirAbs, std::vector<std:
     clip.setSpeed(getFloat(j, "speed", 1.0f, 0.0f, 4.0f));
     clip.setLoop(fromKey(kLoopKeys, getStr(j, "loopMode"), media::LoopMode::Loop));
     clip.fit = fromKey(kFitKeys, getStr(j, "fitMode"), FitMode::Fit);
+    clip.replay = clip.defaultReplay();
+    if (const std::string mode = getStr(j, "replayMode"); mode == "resume")
+        clip.replay = ReplayMode::Resume;
+    else if (mode == "restart")
+        clip.replay = ReplayMode::Restart;
+    clip.ownTransform = getBool(j, "ownTransform", false);
+    clip.transform = transformFromJson(getObj(j, "transform"), canvasW, canvasH);
     return clip;
 }
 
@@ -390,11 +446,8 @@ fs::path absoluteDir(const fs::path& dir)
     return fs::absolute(dir, ec).lexically_normal();
 }
 
-// --- Pixel Map (aditivo: so grava quando foi mexido) ---
-
 constexpr const char* kWatermarkKeys[] = {"monogram", "image", "none"};
 
-// Config sem nenhuma mexida? (a entrada nao conta enquanto acompanha o canvas: ela vem da composicao)
 bool pixelMapIsDefault(const pixelmap::Config& c)
 {
     pixelmap::Config d;
@@ -479,11 +532,11 @@ pixelmap::Config pixelMapFromJson(const Json& j, int canvasW, int canvasH)
         }
     }
     pixelmap::normalize(c);
-    pixelmap::syncInput(c, canvasW, canvasH); // acompanhando o canvas, o input e o da composicao
+    pixelmap::syncInput(c, canvasW, canvasH);
     return c;
 }
 
-} // namespace
+}
 
 std::string serialize(const Composition& comp, const OutputSetup& output, const fs::path& projectDir)
 {
@@ -502,18 +555,24 @@ std::string serialize(const Composition& comp, const OutputSetup& output, const 
     if (!comp.masterEffects.empty())
         c["master"]["effects"] = Json(comp.masterEffects.toJson());
     c["currentDeck"] = comp.currentDeck;
+    c["nextLayerId"] = comp.nextLayerId;
     root["composition"] = std::move(c);
 
     Json layers = Json::array();
     for (const Layer& l : comp.layers) {
         Json lj = Json::object();
+        lj["id"] = l.id;
         lj["name"] = l.name;
         lj["opacity"] = num(l.opacity);
         lj["blend"] = keyOf(kBlendKeys, l.blendMode);
         lj["bypass"] = l.bypass;
         lj["solo"] = l.solo;
+        if (l.sliceOnly)
+            lj["sliceOnly"] = true;
         if (!l.effects.empty())
             lj["effects"] = Json(l.effects.toJson());
+        if (!transformIsDefault(l.transform, comp.width, comp.height))
+            lj["transform"] = transformToJson(l.transform.settled(comp.width, comp.height));
         layers.push_back(std::move(lj));
     }
     root["layers"] = std::move(layers);
@@ -527,7 +586,7 @@ std::string serialize(const Composition& comp, const OutputSetup& output, const 
         for (size_t l = 0; l < d.clips.size(); ++l)
             for (size_t col = 0; col < d.clips[l].size(); ++col)
                 if (!d.clips[l][col].empty())
-                    clips.push_back(clipToJson(static_cast<int>(l), static_cast<int>(col), d.clips[l][col], dirAbs));
+                    clips.push_back(clipToJson(static_cast<int>(l), static_cast<int>(col), d.clips[l][col], dirAbs, comp.width, comp.height));
         dj["clips"] = std::move(clips);
         decks.push_back(std::move(dj));
     }
@@ -545,6 +604,12 @@ std::string serialize(const Composition& comp, const OutputSetup& output, const 
     if (!pixelMapIsDefault(pm))
         root["pixelMap"] = pixelMapToJson(pm);
 
+    if (!(comp.keys == control::defaultProjectKeys()))
+        root["keys"] = Json(control::bindingsToJson(comp.keys));
+
+    if (!comp.dmx.empty())
+        root["dmx"] = Json(dmx::configToJson(comp.dmx));
+
     return root.dump(2, ' ', false, Json::error_handler_t::replace) + "\n";
 }
 
@@ -554,7 +619,7 @@ LoadResult parse(const std::string& textIn, const fs::path& projectDir, Composit
 
     std::string_view text(textIn);
     if (text.starts_with("\xEF\xBB\xBF"))
-        text.remove_prefix(3); // BOM
+        text.remove_prefix(3);
 
     const Json root = Json::parse(text.begin(), text.end(), nullptr, false);
     if (root.is_discarded()) {
@@ -591,18 +656,20 @@ LoadResult parse(const std::string& textIn, const fs::path& projectDir, Composit
         c.masterEffects = effectsFromJson(*m, res.warnings);
     }
 
-    // Camadas (sem nenhuma no arquivo: as 3 padrao)
     if (const Json* layers = getArr(root, "layers")) {
         for (const Json& lj : *layers) {
             if (static_cast<int>(c.layers.size()) >= kMaxLayers)
                 break;
             Layer l;
+            l.id = getInt(lj, "id", 0, 0, 1 << 30);
             l.name = getStr(lj, "name", "Camada " + std::to_string(c.layers.size() + 1));
             l.opacity = getFloat(lj, "opacity", 1.0f, 0.0f, 1.0f);
             l.blendMode = fromKey(kBlendKeys, getStr(lj, "blend"), BlendMode::Normal);
             l.bypass = getBool(lj, "bypass", false);
             l.solo = getBool(lj, "solo", false);
+            l.sliceOnly = getBool(lj, "sliceOnly", false);
             l.effects = effectsFromJson(lj, res.warnings);
+            l.transform = transformFromJson(getObj(lj, "transform"), c.width, c.height);
             c.layers.push_back(std::move(l));
         }
     }
@@ -613,9 +680,10 @@ LoadResult parse(const std::string& textIn, const fs::path& projectDir, Composit
             c.layers.push_back(std::move(l));
         }
     }
+    c.nextLayerId = getInt(cr, "nextLayerId", 1, 1, 1 << 30);
+    c.ensureLayerIds();
     const size_t layerCount = c.layers.size();
 
-    // Decks (sem nenhum: um deck vazio)
     if (const Json* decks = getArr(root, "decks")) {
         for (const Json& dj : *decks) {
             if (static_cast<int>(c.decks.size()) >= kMaxDecks)
@@ -637,7 +705,7 @@ LoadResult parse(const std::string& textIn, const fs::path& projectDir, Composit
                         continue;
                     }
                     d.clips[static_cast<size_t>(layer)][static_cast<size_t>(column)] =
-                        clipFromJson(clipJson, dirAbs, res.warnings, res.missingFiles);
+                        clipFromJson(clipJson, dirAbs, res.warnings, res.missingFiles, c.width, c.height);
                 }
             }
             c.decks.push_back(std::move(d));
@@ -649,7 +717,6 @@ LoadResult parse(const std::string& textIn, const fs::path& projectDir, Composit
     }
     c.currentDeck = std::clamp(getInt(cr, "currentDeck", 0, 0, 1000000), 0, c.deckCount() - 1);
 
-    // Saida (sem "output" no arquivo: uma Tela desativada cobrindo o canvas)
     OutputSetup o;
     const Json* oj = getObj(root, "output");
     const Json* screens = oj ? getArr(*oj, "screens") : nullptr;
@@ -659,7 +726,7 @@ LoadResult parse(const std::string& textIn, const fs::path& projectDir, Composit
             if (i >= kMaxScreens)
                 break;
             Screen s = screenFromJson(sj, i, c.width, c.height);
-            s.id = ++i; // ids so valem durante a sessao: o App renumera ao aplicar
+            s.id = ++i;
             o.screens.push_back(std::move(s));
         }
         o.nextScreenId = i + 1;
@@ -671,6 +738,24 @@ LoadResult parse(const std::string& textIn, const fs::path& projectDir, Composit
         c.pixelMap = pixelMapFromJson(*pj, c.width, c.height);
     else
         pixelmap::syncInput(c.pixelMap, c.width, c.height);
+
+    if (const Json* kj = getArr(root, "keys")) {
+        const nlohmann::json plain = nlohmann::json::parse(kj->dump(), nullptr, false);
+        std::vector<std::string> keyWarnings;
+        c.keys = control::bindingsFromJson(plain, &keyWarnings);
+        for (std::string& w : keyWarnings)
+            res.warnings.push_back(std::move(w));
+        control::stampLayerIds(c.keys, c);
+    }
+
+    if (const Json* dj = getObj(root, "dmx")) {
+        const nlohmann::json plain = nlohmann::json::parse(dj->dump(), nullptr, false);
+        c.dmx = dmx::configFromJson(plain, &res.warnings);
+        std::vector<int> ids;
+        for (const Layer& l : c.layers)
+            ids.push_back(l.id);
+        dmx::stampLayerIds(c.dmx, ids);
+    }
 
     comp = std::move(c);
     output = std::move(o);
@@ -748,7 +833,7 @@ bool relinkClip(Clip& clip, const fs::path& file)
     clip.missing = false;
     if (media::isRemoteKind(kind))
         clip.params.fillDefaults(clip.paramDescs());
-    clip.setLoop(clip.loop); // ping-pong nao vale para video
+    clip.setLoop(clip.loop);
     return true;
 }
 
@@ -768,4 +853,4 @@ int relinkMissingInFolder(Composition& comp, const fs::path& folder)
     return found;
 }
 
-} // namespace bsl::project
+}

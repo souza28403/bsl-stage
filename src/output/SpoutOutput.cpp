@@ -2,7 +2,6 @@
 
 #include <windows.h>
 
-// O Spout define seu próprio acesso ao GL (SpoutGLextensions) e emite avisos nos headers
 #pragma warning(push, 0)
 #include <SpoutSender.h>
 #pragma warning(pop)
@@ -12,7 +11,7 @@ namespace bsl {
 struct SpoutOutput::Impl
 {
     SpoutSender sender;
-    bool named = false; // SetSenderName só antes de criar o sender (ele renomeia se o nome já existe)
+    bool named = false;
 };
 
 SpoutOutput::SpoutOutput() : impl_(std::make_unique<Impl>()) {}
@@ -38,8 +37,7 @@ bool SpoutOutput::send(unsigned int texture, int width, int height)
         impl_->sender.SetSenderName(name_.empty() ? "BSL Stage" : name_.c_str());
         impl_->named = true;
     }
-    // bInvert = true (padrão do SDK): textura GL com origem embaixo -> compartilhada com origem em cima
-    return impl_->sender.SendTexture(texture, 0x0DE1 /* GL_TEXTURE_2D */, static_cast<unsigned int>(width),
+    return impl_->sender.SendTexture(texture, 0x0DE1 , static_cast<unsigned int>(width),
                                      static_cast<unsigned int>(height), true, 0);
 }
 
@@ -49,4 +47,4 @@ void SpoutOutput::release()
     impl_->named = false;
 }
 
-} // namespace bsl
+}

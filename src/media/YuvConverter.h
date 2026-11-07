@@ -9,15 +9,12 @@
 namespace bsl {
 class Fbo;
 class Shader;
-} // namespace bsl
+}
 
 namespace bsl::media {
 
-// Sobe um frame RGBA8 para a textura 'tex' (cria/redimensiona se preciso). Usa GL_UNPACK_ROW_LENGTH.
 void uploadRgbaTexture(GLuint& tex, int& texW, int& texH, const Frame& frame);
 
-// Converte frames YUV420P/YUVA420P em RGBA: sobe os planos em texturas R8 e desenha num FBO
-// interno do tamanho do video (BT.601/709, limited/full). Chamar na thread GL.
 class YuvConverter {
 public:
     YuvConverter();
@@ -42,4 +39,4 @@ private:
     int planeH_[4] = {0, 0, 0, 0};
 };
 
-} // namespace bsl::media
+}

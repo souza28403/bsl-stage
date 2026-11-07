@@ -95,4 +95,4 @@ Texture loadTexture(const std::filesystem::path& path)
     return Texture(tex, img.width, img.height);
 }
 
-} // namespace bsl
+}

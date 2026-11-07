@@ -25,13 +25,10 @@ void configureFfglCatalog(const Settings& settings)
             label = utf8;
         folders.push_back({dir, label});
     }
-    if (settings.ffglUseResolume)
-        for (const fs::path& dir : paths::resolumeEffectDirs())
-            folders.push_back({dir, "Resolume Extra Effects"});
 
     ffgl::Catalog& catalog = ffgl::Catalog::instance();
     catalog.configure(std::move(folders));
     catalog.rescan();
 }
 
-} // namespace bsl
+}

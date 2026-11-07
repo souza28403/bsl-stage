@@ -1,7 +1,3 @@
-// Gera assets/bsl/web_bg/studio.json a partir do codigo-fonte do BSL Studio (BSL_Background_Studio/src/shared).
-// Uso: node tools/gen_webstudio_data.mjs <pasta do BSL_Background_Studio> <saida.json>
-// O JSON alimenta os parametros nativos da fonte BSL WebBackgrounds (fundos, ajustes de cada fundo, paletas, fontes e animacoes
-// do texto) com os mesmos ids e faixas do painel original.
 import { writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'

@@ -37,10 +37,6 @@ namespace pm = bsl::pixelmap;
 namespace fs = std::filesystem;
 using snap::RectF;
 
-// --------------------------------------------------------------------------------------------------------------
-// Estado da interface (a configuração em si vive em Composition::pixelMap e vai no projeto)
-
-// Rascunho do formulário "Adicionar painel" (os valores do exemplo do HTML)
 struct Draft
 {
     std::string name = "Testeira Palco";
@@ -74,7 +70,6 @@ struct State
     Draft draft;
     int selected = -1;
 
-    // Vista do overview
     float scale = 1.0f;
     ImVec2 offset{0.0f, 0.0f};
     bool autoFit = true;
@@ -90,11 +85,12 @@ struct State
     std::string status;
     bool statusWarn = false;
 
-    Texture wmTex; // marca d'água escolhida pelo usuário
+    Texture wmTex;
     std::string wmKey;
 
     bool openCreate = false;
     bool openImport = false;
+    bool layerPerPanel = false;
 };
 State g;
 
@@ -147,9 +143,6 @@ const Texture* watermarkTexture(const pm::Config& c)
     return nullptr;
 }
 
-// --------------------------------------------------------------------------------------------------------------
-// Ações de exportar / importar (diálogos nativos do Windows)
-
 bool writePattern(const pm::Config& cfg, const pm::Panel& p, const fs::path& file, std::string* err)
 {
     pm::Image logo;
@@ -190,7 +183,7 @@ void actionExportAll(const pm::Config& cfg)
     std::string firstError;
     for (const pm::Panel& p : cfg.panels) {
         std::string name = pm::patternFileName(p);
-        for (int n = 2; !used.insert(name).second; ++n) // dois painéis com o mesmo nome e tamanho
+        for (int n = 2; !used.insert(name).second; ++n)
             name = pm::patternFileName(p).substr(0, pm::patternFileName(p).size() - 4) + "_" + std::to_string(n) + ".png";
         const pm::Image img = pm::renderPattern(p, haveLogo ? &logo : nullptr);
         std::string err;
@@ -208,7 +201,7 @@ void actionExportAll(const pm::Config& cfg)
 void actionExportOverview(const pm::Config& cfg)
 {
     const auto file = dialogs::saveFile(GetActiveWindow(), L"Exportar overview", L"Imagem PNG (*.png)", L"*.png",
-                                        L"BSLLight_Resolume_Map.png", L"png");
+                                        L"BSLLight_Map.png", L"png");
     if (!file)
         return;
     pm::Image wm;
@@ -256,9 +249,6 @@ void actionImportCsv(pm::Config& cfg)
     setStatus(std::to_string(cfg.panels.size()) + " painéis importados de " + utf8(file->filename()));
 }
 
-// --------------------------------------------------------------------------------------------------------------
-// Pequenos blocos de interface
-
 void dim(const char* text)
 {
     ImGui::TextColored(theme::kTextDim, "%s", text);
@@ -296,7 +286,6 @@ bool numField(const char* id, int& v, int lo, int hi, float step = 1.0f, const c
     return hotInt(id, v, lo, hi, step, "%d", unit, INT_MIN, -1.0f);
 }
 
-// Duas colunas rotuladas (largura/altura, x/y...)
 bool beginPair(const char* id)
 {
     return ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingStretchSame);
@@ -324,20 +313,25 @@ void scaleText(const pm::Config& c, const pm::Validation& v)
     popMono();
 }
 
-// --------------------------------------------------------------------------------------------------------------
-// Mapeamento (ponte com o OutputSetup)
-
 void doCreateMapping(PanelContext& ctx, pm::MapMode mode, int target)
 {
     const int idx = pm::createMapping(ctx.composition.pixelMap, ctx.output, mode, target, ctx.composition.width,
                                       ctx.composition.height);
     ctx.mapping.screen = idx;
     selectOnly(ctx.mapping, 0);
-    mapHistoryObserve(ctx); // entra no histórico de desfazer do mapeamento (Ctrl+Z no modo Mapeamento)
+    int newLayers = 0;
+    if (g.layerPerPanel) {
+        for (Slice& sl : ctx.output.screens[static_cast<size_t>(idx)].slices) {
+            ctx.composition.addLayerForSlice(sl);
+            ++newLayers;
+        }
+    }
+    mapHistoryObserve(ctx);
     const Screen& s = ctx.output.screens[static_cast<size_t>(idx)];
     setStatus("Mapeamento " + std::string(mode == pm::MapMode::Add ? "criado" : "atualizado") + ": tela \"" + s.name + "\" "
               + std::to_string(s.width) + "x" + std::to_string(s.height) + " com " + std::to_string(s.slices.size())
-              + " slice(s). Desfazer: Ctrl+Z no modo Mapeamento.");
+              + " slice(s)" + (newLayers > 0 ? ", " + std::to_string(newLayers) + " camada(s) nova(s)" : std::string())
+              + ". Desfazer: Ctrl+Z no modo Mapeamento.");
 }
 
 int targetScreen(const PanelContext& ctx)
@@ -413,9 +407,7 @@ void drawMappingModals(PanelContext& ctx)
     }
 }
 
-} // namespace
-
-// --------------------------------------------------------------------------------------------------------------
+}
 
 void pixelMapPrepare(PanelContext& ctx)
 {
@@ -457,16 +449,12 @@ PixelMapUiInfo pixelMapUiInfo()
     return i;
 }
 
-// ==============================================================================================================
-// Configuração
-
 void drawPixelMapConfigPanel(PanelContext& ctx)
 {
     beginPanel(panel::kPmConfig);
     pm::Config& cfg = ctx.composition.pixelMap;
     const pm::Validation& val = g.val;
 
-    // --- Input -----------------------------------------------------------------------------------------------
     ImGui::SeparatorText("Input (composição)");
     if (ImGui::BeginTable("##pm_input", 3, ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("w", ImGuiTableColumnFlags_WidthStretch);
@@ -497,7 +485,6 @@ void drawPixelMapConfigPanel(PanelContext& ctx)
     else
         dim("Input livre (a fonte e o mapeamento usam o canvas real)");
 
-    // --- Físico ----------------------------------------------------------------------------------------------
     ImGui::SeparatorText("Físico total (processadora)");
     if (beginPair("##pm_fis")) {
         pairLabels("Largura", "Altura");
@@ -510,7 +497,6 @@ void drawPixelMapConfigPanel(PanelContext& ctx)
     }
     scaleText(cfg, val);
 
-    // --- Marca d'água ------------------------------------------------------------------------------------------
     ImGui::SeparatorText("Marca d'água");
     if (chip("Monograma BSL##pm_wm_mono", cfg.watermark == pm::Watermark::Monogram, "A marca da BSL Light (padrão)"))
         cfg.watermark = pm::Watermark::Monogram;
@@ -534,13 +520,12 @@ void drawPixelMapConfigPanel(PanelContext& ctx)
     if (cfg.watermark == pm::Watermark::Image && !cfg.watermarkPath.empty())
         dim(utf8(pathFromUtf8(cfg.watermarkPath).filename()).c_str());
 
-    // --- Adicionar painel ---------------------------------------------------------------------------------------
     ImGui::SeparatorText("Adicionar painel");
     Draft& d = g.draft;
     if (chip("Em pixels##pm_modo_px", !d.byCabinets, "Largura e altura reais, direto em px"))
         d.byCabinets = false;
     ImGui::SameLine();
-    if (chip("Em gabinetes##pm_modo_gab", d.byCabinets, "Colunas × linhas × px do gabinete (como no LEDMapperPro)"))
+    if (chip("Em gabinetes##pm_modo_gab", d.byCabinets, "Colunas × linhas × px do gabinete"))
         d.byCabinets = true;
 
     dim("Nome do painel");
@@ -612,14 +597,18 @@ void drawPixelMapConfigPanel(PanelContext& ctx)
     }
     ImGui::EndDisabled();
 
-    // --- Mapeamento ----------------------------------------------------------------------------------------------
     ImGui::SeparatorText("Mapeamento");
+    ImGui::Checkbox("Criar uma camada por painel##pm_camada_por_painel", &g.layerPerPanel);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Cada slice criado ganha uma camada própria (só nos slices vinculados), com o nome do painel: "
+                          "um vídeo diferente por painel, sem efeito de um afetar os outros.\n"
+                          "As camadas criadas antes não são removidas ao criar de novo.");
     ImGui::BeginDisabled(cfg.panels.empty());
     if (ImGui::Button("Criar mapeamento##pm_criar_mapeamento", ImVec2(-FLT_MIN, 0.0f))) {
         if (ctx.output.screens.empty())
             doCreateMapping(ctx, pm::MapMode::Add, -1);
         else
-            g.openCreate = true; // pergunta: substituir a tela ou adicionar uma nova
+            g.openCreate = true;
     }
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
@@ -627,7 +616,7 @@ void drawPixelMapConfigPanel(PanelContext& ctx)
                           "entrada = retângulo escalado no canvas, saída = posição física");
     ImGui::BeginDisabled(ctx.output.screens.empty());
     if (ImGui::Button("Importar do mapeamento##pm_importar_mapeamento", ImVec2(-FLT_MIN, 0.0f))) {
-        if (cfg.panels.empty()) { // nada a perder: importa direto
+        if (cfg.panels.empty()) {
             if (const int t = targetScreen(ctx); t >= 0 && pm::importFromScreen(cfg, ctx.output.screens[static_cast<size_t>(t)])) {
                 g.selected = -1;
                 setStatus(std::to_string(cfg.panels.size()) + " painéis importados da tela \""
@@ -643,7 +632,6 @@ void drawPixelMapConfigPanel(PanelContext& ctx)
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         ImGui::SetTooltip("Lê os slices da tela selecionada no mapeamento: o físico total é a resolução da tela e cada slice vira um painel");
 
-    // --- Exportar -------------------------------------------------------------------------------------------------
     ImGui::SeparatorText("Exportar");
     ImGui::BeginDisabled(cfg.panels.empty());
     if (ImGui::Button("Exportar todos os padrões##pm_exportar_todos", ImVec2(-FLT_MIN, 0.0f)))
@@ -671,9 +659,6 @@ void drawPixelMapConfigPanel(PanelContext& ctx)
     endPanel();
 }
 
-// ==============================================================================================================
-// Overview
-
 namespace {
 
 int hitPanel(const pm::Config& cfg, double px, double py, int preferred)
@@ -683,7 +668,7 @@ int hitPanel(const pm::Config& cfg, double px, double py, int preferred)
         return px >= p.x && px < p.x + p.w && py >= p.y && py < p.y + p.h;
     };
     const int n = static_cast<int>(cfg.panels.size());
-    if (preferred >= 0 && preferred < n && inside(preferred)) // o selecionado ganha (dá para arrastar um painel coberto)
+    if (preferred >= 0 && preferred < n && inside(preferred))
         return preferred;
     for (int i = n - 1; i >= 0; --i)
         if (inside(i))
@@ -705,7 +690,7 @@ void centeredText(ImDrawList* dl, ImFont* font, float size, ImVec2 center, ImU32
     dl->AddText(font, size, ImVec2(center.x - ts.x * 0.5f, center.y - ts.y * 0.5f), color, text.c_str());
 }
 
-} // namespace
+}
 
 void drawPixelMapOverviewPanel(PanelContext& ctx)
 {
@@ -717,7 +702,6 @@ void drawPixelMapOverviewPanel(PanelContext& ctx)
     const ImGuiIO& io = ImGui::GetIO();
     const int n = static_cast<int>(cfg.panels.size());
 
-    // --- Barra -------------------------------------------------------------------------------------------------
     iconToggle(ICON_MAGNET, "##pm_ima", g.snapOn,
                "Ímã: encaixa nas bordas, cantos e centros dos outros painéis e da área física (Alt desliga enquanto segura)");
     ImGui::SameLine();
@@ -734,7 +718,6 @@ void drawPixelMapOverviewPanel(PanelContext& ctx)
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Zoom 100%%: 1 px da composição = 1 px da tela");
 
-    // --- Área da vista ---------------------------------------------------------------------------------------------
     const float captionH = ImGui::GetTextLineHeightWithSpacing();
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const ImVec2 vpSize(avail.x, avail.y - captionH);
@@ -783,7 +766,6 @@ void drawPixelMapOverviewPanel(PanelContext& ctx)
         return Point2{static_cast<float>(c.x / sc.x), static_cast<float>(c.y / sc.y)};
     };
 
-    // Zoom na roda, no ponto do cursor
     if (hovered && io.MouseWheel != 0.0f && g.drag.kind == DragKind::None) {
         const Point2 anchor = toContent(mouse);
         g.scale = std::clamp(g.scale * std::pow(1.12f, io.MouseWheel), 0.02f, 64.0f);
@@ -793,7 +775,6 @@ void drawPixelMapOverviewPanel(PanelContext& ctx)
 
     const bool spaceHeld = ImGui::IsKeyDown(ImGuiKey_Space) && focused;
 
-    // --- Mouse ------------------------------------------------------------------------------------------------------
     if (activated) {
         DragState d;
         d.startMouse = mouse;
@@ -810,7 +791,7 @@ void drawPixelMapOverviewPanel(PanelContext& ctx)
                 d.startX = cfg.panels[static_cast<size_t>(hit)].x;
                 d.startY = cfg.panels[static_cast<size_t>(hit)].y;
             } else {
-                d.kind = DragKind::Pan; // arrastar o vazio move a vista
+                d.kind = DragKind::Pan;
                 d.startOffset = g.offset;
             }
         }
@@ -828,7 +809,6 @@ void drawPixelMapOverviewPanel(PanelContext& ctx)
             g.autoFit = false;
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
         } else if (d.kind == DragKind::Move && d.moved && d.index >= 0 && d.index < n) {
-            // Tudo em px FÍSICOS (NovaLCT): o deslocamento do mouse na tela vira px da composição e depois físicos
             pm::Panel& p = cfg.panels[static_cast<size_t>(d.index)];
             const float dx = std::round((mouse.x - d.startMouse.x) / g.scale / static_cast<float>(sc.x));
             const float dy = std::round((mouse.y - d.startMouse.y) / g.scale / static_cast<float>(sc.y));
@@ -862,7 +842,6 @@ void drawPixelMapOverviewPanel(PanelContext& ctx)
             g.drag = {};
     }
 
-    // --- Teclado (só com o foco na vista) -------------------------------------------------------------------------
     const bool popupOpen = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
     if (focused && !io.WantTextInput && !popupOpen && g.drag.kind == DragKind::None) {
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
@@ -883,8 +862,6 @@ void drawPixelMapOverviewPanel(PanelContext& ctx)
         }
     }
 
-    // ============================================================================================================
-    // Desenho
     dl->PushClipRect(vpMin, vpMax, true);
     dl->AddRectFilled(vpMin, vpMax, colv(theme::kField));
 
@@ -911,7 +888,6 @@ void drawPixelMapOverviewPanel(PanelContext& ctx)
         }
     }
 
-    // Marca d'água no centro (10%, como no HTML)
     if (const Texture* wm = watermarkTexture(cfg); wm && wm->height > 0) {
         const float mw = std::min(cw * 0.4f, 400.0f);
         const float mh = mw / (static_cast<float>(wm->width) / static_cast<float>(wm->height));
@@ -977,7 +953,6 @@ void drawPixelMapOverviewPanel(PanelContext& ctx)
     qa::noteRect("pixelmap:canvas", ia.x, ia.y, ib.x, ib.y);
     qa::noteRect("pixelmap:vista", vpMin.x, vpMin.y, vpMax.x, vpMax.y);
 
-    // Linhas-guia do ímã (físicas -> composição)
     if (g.drag.kind == DragKind::Move) {
         const float gl = std::max(1.0f, dp(1.0f));
         const float ext = dp(28.0f);
@@ -1001,7 +976,6 @@ void drawPixelMapOverviewPanel(PanelContext& ctx)
         }
     }
 
-    // Aviso discreto: escala não inteira
     if (g.val.scaleWarn) {
         char msg[200];
         std::snprintf(msg, sizeof(msg), "Escala %.3f × %.3f (não inteira): 1 px físico ≠ 1 px da composição", sc.x, sc.y);
@@ -1014,7 +988,6 @@ void drawPixelMapOverviewPanel(PanelContext& ctx)
     }
     dl->PopClipRect();
 
-    // Dica do painel sob o mouse
     if (hoverIdx >= 0 && hoverIdx < n) {
         const pm::Panel& p = cfg.panels[static_cast<size_t>(hoverIdx)];
         const RectI r = pm::scaledRectRounded(cfg, p);
@@ -1022,7 +995,6 @@ void drawPixelMapOverviewPanel(PanelContext& ctx)
                           p.h, r.x, r.y, r.w, r.h);
     }
 
-    // --- Legenda ---------------------------------------------------------------------------------------------------
     {
         char buf[320];
         std::snprintf(buf, sizeof(buf), "Input %dx%d  |  Físico %dx%d  |  %d painel(is)  |  %d%%", cfg.inW, cfg.inH, cfg.physW,
@@ -1035,12 +1007,8 @@ void drawPixelMapOverviewPanel(PanelContext& ctx)
     ImGui::PopStyleVar();
 }
 
-// ==============================================================================================================
-// Tabela
-
 namespace {
 
-// Cor do painel: clique troca pela próxima da paleta do HTML; o menu da linha tem as 4 + automática + qualquer cor
 void colorSwatch(pm::Panel& p, int index)
 {
     const float side = ImGui::GetFrameHeight() * 0.62f;
@@ -1070,7 +1038,7 @@ void rowMenu(pm::Panel& p)
         bool cab = p.byCabinets;
         if (ImGui::Checkbox("Por gabinetes##pm_gab_on", &cab)) {
             p.byCabinets = cab;
-            if (cab) { // começa com 1 gabinete do tamanho atual
+            if (cab) {
                 p.cols = 1;
                 p.rows = 1;
                 p.cabW = p.w;
@@ -1124,7 +1092,7 @@ void rowMenu(pm::Panel& p)
     }
 }
 
-} // namespace
+}
 
 void drawPixelMapTablePanel(PanelContext& ctx)
 {
@@ -1244,7 +1212,6 @@ void drawPixelMapTablePanel(PanelContext& ctx)
             if (iconButton(ICON_TRASH, "##pm_remover", "Remover o painel"))
                 removeIdx = i;
 
-            // Clique em qualquer parte da linha seleciona o painel
             const ImVec2 wmin = ImGui::GetWindowPos();
             if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)
                 && ImGui::IsMouseHoveringRect(ImVec2(wmin.x, rowY), ImVec2(wmin.x + ImGui::GetWindowWidth(), rowY + rowH), false)
@@ -1262,7 +1229,6 @@ void drawPixelMapTablePanel(PanelContext& ctx)
         }
     }
 
-    // Rodapé: totais e validações
     {
         char buf[200];
         std::snprintf(buf, sizeof(buf), "%d painel(is)  |  %d sobreposto(s)  |  %d fora da área física", n, g.val.overlapCount,
@@ -1274,4 +1240,4 @@ void drawPixelMapTablePanel(PanelContext& ctx)
     endPanel();
 }
 
-} // namespace bsl::ui
+}

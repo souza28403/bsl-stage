@@ -6,12 +6,12 @@
 #include "fx/ChainRunner.h"
 #include "media/RemoteSource.h"
 #include "render/Compositor.h"
-#include "render/LayerPreview.h"
 #include "render/ThumbnailCache.h"
 #include "ui/Brand.h"
 #include "ui/Theme.h"
 #include "ui/Ui.h"
 #include "ui/Widgets.h"
+#include "ui/panels/TransformEditor.h"
 
 #include <imgui.h>
 
@@ -27,25 +27,22 @@ namespace bsl::ui {
 
 namespace {
 
-// Instância de fonte da Prévia: separada das camadas, então não interfere na saída
 struct PreviewState
 {
     std::unique_ptr<media::ISource> source;
-    std::string key;     // identifica célula + clip da instância atual
-    bool failed = false; // abrir falhou: não tenta de novo até a seleção mudar
-    media::ParamValues params; // parametros ja entregues a instancia
-    // Efeitos do clip: a Previa roda uma copia da cadeia (os efeitos de execucao do clip pertencem ao Compositor)
+    std::string key;
+    bool failed = false;
+    media::ParamValues params;
     fx::EffectChain chain;
     FboPool pool;
-    FboPool::Lease lease; // resultado do quadro (precisa viver ate o ImGui desenhar)
+    FboPool::Lease lease;
     std::uint64_t frame = 0;
 };
 PreviewState g_preview;
 PreviewOptions g_options;
-LayerPreview g_layerPreview; // modo "Camada selecionada": o blend da camada sobre preto
+int g_wantedLayerId = 0;
 PreviewInfo g_info;
 
-// Aplica a cadeia de efeitos do clip a textura da fonte da Previa. Devolve a textura a mostrar.
 GLuint previewWithEffects(const PanelContext& ctx, const Clip& clip, const media::ISource& src)
 {
     g_preview.lease.reset();
@@ -68,7 +65,7 @@ GLuint previewWithEffects(const PanelContext& ctx, const Clip& clip, const media
     fxc.canvasHeight = comp.height;
     fxc.topOrigin = true;
     fxc.preview = true;
-    fxc.sourceId = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(&src)); // a mesma fonte do Compositor: divide a IA
+    fxc.sourceId = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(&src));
     fxc.pool = &g_preview.pool;
     fxc.audio = audio::AudioAnalyzer::instance().snapshot();
     g_preview.lease = fx::ChainRunner::run(g_preview.chain, fxc, src.texture(), src.width(), src.height());
@@ -76,7 +73,6 @@ GLuint previewWithEffects(const PanelContext& ctx, const Clip& clip, const media
     return g_preview.lease ? g_preview.lease->texture() : src.texture();
 }
 
-// Retângulo de destino e UVs para exibir um conteúdo cw x ch dentro de 'area'
 struct Placement
 {
     ImVec2 a, b;
@@ -91,11 +87,11 @@ Placement place(FitMode mode, ImVec2 areaMin, ImVec2 areaSize, float cw, float c
     if (mode == FitMode::Fill) {
         p.a = areaMin;
         p.b = ImVec2(areaMin.x + areaSize.x, areaMin.y + areaSize.y);
-        if (areaAspect > contentAspect) { // área mais larga: corta em cima e embaixo
+        if (areaAspect > contentAspect) {
             const float visible = contentAspect / areaAspect;
             p.uv0.y = (1.0f - visible) * 0.5f;
             p.uv1.y = 1.0f - p.uv0.y;
-        } else { // área mais alta: corta nas laterais
+        } else {
             const float visible = areaAspect / contentAspect;
             p.uv0.x = (1.0f - visible) * 0.5f;
             p.uv1.x = 1.0f - p.uv0.x;
@@ -112,13 +108,11 @@ Placement place(FitMode mode, ImVec2 areaMin, ImVec2 areaSize, float cw, float c
     return p;
 }
 
-// Web: com "Interagir" ligado, mouse e teclado sobre a imagem da Prévia vão para a página.
-// As coordenadas são mapeadas do retângulo exibido (com o recorte do "Preencher") para pixels da página.
 struct InteractState
 {
     bool inside = false;
     int lastX = 0, lastY = 0;
-    int held = 0; // botões do mouse que apertamos dentro da imagem (bit 0 = esquerdo, 1 = direito, 2 = meio)
+    int held = 0;
 };
 InteractState g_interact;
 
@@ -161,7 +155,6 @@ void forwardInteraction(media::RemoteSource& web, const Placement& p, int conten
     }
     st.lastX = x;
     st.lastY = y;
-    // Soltar o botão fora da imagem também chega à página (arrastos)
     for (int b = 0; b < 3; ++b) {
         if (ImGui::IsMouseReleased(b) && (st.held & (1 << b))) {
             int ux = st.lastX, uy = st.lastY;
@@ -172,7 +165,6 @@ void forwardInteraction(media::RemoteSource& web, const Placement& p, int conten
         }
     }
 
-    // Teclado: só com a Prévia em foco
     if (ImGui::IsWindowFocused()) {
         struct KeyMap
         {
@@ -200,7 +192,7 @@ void forwardInteraction(media::RemoteSource& web, const Placement& p, int conten
     }
 }
 
-} // namespace
+}
 
 PreviewOptions& previewOptions()
 {
@@ -214,10 +206,10 @@ PreviewInfo previewInfo()
 
 void releasePreview()
 {
-    g_layerPreview.shutdown();
+    g_wantedLayerId = 0;
     g_preview.lease.reset();
     g_preview.pool.clear();
-    g_preview.chain.items.clear(); // libera os recursos GL dos efeitos (contexto ainda vivo)
+    g_preview.chain.items.clear();
     g_preview.source.reset();
     g_preview.key.clear();
     g_preview.failed = false;
@@ -229,10 +221,15 @@ void drawOutputPanel(PanelContext& ctx)
     beginPanel(panel::kOutput);
 
     const Compositor& canvas = ctx.canvas;
+
+    transformToggleButton(TransformPanel::Output, ImVec2(0.0f, 0.0f));
+    const bool editing = transformEditOn(TransformPanel::Output);
+    if (editing)
+        drawTransformTools(ctx, TransformPanel::Output);
+
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const float aspect = static_cast<float>(canvas.width()) / static_cast<float>(canvas.height());
 
-    // Reserva uma linha para a legenda e encaixa a imagem mantendo a proporcao
     const float caption = ImGui::GetTextLineHeightWithSpacing();
     ImVec2 size(avail.x, avail.y - caption);
     if (size.x > 0.0f && size.y > 0.0f) {
@@ -241,14 +238,11 @@ void drawOutputPanel(PanelContext& ctx)
         else
             size.y = size.x / aspect;
 
-        // Centraliza
         ImVec2 cursor = ImGui::GetCursorPos();
         cursor.x += (avail.x - size.x) * 0.5f;
         cursor.y += (avail.y - caption - size.y) * 0.5f;
         ImGui::SetCursorPos(cursor);
 
-        // O FBO tem origem embaixo e so a parte (0..uvMax) foi renderizada; meio texel de
-        // folga evita sangrar a borda ao filtrar.
         const float s = canvas.uvMax();
         const float hx = 0.5f / static_cast<float>(canvas.width());
         const float hy = 0.5f / static_cast<float>(canvas.height());
@@ -260,7 +254,6 @@ void drawOutputPanel(PanelContext& ctx)
         const ImVec2 b = ImGui::GetItemRectMax();
         ImDrawList* dl = ImGui::GetWindowDrawList();
 
-        // Canvas vazio: monograma BSL a ~20% de opacidade, so como overlay da UI (a saida segue preta)
         const Texture& mark = brand().monogram;
         if (!ctx.composition.anyActive() && mark) {
             const float w = size.x * 0.30f;
@@ -271,11 +264,17 @@ void drawOutputPanel(PanelContext& ctx)
                          IM_COL32(255, 255, 255, 51));
         }
         dl->AddRect(a, b, ImGui::GetColorU32(theme::kBorder));
+        if (editing)
+            drawTransformOverlay(ctx, TransformPanel::Output, a, b);
 
         ImGui::SetCursorPos(ImVec2(ImGui::GetCursorStartPos().x, ImGui::GetWindowHeight() - caption - dp(8.0f)));
         pushMono();
-        ImGui::TextColored(theme::kTextDim, "%dx%d  |  prévia a %.0f%%", canvas.width(), canvas.height(),
-                           ctx.previewScale * 100.0f);
+        const std::string transformInfo = editing ? transformCaption(ctx) : std::string();
+        if (!transformInfo.empty())
+            ImGui::TextColored(theme::kTextDim, "%s", transformInfo.c_str());
+        else
+            ImGui::TextColored(theme::kTextDim, "%dx%d  |  prévia a %.0f%%", canvas.width(), canvas.height(),
+                               ctx.previewScale * 100.0f);
         popMono();
     }
 
@@ -290,7 +289,6 @@ const char* sourceLabel(PreviewSource s)
     return s == PreviewSource::Layer ? "Camada selecionada" : "Clip selecionado";
 }
 
-// Selo no canto da imagem: "AO VIVO" (vermelho), "PRÉVIA" ou "CAMADA n" (cinza), seguido do nome do clip
 void drawBadge(ImDrawList* dl, ImVec2 pos, const char* tag, bool hot, const std::string& name, float maxRight)
 {
     ImFont* bold = fonts().bold;
@@ -314,12 +312,66 @@ void drawBadge(ImDrawList* dl, ImVec2 pos, const char* tag, bool hot, const std:
     dl->PopClipRect();
 }
 
-} // namespace
+void drawPreviewTransformMode(PanelContext& ctx)
+{
+    const Compositor& canvas = ctx.canvas;
+    transformToggleButton(TransformPanel::Preview, ImVec2(0.0f, 0.0f));
+    drawTransformTools(ctx, TransformPanel::Preview);
+
+    const float footerH = ImGui::GetTextLineHeightWithSpacing();
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    const ImVec2 areaSize(std::max(avail.x, 8.0f), std::max(avail.y - footerH, 8.0f));
+    const ImVec2 areaMin = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(areaMin, ImVec2(areaMin.x + areaSize.x, areaMin.y + areaSize.y), ImGui::GetColorU32(theme::kBackground),
+                      rounding());
+    const Placement p = place(FitMode::Fit, areaMin, areaSize, static_cast<float>(canvas.width()),
+                              static_cast<float>(canvas.height()));
+    qa::noteRect("previa:area", areaMin.x, areaMin.y, areaMin.x + areaSize.x, areaMin.y + areaSize.y);
+    const float s = canvas.uvMax();
+    const float hx = 0.5f / static_cast<float>(canvas.width()), hy = 0.5f / static_cast<float>(canvas.height());
+    dl->AddImage(static_cast<ImTextureID>(canvas.texture()), p.a, p.b, ImVec2(hx, s - hy), ImVec2(s - hx, hy));
+    dl->AddRect(p.a, p.b, ImGui::GetColorU32(theme::kBorder));
+    drawTransformOverlay(ctx, TransformPanel::Preview, p.a, p.b);
+
+    ImGui::SetCursorScreenPos(ImVec2(areaMin.x, areaMin.y + areaSize.y + ImGui::GetStyle().ItemSpacing.y));
+    pushMono();
+    const std::string info = transformCaption(ctx);
+    ImGui::TextColored(theme::kTextDim, "%s", info.empty() ? "Transformar: clique numa camada" : info.c_str());
+    popMono();
+}
+
+}
+
+int previewWantedLayerId()
+{
+    return g_wantedLayerId;
+}
+
+void previewPanelHidden()
+{
+    g_preview.source.reset();
+    g_preview.key.clear();
+    g_wantedLayerId = 0;
+    g_info = {};
+}
 
 void drawPreviewPanel(PanelContext& ctx)
 {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, dp(8.0f, 8.0f));
     beginPanel(panel::kPreview);
+
+    if (transformEditOn(TransformPanel::Preview)) {
+        g_preview.source.reset();
+        g_preview.key.clear();
+        g_wantedLayerId = 0;
+        g_info = {};
+        g_info.layerMode = g_options.source == PreviewSource::Layer;
+        drawPreviewTransformMode(ctx);
+        endPanel();
+        ImGui::PopStyleVar();
+        return;
+    }
 
     Composition& comp = ctx.composition;
     const Selection& sel = ctx.selection;
@@ -327,7 +379,6 @@ void drawPreviewPanel(PanelContext& ctx)
     const bool eco = ctx.profile == PerformanceProfile::Eco;
     const bool layerMode = opt.source == PreviewSource::Layer;
 
-    // --- O que a Prévia mostra: o clip selecionado (célula da grade) ou o que a camada selecionada toca agora ---
     int layerIndex = -1;
     if (sel.kind != Selection::Kind::None && sel.layer >= 0 && sel.layer < comp.layerCount())
         layerIndex = sel.layer;
@@ -342,11 +393,8 @@ void drawPreviewPanel(PanelContext& ctx)
         cellLayer = sel.layer;
         cellColumn = sel.column;
     }
-    // Clip aberto = está tocando numa camada: a Prévia espelha essa instância (nada de decodificar duas vezes) e o
-    // transporte dela vale para a saída.
     const bool live = clip && clip->isOpen();
 
-    // A instância própria acompanha a seleção: troca de célula/clip fecha a anterior
     std::string key;
     if (clip && !layerMode)
         key = std::to_string(comp.currentDeck) + ":" + std::to_string(sel.layer) + ":" + std::to_string(sel.column)
@@ -357,9 +405,6 @@ void drawPreviewPanel(PanelContext& ctx)
         g_preview.key = key;
         g_preview.failed = false;
     }
-    // Fonte ao vivo (dispositivo/captura/web) e documentos (PDF/Office, processo auxiliar): exclusivos. A Prévia
-    // nunca abre uma segunda instância; mostra a que está tocando na camada ou, se o clip estiver parado, a
-    // miniatura (documento) ou um aviso com o nome. Eco: só a miniatura, nada de decodificar.
     const bool wantOwn = clip && !layerMode && !eco && !clip->isExclusive() && !live;
     if (!wantOwn) {
         g_preview.source.reset();
@@ -372,27 +417,24 @@ void drawPreviewPanel(PanelContext& ctx)
             g_preview.failed = true;
     }
     if (g_preview.source && clip) {
-        if (g_preview.params != clip->params) { // parametros do gerador editados no ClipPanel
+        if (g_preview.params != clip->params) {
             g_preview.params = clip->params;
             g_preview.source->setParams(clip->params);
         }
-        // Velocidade e loop do clip valem tambem na prévia
         if (g_preview.source->loopMode() != clip->loop)
             g_preview.source->setLoopMode(clip->loop);
         if (g_preview.source->speed() != static_cast<double>(clip->speed))
             g_preview.source->setSpeed(clip->speed);
         g_preview.source->update(std::min(static_cast<double>(ImGui::GetIO().DeltaTime), 0.1));
     }
-    const media::ISource* mirror = (live && !eco && clip->source->texture() != 0) ? clip->source.get() : nullptr;
+    const media::ISource* mirrorSrc = clip ? (live ? clip->source.get() : clip->parked.get()) : nullptr;
+    const media::ISource* mirror = (mirrorSrc && !eco && mirrorSrc->texture() != 0) ? mirrorSrc : nullptr;
     const media::ISource* shown = g_preview.source ? g_preview.source.get() : mirror;
-    if (!layerMode)
-        g_layerPreview.release();
 
-    // --- Barra de cima: fonte da Prévia + "Ao vivo" ---
     bool sendLive = false;
-    {   // o combo cede espaço ao "Ao vivo" em painel estreito (escalas grandes)
+    {
         const float btnW = ImGui::CalcTextSize(ICON_PLAY "  Ao vivo").x + ImGui::GetStyle().FramePadding.x * 2.0f;
-        const float room = ImGui::GetContentRegionAvail().x - btnW - ImGui::GetStyle().ItemSpacing.x;
+        const float room = ImGui::GetContentRegionAvail().x - btnW - ImGui::GetFrameHeight() - ImGui::GetStyle().ItemSpacing.x * 2.0f;
         ImGui::SetNextItemWidth(std::clamp(room, dp(70.0f), dp(172.0f)));
     }
     if (beginCombo("##previa_fonte", sourceLabel(opt.source))) {
@@ -422,8 +464,9 @@ void drawPreviewPanel(PanelContext& ctx)
                                 : live    ? "Este clip já está na saída"
                                 : clip    ? "Enviar para saída: dispara este clip na camada dele"
                                           : "Selecione um clip na grade");
+    ImGui::SameLine();
+    transformToggleButton(TransformPanel::Preview, ImVec2(0.0f, 0.0f));
 
-    // --- Área de imagem (o rodapé fica com uma linha de controles) ---
     const float footerH = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y;
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const ImVec2 areaSize(std::max(avail.x, 8.0f), std::max(avail.y - footerH, 8.0f));
@@ -434,8 +477,11 @@ void drawPreviewPanel(PanelContext& ctx)
     dl->AddRectFilled(areaMin, areaMax, ImGui::GetColorU32(theme::kBackground), rounding());
     qa::noteRect("previa:area", areaMin.x, areaMin.y, areaMax.x, areaMax.y);
 
-    const std::string badgeTag = layerMode ? "CAMADA " + std::to_string(layerIndex + 1) : (live ? "AO VIVO" : "PRÉVIA");
+    const bool sliceOnlyLayer = layerMode && layerIndex >= 0 && comp.layers[static_cast<size_t>(layerIndex)].sliceOnly;
+    const std::string badgeTag = layerMode ? "CAMADA " + std::to_string(layerIndex + 1) + (sliceOnlyLayer ? " · SLICE" : "")
+                                           : (live ? "AO VIVO" : "PRÉVIA");
     const bool badgeHot = live;
+    g_wantedLayerId = (layerMode && layerIndex >= 0) ? comp.layers[static_cast<size_t>(layerIndex)].id : 0;
     const ImVec2 badgePos(areaMin.x + dp(6.0f), areaMin.y + dp(6.0f));
 
     if (!clip) {
@@ -447,35 +493,35 @@ void drawPreviewPanel(PanelContext& ctx)
                     ImGui::GetColorU32(theme::kTextDim), text);
         if (layerMode && layerIndex >= 0)
             drawBadge(dl, badgePos, badgeTag.c_str(), false, comp.layers[static_cast<size_t>(layerIndex)].name, areaMax.x - dp(6.0f));
+    } else if (layerMode) {
+        const Layer& layer = comp.layers[static_cast<size_t>(layerIndex)];
+        const Placement p = place(opt.fit, areaMin, areaSize, static_cast<float>(comp.width), static_cast<float>(comp.height));
+        dl->AddRectFilled(p.a, p.b, IM_COL32(0, 0, 0, 255));
+        GLuint viewTex = 0;
+        if (ctx.canvas.layerView(layer.id, false, viewTex, true) && viewTex != 0) {
+            const float us = ctx.canvas.uvMax();
+            const float hx = 0.5f / static_cast<float>(ctx.canvas.width()), hy = 0.5f / static_cast<float>(ctx.canvas.height());
+            const ImVec2 uv0(hx + p.uv0.x * (us - 2.0f * hx), (us - hy) - p.uv0.y * (us - 2.0f * hy));
+            const ImVec2 uv1(hx + p.uv1.x * (us - 2.0f * hx), (us - hy) - p.uv1.y * (us - 2.0f * hy));
+            dl->AddImage(static_cast<ImTextureID>(viewTex), p.a, p.b, uv0, uv1);
+        }
+        dl->AddRect(p.a, p.b, ImGui::GetColorU32(theme::kBorder));
+        g_interact = InteractState{};
+        drawBadge(dl, badgePos, badgeTag.c_str(), badgeHot, clip->name, areaMax.x - dp(6.0f));
     } else if (shown) {
         const media::ISource& src = *shown;
         const GLuint tex = previewWithEffects(ctx, *clip, src);
-        Placement p;
-        if (layerMode) {
-            // A camada como sai no canvas: encaixe do clip, opacidade e blend da camada sobre preto
-            const Layer& layer = comp.layers[static_cast<size_t>(layerIndex)];
-            const GLuint composed = g_layerPreview.compose(tex, src.width(), src.height(), clip->fit, layer.blendMode,
-                                                           layer.opacity, comp.width, comp.height);
-            p = place(opt.fit, areaMin, areaSize, static_cast<float>(comp.width), static_cast<float>(comp.height));
+        const Placement p = place(opt.fit, areaMin, areaSize, static_cast<float>(src.width()), static_cast<float>(src.height()));
+        if (opt.checker)
+            drawCheckerboard(dl, p.a, p.b);
+        else
             dl->AddRectFilled(p.a, p.b, IM_COL32(0, 0, 0, 255));
-            if (composed != 0) {
-                p.uv0.y = 1.0f - p.uv0.y; // a textura composta tem a origem embaixo
-                p.uv1.y = 1.0f - p.uv1.y;
-                dl->AddImage(static_cast<ImTextureID>(composed), p.a, p.b, p.uv0, p.uv1);
-            }
-        } else {
-            p = place(opt.fit, areaMin, areaSize, static_cast<float>(src.width()), static_cast<float>(src.height()));
-            if (opt.checker)
-                drawCheckerboard(dl, p.a, p.b);
-            else
-                dl->AddRectFilled(p.a, p.b, IM_COL32(0, 0, 0, 255));
-            if (tex != 0)
-                dl->AddImage(static_cast<ImTextureID>(tex), p.a, p.b, p.uv0, p.uv1);
-        }
-        const bool interacting = mirror && !layerMode && clip->interact && clip->isWeb();
+        if (tex != 0)
+            dl->AddImage(static_cast<ImTextureID>(tex), p.a, p.b, p.uv0, p.uv1);
+        const bool interacting = mirror && clip->interact && clip->isWeb();
         dl->AddRect(p.a, p.b, interacting ? ImGui::GetColorU32(theme::kAccent) : ImGui::GetColorU32(theme::kBorder));
         if (interacting) {
-            if (auto* web = dynamic_cast<media::RemoteSource*>(clip->source.get()))
+            if (auto* web = dynamic_cast<media::RemoteSource*>(clip->liveSource()))
                 forwardInteraction(*web, p, src.width(), src.height());
             const char* tag = "Interagindo com a página";
             const ImVec2 ts = ImGui::CalcTextSize(tag);
@@ -487,7 +533,6 @@ void drawPreviewPanel(PanelContext& ctx)
             drawBadge(dl, badgePos, badgeTag.c_str(), badgeHot, clip->name, areaMax.x - dp(6.0f));
         }
     } else {
-        // Eco (ou a fonte não abriu): só a miniatura
         const bool live2 = clip->isExclusive();
         const Placement p = place(opt.fit, areaMin, areaSize, 160.0f, 90.0f);
         const GLuint thumb = (clip->type == Clip::Type::File && !clip->isWeb()) ? ctx.thumbs.get(clip->path) : 0;
@@ -533,8 +578,6 @@ void drawPreviewPanel(PanelContext& ctx)
         }
     }
 
-    // --- Rodapé: transporte da Prévia, quadriculado, Ajustar/Preencher ---
-    // Clip ainda fora da saída: a instância da Prévia (a saída não é tocada). Clip ao vivo: o transporte dele.
     media::ISource* own = g_preview.source.get();
     media::ISource* liveSrc = (!own && live && !clip->isLive() && !clip->hasPageNav()) ? clip->source.get() : nullptr;
     media::ISource* clock = own ? own : liveSrc;
@@ -585,7 +628,6 @@ void drawPreviewPanel(PanelContext& ctx)
         ImGui::EndCombo();
     }
 
-    // Situação para o modo de teste
     g_info = {};
     g_info.layerMode = layerMode;
     g_info.layer = layerMode ? layerIndex : cellLayer;
@@ -600,9 +642,8 @@ void drawPreviewPanel(PanelContext& ctx)
     endPanel();
     ImGui::PopStyleVar();
 
-    // Disparar mexe na grade (fecha a fonte da camada): só depois de desenhar tudo que usa os ponteiros acima
     if (sendLive && cellLayer >= 0)
         comp.trigger(cellLayer, cellColumn);
 }
 
-} // namespace bsl::ui
+}

@@ -1,9 +1,3 @@
-// bslstage_livetest: geradores e fontes ao vivo com janela oculta (precisa de GL 3.3).
-// Cobre: Texto (pixels, acentos pt-BR, quando rasteriza), letreiro (desloca, loop sem emenda, sem re-rasterizar),
-// Cor solida, D3D11->GL (orientacao e canais; interop e copia por CPU), captura de monitor/janela
-// (WGC e Desktop Duplication), webcam (>= 10 quadros em 5 s) e "Sem sinal".
-// Uso: bslstage_livetest
-
 #include "core/Clip.h"
 #include "media/CaptureDeviceSource.h"
 #include "media/CaptureTargets.h"
@@ -55,7 +49,7 @@ void section(const char* name)
 struct Pixels
 {
     int w = 0, h = 0;
-    std::vector<unsigned char> rgba; // linha 0 = linha 0 da textura
+    std::vector<unsigned char> rgba;
     const unsigned char* at(int x, int y) const { return &rgba[(static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)) * 4]; }
 };
 
@@ -72,7 +66,6 @@ Pixels readTexture(GLuint tex, int w, int h)
     return p;
 }
 
-// Pixels "nao pretos": alpha > 0 e algum canal > 8 (texto branco sobre transparente tambem conta)
 long countVisible(const Pixels& p, int x0, int y0, int x1, int y1)
 {
     long n = 0;
@@ -120,12 +113,9 @@ void settle(ISource& s, int frames = 3)
         s.update(1.0 / 60.0);
 }
 
-// ---------------------------------------------------------------------------------------------- texto
-
 void testText()
 {
     section("texto: pixels e acentos");
-    // UTF-8 pt-BR
     const auto cps = decodeUtf8("A\xC3\xA7\xC3\xA3o \xC3\x89");
     CHECK(cps.size() == 6 && cps[1] == 0xE7 && cps[2] == 0xE3 && cps[5] == 0xC9);
 
@@ -139,10 +129,8 @@ void testText()
     std::printf("  pixels visiveis: meio=%ld topo=%ld\n", middle, top);
     CHECK(middle > 1000);
     CHECK(top == 0);
-    // centralizado: nada nos cantos laterais
     CHECK(countVisible(p, 0, 0, 100, 720) == 0 && countVisible(p, 1180, 0, 1280, 720) == 0);
 
-    // Acento muda o desenho: "É" tem mais pixels que "E"; "ç" mais que "c"
     TextStyle st;
     st.fontPath = FontCatalog::instance().resolve(FontCatalog::instance().defaultFile());
     st.sizePx = 100;
@@ -182,14 +170,13 @@ void testText()
     src.setParams(v);
     settle(src);
     const Pixels fx = readTexture(src.texture(), 1280, 720);
-    CHECK(countAlpha(fx, 0, 0, 20, 20) == 400); // fundo cobre a tela inteira
+    CHECK(countAlpha(fx, 0, 0, 20, 20) == 400);
     v.set("bgMode", "box");
     src.setParams(v);
     settle(src);
     const Pixels box = readTexture(src.texture(), 1280, 720);
-    CHECK(countAlpha(box, 0, 0, 20, 20) == 0);                // cantos livres
+    CHECK(countAlpha(box, 0, 0, 20, 20) == 0);
     CHECK(countAlpha(box, 640 - 40, 360 - 20, 640 + 40, 360 + 20) > 0);
-    // a caixa e maior que o texto puro
     v.set("bg", false);
     src.setParams(v);
     settle(src);
@@ -215,12 +202,11 @@ void testMarquee()
 
     src.update(0.0);
     const Pixels f0 = readTexture(src.texture(), 1280, 720);
-    src.update(0.25); // 100 px
+    src.update(0.25);
     const Pixels f1 = readTexture(src.texture(), 1280, 720);
     CHECK(meanAbsDiff(f0, f1) > 0.001);
     CHECK(std::abs(src.scrollOffset() - std::fmod(static_cast<double>(period - 1280 > 0 ? period - 1280 : 0) + 100.0, period)) < 1.0);
 
-    // deslocamento de exatamente 100 px: f1(x) == f0(x + 100) nas colunas que ainda estao na tela
     double shifted = 0.0;
     long n = 0;
     for (int y = 0; y < 720; y += 3)
@@ -231,13 +217,12 @@ void testMarquee()
     std::printf("  erro medio do deslocamento (alpha) = %.3f\n", shifted / static_cast<double>(n));
     CHECK(shifted / static_cast<double>(n) < 1.0);
 
-    // Um periodo inteiro depois, o quadro e igual ao inicial (loop sem emenda)
     src.update(static_cast<double>(period) / 400.0);
     const Pixels f2 = readTexture(src.texture(), 1280, 720);
     const double loopDiff = meanAbsDiff(f1, f2);
     std::printf("  diferenca apos 1 periodo = %.4f\n", loopDiff);
     CHECK(loopDiff < 0.5);
-    CHECK(src.rasterCount() == raster); // a rolagem nao re-rasteriza
+    CHECK(src.rasterCount() == raster);
 
     section("letreiro: pausa e velocidade negativa");
     src.pause();
@@ -250,7 +235,7 @@ void testMarquee()
     src.update(0.0);
     const double o1 = src.scrollOffset();
     src.update(0.1);
-    CHECK(src.scrollOffset() < o1 || o1 < 50.0); // andou para tras (ou deu a volta)
+    CHECK(src.scrollOffset() < o1 || o1 < 50.0);
     src.close();
 
     section("letreiro vertical");
@@ -290,8 +275,6 @@ void testSolid()
     src.close();
 }
 
-// ---------------------------------------------------------------------------------------------- D3D11 -> GL
-
 void testInteropTexture(bool forceCpu)
 {
     section(forceCpu ? "D3D11 -> GL: copia por CPU" : "D3D11 -> GL: caminho automatico");
@@ -311,16 +294,15 @@ void testInteropTexture(bool forceCpu)
     if (forceCpu)
         CHECK(!tex->usesInterop());
 
-    // Metade de cima vermelha, metade de baixo azul (BGRA)
     std::vector<unsigned char> data(64 * 64 * 4);
     for (int y = 0; y < 64; ++y)
         for (int x = 0; x < 64; ++x) {
             unsigned char* px = &data[(static_cast<size_t>(y) * 64 + static_cast<size_t>(x)) * 4];
             const bool top = y < 32;
-            px[0] = top ? 0 : 255; // B
+            px[0] = top ? 0 : 255;
             px[1] = 0;
-            px[2] = top ? 255 : 0; // R
-            px[3] = 7;             // alpha "lixo": o swizzle deve forcar 1
+            px[2] = top ? 255 : 0;
+            px[3] = 7;
         }
     tex->beginD3D();
     interop->context()->UpdateSubresource(tex->d3d(), 0, nullptr, data.data(), 64 * 4, 0);
@@ -332,20 +314,16 @@ void testInteropTexture(bool forceCpu)
                 bottom[3]);
     CHECK(top[0] == 255 && top[1] == 0 && top[2] == 0);
     CHECK(bottom[0] == 0 && bottom[1] == 0 && bottom[2] == 255);
-    // glGetTexImage ignora o swizzle: confere que o alpha vira 1 na amostragem
     GLint swizzleA = 0;
     glBindTexture(GL_TEXTURE_2D, tex->gl());
     glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, &swizzleA);
     glBindTexture(GL_TEXTURE_2D, 0);
     CHECK(swizzleA == static_cast<GLint>(GL_ONE));
 
-    // Segunda escrita: o conteudo muda
     tex->clear(0.0f, 1.0f, 0.0f, 1.0f);
     const Pixels g = readTexture(tex->gl(), 64, 64);
     CHECK(g.at(10, 10)[1] == 255 && g.at(10, 10)[0] == 0);
 }
-
-// ---------------------------------------------------------------------------------------------- captura de tela
 
 struct CaptureResult
 {
@@ -474,7 +452,6 @@ void testScreenCapture()
         CHECK(anyOk);
     }
 
-    // Janela inexistente: espera, nao quebra
     section("captura de tela: janela ausente (Aguardando)");
     {
         ScreenCaptureSource src;
@@ -496,8 +473,6 @@ void testScreenCapture()
     for (const WindowTarget& w : windows)
         CHECK(w.pid != static_cast<unsigned long>(GetCurrentProcessId()));
 }
-
-// ---------------------------------------------------------------------------------------------- webcam
 
 void testWebcam()
 {
@@ -558,14 +533,13 @@ void testWebcam()
         const double elapsed = std::chrono::duration<double>(Clock::now() - t0).count();
         std::printf("  \"%s\": %llu quadros em %.2f s | pior update() = %.1f ms | status: %s\n", name.c_str(),
                     src.frameCount(), elapsed, worstUpdate * 1000.0, src.status().text.c_str());
-        CHECK(worstUpdate < 0.1); // a UI nunca trava abrindo o dispositivo
+        CHECK(worstUpdate < 0.1);
         if (src.frameCount() >= 10) {
             anyLive = true;
             CHECK(src.state() == CaptureDeviceSource::State::Live);
             const Pixels p = readTexture(src.texture(), src.width(), src.height());
             std::printf("  imagem %dx%d, %ld pixels nao pretos\n", p.w, p.h, countVisible(p, 0, 0, p.w, p.h));
         } else {
-            // Sem imagem: "Sem sinal" com textura preta
             std::printf("  AVISO: \"%s\" nao entregou 10 quadros (camera virtual ociosa ou em uso)\n", name.c_str());
             CHECK(src.status().level == SourceStatus::Level::Warning || src.state() == CaptureDeviceSource::State::Connecting);
         }
@@ -596,12 +570,12 @@ void testWebcam()
         CHECK(src.status().text.rfind("Sem sinal", 0) == 0);
         CHECK(worst < 0.1);
         const Pixels p = readTexture(src.texture(), src.width(), src.height());
-        CHECK(countVisible(p, 0, 0, p.w, p.h) == 0 && p.at(5, 5)[3] == 255); // preto opaco
+        CHECK(countVisible(p, 0, 0, p.w, p.h) == 0 && p.at(5, 5)[3] == 255);
         src.close();
     }
 }
 
-} // namespace
+}
 
 int main()
 {
@@ -622,7 +596,6 @@ int main()
     std::printf("GL: %s | %s\n", reinterpret_cast<const char*>(glGetString(GL_RENDERER)),
                 reinterpret_cast<const char*>(glGetString(GL_VENDOR)));
 
-    // Aquece o catalogo de fontes (a varredura roda em segundo plano)
     FontCatalog::instance().ensureScanned();
 
     testText();

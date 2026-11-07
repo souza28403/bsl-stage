@@ -14,7 +14,7 @@ FfglSource::FfglSource(std::string typeId, int width, int height)
 {
     const EntryPtr entry = Catalog::instance().find(typeId_);
     if (!entry) {
-        loadError_ = "Plugin FFGL não encontrado: " + typeId_ + " (veja Ver > Plugins)";
+        loadError_ = "Plugin FFGL não encontrado: " + typeId_ + " (veja Exibir > Plugins)";
     } else if (entry->info.type == kTypeMixer) {
         loadError_ = "Mixers FFGL ainda não são suportados.";
     } else {
@@ -28,7 +28,7 @@ FfglSource::~FfglSource()
     close();
 }
 
-bool FfglSource::open(const std::filesystem::path& /*path*/, std::string* error)
+bool FfglSource::open(const std::filesystem::path& , std::string* error)
 {
     close();
     if (!instance_) {
@@ -46,7 +46,7 @@ bool FfglSource::open(const std::filesystem::path& /*path*/, std::string* error)
     }
     clock_ = media::ClipClock{};
     instance_->setParams(currentParams());
-    update(0.0); // primeiro quadro ja na abertura
+    update(0.0);
     return true;
 }
 
@@ -72,7 +72,7 @@ void FfglSource::update(double dt)
     ctx.canvasWidth = width_;
     ctx.canvasHeight = height_;
     ctx.frameIndex = frame_++;
-    ctx.topOrigin = true; // texturas de fonte: linha 0 = topo
+    ctx.topOrigin = true;
     ctx.pool = &pool_;
     ctx.audio = audio::AudioAnalyzer::instance().snapshot();
     instance_->process(ctx, 0, width_, height_, *fbo_);
@@ -91,11 +91,11 @@ bool FfglSource::pollParamChanges(media::ParamValues& values)
     using namespace std::chrono;
     if (!instance_ || !fbo_)
         return false;
-    if (steady_clock::now() - lastEdit_ < milliseconds(400)) // nao briga com o arrastar de um controle
+    if (steady_clock::now() - lastEdit_ < milliseconds(400))
         return false;
     if (!instance_->pollParamChanges(values))
         return false;
-    values_ = values; // a fonte ja sabe desses valores
+    values_ = values;
     return true;
 }
 
@@ -115,7 +115,6 @@ struct Node
     GeneratorInfo info;
 };
 
-// Nome mostrado quando o plugin nao esta no catalogo: o arquivo do typeId sem a extensao
 std::string nameFromId(const std::string& typeId)
 {
     std::string pluginId, file;
@@ -125,7 +124,7 @@ std::string nameFromId(const std::string& typeId)
     return dot == std::string::npos || dot == 0 ? file : file.substr(0, dot);
 }
 
-} // namespace
+}
 
 const GeneratorInfo* FfglSource::generatorInfo(const std::string& id)
 {
@@ -158,4 +157,4 @@ const GeneratorInfo* FfglSource::generatorInfo(const std::string& id)
     return result;
 }
 
-} // namespace bsl::ffgl
+}

@@ -31,7 +31,6 @@ constexpr ImU32 kGroupColors[fx::bsllight::kSliceGroups] = {
     IM_COL32(0xe8, 0x34, 0x3a, 255), IM_COL32(0xff, 0x8a, 0x1f, 255), IM_COL32(0xff, 0xd2, 0x3f, 255), IM_COL32(0x3d, 0xdc, 0x84, 255),
     IM_COL32(0x27, 0xd3, 0xe6, 255), IM_COL32(0x4a, 0x7d, 0xff, 255), IM_COL32(0xa6, 0x6b, 0xff, 255), IM_COL32(0xff, 0x5f, 0xb7, 255)};
 
-// Estado so da interface (um editor visivel por vez)
 struct EditorUi
 {
     std::set<std::string> selected;
@@ -42,7 +41,6 @@ struct EditorUi
 };
 EditorUi g_ui;
 
-// Slices mostrados: os da saida do BSL Stage ou os do XML do Resolume (mesma escolha do efeito)
 struct SliceView
 {
     std::vector<FeedSlice> slices;
@@ -63,8 +61,6 @@ SliceView currentSlices(const media::ParamSet& params)
     SliceView v;
     if (params.s("source") == "xml") {
         std::string path = params.s("xmlFile");
-        if (path.empty())
-            path = fx::bsllight::defaultResolumeSliceXmlPath();
         const auto now = std::chrono::steady_clock::now();
         if (path != g_xml.path || now - g_xml.checked > std::chrono::seconds(2)) {
             g_xml.checked = now;
@@ -78,7 +74,7 @@ SliceView currentSlices(const media::ParamSet& params)
                 std::string text;
                 if (net::readWholeFile(fp, text, 64u << 20)) {
                     int cw = 0, ch = 0;
-                    g_xml.view.slices = fx::bsllight::parseResolumeSlices(text, &cw, &ch);
+                    g_xml.view.slices = fx::bsllight::parseSliceXml(text, &cw, &ch);
                     g_xml.view.compW = cw > 0 ? cw : 1920;
                     g_xml.view.compH = ch > 0 ? ch : 1080;
                 }
@@ -128,7 +124,6 @@ bool checkRow(const char* label, const char* id, bool& v, bool enabled = true)
     return changed;
 }
 
-// Escolha entre poucas opcoes (botoes lado a lado). Devolve true quando muda.
 bool choiceRow(const char* label, const char* id, int& value, const std::vector<const char*>& names)
 {
     rowLabel(label);
@@ -162,7 +157,6 @@ bool colorRow(const char* label, const char* id, float rgb[3])
     return ImGui::ColorEdit3(id, rgb, ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_DisplayHex | ImGuiColorEditFlags_InputRGB);
 }
 
-// Vertices do retangulo orientado (em coordenadas do canvas)
 void sliceCorners(const FeedSlice& s, ImVec2 out[4])
 {
     const float a = s.angle * 3.14159265f / 180.0f;
@@ -183,8 +177,6 @@ bool pointInQuad(const ImVec2 q[4], ImVec2 p)
     }
     return inside;
 }
-
-// ----------------------------------------------------------------------------------------------- preview e lista
 
 void drawPreview(const SliceView& view, SliceState& state, bool& changed)
 {
@@ -218,7 +210,6 @@ void drawPreview(const SliceView& view, SliceState& state, bool& changed)
         const bool sel = g_ui.selected.count(s.id) > 0;
         const ImU32 fill = (base & 0x00FFFFFF) | (static_cast<ImU32>(sel ? 120 : (assigned ? 70 : 30)) << 24);
         if (s.angle == 0.0f) {
-            // Sem rotacao: respeita o arredondamento do grupo
             float round = 0.0f;
             if (assigned) {
                 const SliceGroup& g = state.groups[it->second];
@@ -238,7 +229,6 @@ void drawPreview(const SliceView& view, SliceState& state, bool& changed)
     if (view.slices.empty())
         drawCenteredMono(dl, a, b, "nenhum slice", ImGui::GetColorU32(theme::kTextDim));
 
-    // Selecao: clique (Shift soma) ou retangulo arrastado
     const ImGuiIO& io = ImGui::GetIO();
     if (ImGui::IsItemActivated()) {
         g_ui.dragging = true;
@@ -310,7 +300,6 @@ void drawSliceList(const SliceView& view, SliceState& state, bool& changed)
     if (ImGui::SmallButton("Nenhum##sl_nenhum"))
         g_ui.selected.clear();
 
-    // Remove da selecao o que nao existe mais
     for (auto it = g_ui.selected.begin(); it != g_ui.selected.end();) {
         const bool exists = std::any_of(view.slices.begin(), view.slices.end(), [&](const FeedSlice& s) { return s.id == *it; });
         it = exists ? std::next(it) : g_ui.selected.erase(it);
@@ -350,7 +339,6 @@ void drawSliceList(const SliceView& view, SliceState& state, bool& changed)
     }
     ImGui::EndChild();
 
-    // Enviar a selecao para um grupo
     ImGui::AlignTextToFramePadding();
     if (g_ui.selected.empty())
         ImGui::TextColored(theme::kTextDim, "Selecione slices para enviar a um grupo");
@@ -381,8 +369,6 @@ void drawSliceList(const SliceView& view, SliceState& state, bool& changed)
     }
     ImGui::EndDisabled();
 }
-
-// ----------------------------------------------------------------------------------------------- um grupo
 
 void copyStyle(SliceState& s, int from, int to)
 {
@@ -577,7 +563,7 @@ void drawGroupEditor(SliceGroup& g, int gi, SliceState& state, bool& changed)
     ImGui::PopID();
 }
 
-} // namespace
+}
 
 bool drawSliceEditor(const media::ParamSet& params, const std::string& stateId, media::Json& out)
 {
@@ -589,7 +575,6 @@ bool drawSliceEditor(const media::ParamSet& params, const std::string& stateId, 
     drawPreview(view, state, changed);
     drawSliceList(view, state, changed);
 
-    // Fichas dos 8 grupos
     ImGui::Spacing();
     g_ui.group = std::clamp(g_ui.group, 0, fx::bsllight::kSliceGroups - 1);
     int counts[fx::bsllight::kSliceGroups] = {};
@@ -621,4 +606,4 @@ bool drawSliceEditor(const media::ParamSet& params, const std::string& stateId, 
     return changed;
 }
 
-} // namespace bsl::ui
+}

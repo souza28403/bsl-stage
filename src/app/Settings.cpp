@@ -18,7 +18,7 @@ std::filesystem::path settingsPath()
     return paths::appDataDir() / L"settings.json";
 }
 
-} // namespace
+}
 
 const char* uiLayoutKey(UiLayout layout)
 {
@@ -57,7 +57,6 @@ Settings Settings::load()
                             : mode == "fixed" ? UiScaleMode::Fixed
                                               : UiScaleMode::Window;
         } else {
-            // arquivo antigo (so uiScale): valor fixo se o usuario escolheu um; senao o padrao novo
             s.uiScaleMode = savedScale > 0.0f ? UiScaleMode::Fixed : UiScaleMode::Window;
         }
         const std::string layoutKey = j.value("layout", std::string("default"));
@@ -71,7 +70,6 @@ Settings Settings::load()
                 if (item.is_string() && !item.get<std::string>().empty() && s.isfFolders.size() < 32)
                     s.isfFolders.push_back(item.get<std::string>());
         }
-        s.ffglUseResolume = j.value("ffglUseResolume", false);
         if (j.contains("ffglFolders") && j["ffglFolders"].is_array()) {
             for (const auto& item : j["ffglFolders"])
                 if (item.is_string() && !item.get<std::string>().empty() && s.ffglFolders.size() < 32)
@@ -92,12 +90,24 @@ Settings Settings::load()
         s.aiDevice = j.value("aiDevice", std::string("auto"));
         if (s.aiDevice != "gpu" && s.aiDevice != "cpu")
             s.aiDevice = "auto";
+        s.controlPanelMode = j.value("controlPanelMode", std::string("browser")) == "window" ? "window" : "browser";
+        if (j.contains("keys") && j["keys"].is_array())
+            s.keys = control::bindingsFromJson(j["keys"]);
+        if (j.contains("dmx") && j["dmx"].is_object())
+            s.dmxNet = dmx::netConfigFromJson(j["dmx"]);
+        if (j.contains("update") && j["update"].is_object()) {
+            const auto& u = j["update"];
+            s.update.autoCheck = u.value("autoCheck", true);
+            s.update.beta = u.value("beta", false);
+            s.update.skippedVersion = u.value("skippedVersion", std::string());
+            s.update.lastCheckUnix = std::max<int64_t>(0, u.value("lastCheck", static_cast<int64_t>(0)));
+        }
         if (j.contains("recentProjects") && j["recentProjects"].is_array()) {
             for (const auto& item : j["recentProjects"]) {
                 if (!item.is_string() || s.recentProjects.size() >= kMaxRecentProjects)
                     continue;
                 const std::string utf8 = item.get<std::string>();
-                std::error_code ec; // some o que foi apagado/movido
+                std::error_code ec;
                 if (std::filesystem::exists(std::filesystem::path(std::u8string(utf8.begin(), utf8.end())), ec))
                     s.recentProjects.push_back(utf8);
             }
@@ -106,7 +116,15 @@ Settings Settings::load()
             const auto& w = j["window"];
             s.windowWidth = std::clamp(w.value("width", s.windowWidth), 640, 16384);
             s.windowHeight = std::clamp(w.value("height", s.windowHeight), 360, 16384);
+            if (w.contains("x") && w["x"].is_number_integer() && w.contains("y") && w["y"].is_number_integer()) {
+                s.windowX = std::clamp(w["x"].get<int>(), -32000, 32000);
+                s.windowY = std::clamp(w["y"].get<int>(), -32000, 32000);
+                s.hasWindowPos = true;
+            }
+            s.windowMaximized = w.value("maximized", false);
         }
+        if (j.contains("view"))
+            s.view = ui::view::fromJson(j["view"]);
     } catch (const nlohmann::json::exception&) {
         return Settings{};
     }
@@ -138,7 +156,6 @@ void Settings::save() const
     j["layout"] = uiLayoutKey(layout);
     j["lastLayoutPreset"] = lastLayoutPreset;
     j["isfFolders"] = isfFolders;
-    j["ffglUseResolume"] = ffglUseResolume;
     j["ffglFolders"] = ffglFolders;
     j["audio"] = {{"enabled", audio.enabled},
                   {"source", audio.source == audio::AudioSource::Input ? "input" : "loopback"},
@@ -149,12 +166,26 @@ void Settings::save() const
                   {"releaseScale", audio.releaseScale}};
     j["aiFps"] = aiFps;
     j["aiDevice"] = aiDevice;
+    j["controlPanelMode"] = controlPanelMode;
+    if (!(keys == control::defaultAppKeys()))
+        j["keys"] = control::bindingsToJson(keys);
+    if (!(dmxNet == dmx::NetConfig{}))
+        j["dmx"] = dmx::netConfigToJson(dmxNet);
+    j["update"] = {{"autoCheck", update.autoCheck},
+                   {"beta", update.beta},
+                   {"skippedVersion", update.skippedVersion},
+                   {"lastCheck", update.lastCheckUnix}};
     j["recentProjects"] = recentProjects;
-    j["window"] = {{"width", windowWidth}, {"height", windowHeight}};
+    j["window"] = {{"width", windowWidth}, {"height", windowHeight}, {"maximized", windowMaximized}};
+    if (hasWindowPos) {
+        j["window"]["x"] = windowX;
+        j["window"]["y"] = windowY;
+    }
+    j["view"] = ui::view::toJson(view);
 
     std::ofstream file(settingsPath());
     if (file)
         file << j.dump(2) << '\n';
 }
 
-} // namespace bsl
+}

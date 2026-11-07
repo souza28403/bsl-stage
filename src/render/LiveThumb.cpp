@@ -11,7 +11,7 @@ out vec2 vUv;
 void main()
 {
     vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
-    vUv = p; // linha 0 da textura = topo da imagem
+    vUv = p;
     gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
 }
 )";
@@ -20,8 +20,8 @@ const char* const kFragmentSource = R"(#version 330 core
 in vec2 vUv;
 out vec4 fragColor;
 uniform sampler2D uSrc;
-uniform vec2 uFit;   // fracao da miniatura ocupada pela fonte
-uniform vec2 uStep;  // tamanho de um pixel da miniatura em UV da fonte
+uniform vec2 uFit;
+uniform vec2 uStep;
 void main()
 {
     vec2 s = (vUv - 0.5) / uFit + 0.5;
@@ -41,7 +41,7 @@ void main()
 }
 )";
 
-} // namespace
+}
 
 LiveThumbnailer::LiveThumbnailer()
 {
@@ -125,4 +125,4 @@ void LiveThumbnailer::blit(GLuint srcTexture, int srcWidth, int srcHeight, Textu
         glEnable(GL_DEPTH_TEST);
 }
 
-} // namespace bsl
+}

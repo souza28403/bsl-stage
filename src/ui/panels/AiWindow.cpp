@@ -37,7 +37,7 @@ std::string fmt1(double v)
     return b;
 }
 
-} // namespace
+}
 
 void openAiWindow()
 {
@@ -77,7 +77,6 @@ void drawAiWindow(PanelContext& ctx)
         ImGui::TextColored(theme::kSuccess, "IA ligada: %d fps de inferência por fonte", st.rate);
     }
 
-    // Dispositivo em uso: o dos modelos carregados; antes de carregar, o que o DirectML vai usar
     std::string device = "ainda não carregado";
     bool onGpu = false;
     for (const ai::ModelStats& m : st.models)
@@ -178,4 +177,4 @@ void drawAiWindow(PanelContext& ctx)
         ctx.settings.save();
 }
 
-} // namespace bsl::ui
+}

@@ -14,6 +14,9 @@ void configureIsfLibrary(const Settings& settings)
 {
     std::vector<std::filesystem::path> dirs;
     dirs.push_back(paths::isfDir());
+    std::error_code ec;
+    std::filesystem::create_directories(paths::pluginsDir(), ec);
+    dirs.push_back(paths::pluginsDir());
     for (const std::string& utf8 : settings.isfFolders)
         dirs.emplace_back(std::u8string(utf8.begin(), utf8.end()));
 
@@ -25,6 +28,7 @@ void configureIsfLibrary(const Settings& settings)
     fx::IsfLibrary& lib = fx::IsfLibrary::instance();
     lib.configure(std::move(dirs), samples);
     lib.rescan();
+    lib.startWatcher();
 }
 
-} // namespace bsl
+}

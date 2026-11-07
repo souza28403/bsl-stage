@@ -1,0 +1,119 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Versão e conferência da tag
+        id: ver
+        shell: pwsh
+        run: |
+          $cmake = Get-Content CMakeLists.txt -Raw
+          if ($cmake -notmatch 'project\(BSLStage VERSION (\d+\.\d+\.\d+)') { throw "Não achei project(BSLStage VERSION x.y.z) no CMakeLists.txt" }
+          $cmakeVersion = $Matches[1]
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $tag = $env:GITHUB_REF_NAME
+            $core = ($tag -replace '^v', '') -replace '[-+].*$', ''
+            if ($core -ne $cmakeVersion) { throw "A tag $tag não bate com a versão do CMake ($cmakeVersion). Atualize project(VERSION) antes de criar a tag." }
+            $version = $tag -replace '^v', ''
+            $prerelease = if ($tag -match '-') { 'true' } else { 'false' }
+          } else {
+            $version = "$cmakeVersion-ensaio"
+            $prerelease = 'true'
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "prerelease=$prerelease" >> $env:GITHUB_OUTPUT
+          Write-Host "Versão do pacote: $version (pré-release: $prerelease)"
+
+      - name: Configurar (preset windows)
+        shell: pwsh
+        run: cmake --preset windows -DBSLSTAGE_GITHUB_REPO="${{ github.repository }}"
+
+      - name: Compilar (preset release)
+        shell: pwsh
+        run: cmake --build --preset release
+
+      - name: Testes que não precisam de GPU nem de rede
+        shell: pwsh
+        run: |
+          foreach ($t in 'updatetest', 'uitest', 'maptest') {
+            Write-Host "== bslstage_$t"
+            & "build/Release/bslstage_$t.exe"
+            if ($LASTEXITCODE -ne 0) { throw "bslstage_$t falhou ($LASTEXITCODE)" }
+          }
+
+      - name: Empacotar
+        id: pack
+        shell: pwsh
+        run: |
+          $version = '${{ steps.ver.outputs.version }}'
+          $name = "BSL-Stage-$version-win64"
+          $rel = 'build/Release'
+          $stage = "dist/$name"
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          foreach ($exe in 'BSLStage.exe', 'bslstage_worker.exe', 'bslstage_updater.exe', 'bslstage_isfcheck.exe') {
+            if (-not (Test-Path "$rel/$exe")) { throw "Faltou $exe em $rel" }
+            Copy-Item "$rel/$exe" $stage
+          }
+          Copy-Item "$rel/*.dll" $stage
+          Copy-Item "$rel/assets" "$stage/assets" -Recurse
+          if (Test-Path "$rel/cef") {
+            Copy-Item "$rel/cef" "$stage/cef" -Recurse
+          } else {
+            Write-Warning "Sem a pasta cef: este pacote NÃO traz a fonte Web (CEF). Veja docs/RELEASE.md."
+          }
+          Copy-Item LICENSE, README.md, THIRD-PARTY-NOTICES.md, PRIVACIDADE.md, TERMOS-DE-USO.md $stage
+          Copy-Item licenses "$stage/licenses" -Recurse
+          if (Test-Path "$rel/licenses/cef-CREDITS.html") {
+            Copy-Item "$rel/licenses/cef-CREDITS.html" "$stage/licenses"
+          }
+          Copy-Item docs/PATENTES-E-LICENCAS.md $stage
+          Copy-Item docs/plugins "$stage/docs/plugins" -Recurse
+          Copy-Item skills "$stage/skills" -Recurse
+          Copy-Item AGENTS.md $stage
+          foreach ($doc in 'LICENSE', 'THIRD-PARTY-NOTICES.md', 'PRIVACIDADE.md', 'TERMOS-DE-USO.md') {
+            if (-not (Test-Path "$stage/$doc")) { throw "pacote sem $doc" }
+          }
+          if (-not (Get-ChildItem "$stage/licenses" -File)) { throw "pacote sem os textos de licenças (licenses/)" }
+          if (-not (Test-Path "$stage/BSLStage.exe")) { throw "pacote sem BSLStage.exe" }
+          New-Item -ItemType Directory -Force out | Out-Null
+          Compress-Archive -Path "dist/$name" -DestinationPath "out/$name.zip" -CompressionLevel Optimal
+          $hash = (Get-FileHash "out/$name.zip" -Algorithm SHA256).Hash.ToLower()
+          [System.IO.File]::WriteAllText("$PWD/out/SHA256SUMS.txt", "$hash  $name.zip`n", (New-Object System.Text.UTF8Encoding $false))
+          Get-Content out/SHA256SUMS.txt
+          "zip=out/$name.zip" >> $env:GITHUB_OUTPUT
+
+      - name: Aviso sobre o FFmpeg
+        shell: pwsh
+        run: |
+          Write-Host "::warning title=FFmpeg::O pacote usa o FFmpeg LGPL da BtbN, que inclui os decodificadores H.264/HEVC. Veja docs/PATENTES-E-LICENCAS.md e docs/RELEASE.md antes de publicar o rascunho."
+
+      - name: Guardar o pacote (artefato)
+        uses: actions/upload-artifact@v4
+        with:
+          name: BSL-Stage-${{ steps.ver.outputs.version }}-win64
+          path: |
+            out/*.zip
+            out/SHA256SUMS.txt
+
+      - name: Criar o release como rascunho
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ghArgs = @($env:GITHUB_REF_NAME, '${{ steps.pack.outputs.zip }}', 'out/SHA256SUMS.txt',
+                    '--title', "BSL Stage ${{ steps.ver.outputs.version }}", '--generate-notes', '--draft')
+          if ('${{ steps.ver.outputs.prerelease }}' -eq 'true') { $ghArgs += '--prerelease' }
+          gh release create @ghArgs

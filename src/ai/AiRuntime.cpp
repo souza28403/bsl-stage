@@ -50,7 +50,6 @@ std::filesystem::path exeDir()
     return std::filesystem::path(std::wstring(buf, n)).parent_path();
 }
 
-// --- float <-> half (modelos fp16 com entrada fp16, se houver) ---
 std::uint16_t floatToHalf(float f)
 {
     std::uint32_t x;
@@ -100,7 +99,6 @@ float halfToFloat(std::uint16_t h)
     return f;
 }
 
-// --- Contexto global: DLL do ORT, ambiente e dispositivo DirectML (criados uma vez) ---
 struct Global
 {
     std::mutex mutex;
@@ -117,13 +115,12 @@ struct Global
 
 Global& global()
 {
-    static Global* g = new Global(); // nunca destruido (ordem de destruicao no fim do processo)
+    static Global* g = new Global();
     return *g;
 }
 
 void initGpu(Global& g)
 {
-    // Adaptador DX12 de maior desempenho (a NVIDIA num notebook Optimus), sem o WARP
     ComPtr<IDXGIFactory6> factory;
     if (FAILED(CreateDXGIFactory2(0, IID_PPV_ARGS(&factory)))) {
         g.info.gpuError = "DXGI indisponível";
@@ -181,7 +178,6 @@ void initGpu(Global& g)
     g.info.gpuAvailable = true;
 }
 
-// Carrega tudo na primeira chamada; nunca lanca
 Global& ensureGlobal()
 {
     Global& g = global();
@@ -198,11 +194,10 @@ Global& ensureGlobal()
         g.info.error = "onnxruntime.dll não encontrada ao lado do programa";
         return g;
     }
-    // DirectML.dll da pasta do app (a do System32 pode ser antiga); opcional: sem ela so a CPU funciona
     const std::filesystem::path dmlPath = dir / L"DirectML.dll";
     if (std::filesystem::exists(dmlPath, ec))
         g.dmlDll = LoadLibraryExW(dmlPath.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
-    if (!g.dmlDll) // sem a DLL do app: a DirectML do Windows (System32)
+    if (!g.dmlDll)
         g.dmlDll = LoadLibraryExW(L"DirectML.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
     g.ortDll = LoadLibraryExW(ortPath.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
     if (!g.ortDll) {
@@ -220,6 +215,11 @@ Global& ensureGlobal()
     try {
         Ort::InitApi(api);
         g.env = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_ERROR, "bslstage");
+        try {
+            g.env->DisableTelemetryEvents();
+        } catch (const std::exception& e) {
+            log::warn(std::string("IA: não foi possível desligar a telemetria do ONNX Runtime: ") + e.what());
+        }
         g.info.version = base->GetVersionString();
         g.info.loaded = true;
     } catch (const std::exception& e) {
@@ -239,7 +239,7 @@ Global& ensureGlobal()
     return g;
 }
 
-} // namespace
+}
 
 struct Session::Impl
 {
@@ -247,7 +247,7 @@ struct Session::Impl
     std::string inputName;
     std::string outputName;
     ONNXTensorElementDataType inputType = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
-    std::vector<float> chw;            // entrada normalizada
+    std::vector<float> chw;
     std::vector<std::uint16_t> chwHalf;
 };
 
@@ -260,7 +260,7 @@ namespace {
 std::mutex g_modelsOverrideMutex;
 std::filesystem::path g_modelsOverride;
 bool g_modelsOverrideSet = false;
-} // namespace
+}
 
 void setModelsDirOverride(const std::filesystem::path& dir, bool enable)
 {
@@ -335,7 +335,7 @@ RuntimeSnapshot peekRuntime()
     std::unique_lock lock(g.mutex, std::try_to_lock);
     RuntimeSnapshot snap;
     if (!lock.owns_lock()) {
-        snap.tried = true; // carregando agora
+        snap.tried = true;
         return snap;
     }
     snap.tried = g.tried;
@@ -373,7 +373,6 @@ std::unique_ptr<Session> Session::create(ModelKind kind, DevicePref pref, std::s
         try {
             Ort::SessionOptions so;
             so.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-            // Formas fixas: o DirectML so compila bem grafos estaticos
             so.AddFreeDimensionOverrideByName("batch_size", 1);
             so.AddFreeDimensionOverrideByName("height", s->h_);
             so.AddFreeDimensionOverrideByName("width", s->w_);
@@ -382,7 +381,6 @@ std::unique_ptr<Session> Session::create(ModelKind kind, DevicePref pref, std::s
                 so.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
                 Ort::ThrowOnError(g.dmlApi->SessionOptionsAppendExecutionProvider_DML1(so, g.dml.Get(), g.queue.Get()));
             } else {
-                // O ORT 1.24 falha ao otimizar o Depth Anything fp16 na CPU (fusao de LayerNorm com os Cast inseridos)
                 so.AddConfigEntry("optimization.disable_specified_optimizers", "SimplifiedLayerNormFusion");
                 const unsigned hw = std::max(1u, std::thread::hardware_concurrency());
                 so.SetIntraOpNumThreads(static_cast<int>(std::clamp(hw / 2, 1u, 6u)));
@@ -424,7 +422,6 @@ bool Session::run(const std::uint8_t* rgb, std::vector<float>& out, std::string&
         const size_t plane = static_cast<size_t>(w_) * static_cast<size_t>(h_);
         Impl& im = *impl_;
         im.chw.resize(plane * 3);
-        // Profundidade: media/desvio do ImageNet; pessoa (MODNet): (x - 0,5) / 0,5
         const bool depth = kind_ == ModelKind::Depth;
         const float mean[3] = {depth ? 0.485f : 0.5f, depth ? 0.456f : 0.5f, depth ? 0.406f : 0.5f};
         const float inv[3] = {depth ? 1.0f / (0.229f * 255.0f) : 1.0f / (0.5f * 255.0f),
@@ -488,4 +485,4 @@ bool Session::run(const std::uint8_t* rgb, std::vector<float>& out, std::string&
     }
 }
 
-} // namespace bsl::ai
+}

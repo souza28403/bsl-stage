@@ -62,7 +62,7 @@ ParamInfo paramFromJson(const Json& j)
     return p;
 }
 
-} // namespace
+}
 
 Json PluginInfo::toJson() const
 {
@@ -166,7 +166,6 @@ std::string makeTypeId(const std::string& pluginId, const std::string& fileName)
 
 bool splitTypeId(const std::string& typeId, std::string& pluginId, std::string& fileName)
 {
-    // "ffgl:" + 4 caracteres + ":" + nome
     if (typeId.size() < 5 + 4 + 1 || typeId.compare(0, 5, "ffgl:") != 0 || typeId[9] != ':')
         return false;
     pluginId = typeId.substr(5, 4);
@@ -174,4 +173,4 @@ bool splitTypeId(const std::string& typeId, std::string& pluginId, std::string& 
     return true;
 }
 
-} // namespace bsl::ffgl
+}

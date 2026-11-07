@@ -28,13 +28,11 @@ bool isDll(const fs::path& p)
     return ext == L".dll";
 }
 
-// O plugin WebBrowser do Resolume nunca e importado: o BSL Stage tem a fonte Web nativa
 bool isWebBrowserPlugin(const fs::path& p)
 {
     return lowerName(p) == L"webbrowser.dll";
 }
 
-// A pasta tem algum plugin FFGL (ate 3 niveis)? Pastas assim nao sao "dependencias" de um plugin vizinho.
 bool containsPlugins(const fs::path& dir, int depth = 0)
 {
     std::error_code ec;
@@ -52,7 +50,6 @@ bool containsPlugins(const fs::path& dir, int depth = 0)
     return false;
 }
 
-// Copia recursivamente (sobrescreve). Conta falhas por arquivo.
 void copyTree(const fs::path& from, const fs::path& to, ImportResult& r)
 {
     std::error_code ec;
@@ -91,7 +88,7 @@ std::string summary(const ImportResult& r, bool webBrowserSkipped)
     return m;
 }
 
-} // namespace
+}
 
 ImportResult importPlugins(const fs::path& source, const fs::path& dest)
 {
@@ -101,7 +98,6 @@ ImportResult importPlugins(const fs::path& source, const fs::path& dest)
         fs::create_directories(dest, ec);
         bool webBrowserSkipped = false;
         if (fs::is_directory(source, ec)) {
-            // Uma pasta: vai inteira (com as subpastas) para Plugins\<nome da pasta>
             const fs::path target = dest / source.filename();
             copyTree(source, target, r);
             ++r.folders;
@@ -118,7 +114,6 @@ ImportResult importPlugins(const fs::path& source, const fs::path& dest)
                     ++r.failures;
                 else
                     ++r.dlls;
-                // Subpastas ao lado da DLL que nao tem outros plugins sao as dependencias dela
                 for (fs::directory_iterator it(source.parent_path(), ec), end; !ec && it != end; it.increment(ec)) {
                     std::error_code dec;
                     if (!it->is_directory(dec) || containsPlugins(it->path()))
@@ -173,4 +168,4 @@ bool ImportJob::takeResult(ImportResult& out)
     return true;
 }
 
-} // namespace bsl::ffgl
+}

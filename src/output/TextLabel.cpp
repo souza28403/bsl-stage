@@ -57,7 +57,6 @@ std::vector<int> decodeUtf8(const std::string& s)
     return out;
 }
 
-// Linha de texto como máscara de alpha (8 bits)
 struct Line
 {
     int width = 0;
@@ -117,7 +116,7 @@ Line renderLine(const Font& f, const std::string& text, float px)
     return line;
 }
 
-} // namespace
+}
 
 LabelBitmap renderLabel(const std::string& line1, float pixelHeight1, const std::string& line2, float pixelHeight2)
 {
@@ -135,7 +134,6 @@ LabelBitmap renderLabel(const std::string& line1, float pixelHeight1, const std:
     out.height = a.height + b.height + gap + pad * 2;
     out.rgba.assign(static_cast<size_t>(out.width) * static_cast<size_t>(out.height) * 4, 0);
 
-    // Placa: preto a 70%
     for (size_t i = 0; i < out.rgba.size(); i += 4)
         out.rgba[i + 3] = 178;
 
@@ -149,7 +147,6 @@ LabelBitmap renderLabel(const std::string& line1, float pixelHeight1, const std:
                 if (!cov)
                     continue;
                 unsigned char* px = &out.rgba[(static_cast<size_t>(top + y) * static_cast<size_t>(out.width) + static_cast<size_t>(left + x)) * 4];
-                // mistura branco sobre a placa (cor) e sobe o alpha
                 for (int c = 0; c < 3; ++c)
                     px[c] = static_cast<unsigned char>((255 * cov + px[c] * (255 - cov)) / 255);
                 px[3] = static_cast<unsigned char>(std::max<int>(px[3], cov));
@@ -161,4 +158,4 @@ LabelBitmap renderLabel(const std::string& line1, float pixelHeight1, const std:
     return out;
 }
 
-} // namespace bsl
+}

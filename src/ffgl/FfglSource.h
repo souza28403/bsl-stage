@@ -1,8 +1,5 @@
 #pragma once
 
-// Gerador FFGL: plugin do tipo fonte (FF_SOURCE), desenhado no tamanho do canvas. Uma ISource como as outras geradoras;
-// o id do clip e o typeId do plugin ("ffgl:<id de 4 caracteres>:<arquivo>").
-
 #include "core/Generators.h"
 #include "ffgl/FfglInstance.h"
 #include "media/ISource.h"
@@ -38,7 +35,6 @@ public:
 
     FfglInstance* instance() const { return instance_.get(); }
 
-    // Registro de geradores (ver core/Generators): informacao do gerador "ffgl:..." (criada sob demanda, nunca liberada)
     static const GeneratorInfo* generatorInfo(const std::string& id);
 
 protected:
@@ -65,4 +61,4 @@ private:
     std::chrono::steady_clock::time_point lastEdit_{};
 };
 
-} // namespace bsl::ffgl
+}

@@ -10,6 +10,7 @@
 #include "ui/Theme.h"
 #include "ui/Ui.h"
 #include "ui/Widgets.h"
+#include "ui/panels/MappingPanels.h"
 
 #include <imgui.h>
 
@@ -30,10 +31,9 @@ using Quad = std::array<Point2, 4>;
 
 constexpr int kGridSteps[4] = {8, 16, 32, 64};
 
-// Estado compartilhado pelas duas vistas: ima, grade, regua e historico
 struct Shared
 {
-    bool snapOn = true; // ligado por padrao
+    bool snapOn = true;
     bool gridOn = false;
     int gridIdx = 1;
     bool ruler = true;
@@ -48,33 +48,34 @@ struct DragState
     DragKind kind = DragKind::None;
     ImVec2 startMouse{};
     Point2 startContent{};
-    ImVec2 startOffset{};  // pan
+    ImVec2 startOffset{};
     bool moved = false;
-    int handle = -1;       // alca (Redimensionar) ou canto (Corner)
+    int handle = -1;
     int cornerSlice = -1;
-    std::vector<int> idx;  // slices que andam juntos (Mover)
+    std::vector<int> idx;
     std::vector<Quad> start;
     Xform startX;
     int hitSlice = -1;
     bool toggleOnRelease = false;
     bool collapseOnRelease = false;
-    std::vector<int> baseSel; // selecao antes do retangulo (Ctrl/Shift soma)
+    std::vector<int> baseSel;
     snap::Result snap;
-    float angle = 0.0f;       // rotacao em curso (rad), para o rotulo
+    float angle = 0.0f;
 };
 
 struct ViewState
 {
     float scale = 1.0f;
-    ImVec2 offset{0.0f, 0.0f}; // origem do conteudo em relacao ao canto da vista
+    ImVec2 offset{0.0f, 0.0f};
     bool autoFit = true;
-    bool recenter = false;     // pedido de "100%": centraliza o conteudo na proxima medida da vista
-    int lastKey = -1;          // tela (Saida) ou -2 (Entrada) em que o ajuste foi feito
+    bool recenter = false;
+    int lastKey = -1;
     int lastW = 0;
     int lastH = 0;
     DragState drag;
     bool openDelete = false;
     int deleteCount = 0;
+    int ctxSlice = -1;
 };
 ViewState g_views[2];
 
@@ -103,9 +104,6 @@ struct Content
     int w = 1;
     int h = 1;
 };
-
-// --------------------------------------------------------------------------------------------------------------
-// Geometria: a Entrada e a Saida editam "quads" (a Entrada e um retangulo com 4 cantos)
 
 Quad quadOf(MapViewKind k, const Slice& s)
 {
@@ -141,7 +139,6 @@ void setQuad(MapViewKind k, Slice& s, const Quad& q, Content c)
     s.input = {x, y, w, h};
 }
 
-// Limites do conteudo: a Entrada fica dentro do canvas; a Saida pode passar um pouco da tela (como sempre foi)
 RectF limitOf(MapViewKind k, Content c)
 {
     const float w = static_cast<float>(c.w), h = static_cast<float>(c.h);
@@ -171,8 +168,6 @@ snap::Options snapOptions(const ViewState& v)
     return o;
 }
 
-// Alvos do ima: os OUTROS slices (retangulos de entrada na Entrada, quads de saida na Saida) e as bordas/centro do
-// canvas ou da tela
 snap::Targets buildTargets(MapViewKind k, const Screen& screen, Content c, const std::vector<int>& exclude)
 {
     snap::Targets t;
@@ -193,7 +188,7 @@ int hitSlice(MapViewKind k, const Screen& screen, const MappingSelection& sel, P
         return pointInQuad(q.data(), p);
     };
     const int n = static_cast<int>(screen.slices.size());
-    for (int j = n - 1; j >= 0; --j) // o selecionado ganha (da para arrastar um slice coberto por outro)
+    for (int j = n - 1; j >= 0; --j)
         if (isSliceSelected(sel, j) && inside(j))
             return j;
     for (int j = n - 1; j >= 0; --j)
@@ -202,7 +197,6 @@ int hitSlice(MapViewKind k, const Screen& screen, const MappingSelection& sel, P
     return -1;
 }
 
-// Retangulo "transformavel" de um slice: o retangulo exato, ou a caixa dos cantos se o quad estiver deformado
 Xform xformOf(MapViewKind k, const Slice& s, bool* exact = nullptr)
 {
     Xform x;
@@ -212,9 +206,6 @@ Xform xformOf(MapViewKind k, const Slice& s, bool* exact = nullptr)
         *exact = ok;
     return x;
 }
-
-// --------------------------------------------------------------------------------------------------------------
-// Operacoes sobre a selecao
 
 void translateSelection(MapViewKind k, Screen& screen, const std::vector<int>& idx, Point2 d, Content c)
 {
@@ -229,7 +220,6 @@ void translateSelection(MapViewKind k, Screen& screen, const std::vector<int>& i
     }
 }
 
-// Mover a selecao inteira respeitando os limites (as setas)
 void nudgeSelection(MapViewKind k, Screen& screen, const std::vector<int>& idx, Point2 d, Content c)
 {
     bool any = false;
@@ -278,7 +268,6 @@ void doDistribute(MapViewKind k, Screen& screen, const MappingSelection& sel, sn
     applyOffsets(k, screen, idx, snap::distributeOffsets(boxesOf(k, screen, idx), d), c);
 }
 
-// "Encostar": o grupo selecionado cola no vizinho mais proximo na direcao escolhida
 void doAbut(MapViewKind k, Screen& screen, const MappingSelection& sel, snap::Dir dir, Content c)
 {
     const std::vector<int> idx = selectedIndices(sel, screen);
@@ -345,9 +334,6 @@ bool redoNow(PanelContext& ctx)
         v.drag = {};
     return true;
 }
-
-// --------------------------------------------------------------------------------------------------------------
-// Regua
 
 float niceStep(float minContentStep, float* mantissa)
 {
@@ -422,7 +408,7 @@ void drawRulers(ImDrawList* dl, ImVec2 vpMin, ImVec2 vpMax, ImVec2 origin, float
         dl->PopClipRect();
     }
     dl->AddRectFilled(vpMin, ImVec2(vpMin.x + lw, vpMin.y + th), color(theme::kPanelRaised));
-    if (hovered) { // posicao do mouse nas reguas (discreto)
+    if (hovered) {
         const ImU32 red = color(theme::kAccent);
         if (mouse.x > vpMin.x + lw)
             dl->AddLine(ImVec2(mouse.x, vpMin.y), ImVec2(mouse.x, vpMin.y + th), red);
@@ -430,9 +416,6 @@ void drawRulers(ImDrawList* dl, ImVec2 vpMin, ImVec2 vpMax, ImVec2 origin, float
             dl->AddLine(ImVec2(vpMin.x, mouse.y), ImVec2(vpMin.x + lw, mouse.y), red);
     }
 }
-
-// --------------------------------------------------------------------------------------------------------------
-// Barra de ferramentas da vista
 
 struct Bar
 {
@@ -442,7 +425,6 @@ struct Bar
 
     explicit Bar() { right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x; }
     void group() { gap = dp(10.0f); }
-    // Posiciona o proximo item de largura 'w': na mesma linha se couber, senao na seguinte
     void place(float w)
     {
         if (!first) {
@@ -479,10 +461,7 @@ bool barChip(Bar& bar, const char* label, bool on, const char* tip)
     return pressed;
 }
 
-} // namespace
-
-// --------------------------------------------------------------------------------------------------------------
-// Selecao
+}
 
 bool isSliceSelected(const MappingSelection& sel, int slice)
 {
@@ -544,9 +523,6 @@ void normalizeSelection(MappingSelection& sel, int sliceCount)
     sel.multiScreen = sel.screen;
 }
 
-// --------------------------------------------------------------------------------------------------------------
-// Historico
-
 void mapHistoryObserve(PanelContext& ctx)
 {
     const ImGuiIO& io = ImGui::GetIO();
@@ -600,9 +576,6 @@ MapEditorInfo mapEditorInfo()
     return info;
 }
 
-// --------------------------------------------------------------------------------------------------------------
-// Vista
-
 void drawMapView(PanelContext& ctx, MapViewKind kind)
 {
     const bool isOutput = kind == MapViewKind::Output;
@@ -627,10 +600,8 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
                                      : Content{std::max(ctx.canvas.width(), 1), std::max(ctx.canvas.height(), 1)};
     const bool pointsMode = isOutput && sel.pointsMode;
 
-    // Depois de desfazer/refazer/duplicar/remover os indices e referencias deste frame nao valem mais: fecha o painel
     bool bail = false;
 
-    // --- Barra -----------------------------------------------------------------------------------------------
     {
         Bar bar;
         if (barIcon(bar, ICON_MAGNET, "##map_ima",
@@ -661,7 +632,7 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
         if (barIcon(bar, ICON_MAXIMIZE, "##map_ajustar", "Ajustar à vista"))
             v.autoFit = true;
         bar.place(ImGui::CalcTextSize("100%").x + ImGui::GetStyle().FramePadding.x * 2.0f);
-        if (ImGui::Button("100%##map_100")) { // 1 px do conteudo = 1 px da tela, centrado quando a vista for medida
+        if (ImGui::Button("100%##map_100")) {
             v.autoFit = false;
             v.scale = 1.0f;
             v.recenter = true;
@@ -728,9 +699,8 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
         ImGui::PopStyleVar();
         return;
     }
-    normalizeSelection(sel, static_cast<int>(screen.slices.size())); // a barra pode ter mexido na selecao
+    normalizeSelection(sel, static_cast<int>(screen.slices.size()));
 
-    // --- Area da vista -----------------------------------------------------------------------------------------
     const float captionH = ImGui::GetTextLineHeightWithSpacing();
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const ImVec2 vpSize(avail.x, avail.y - captionH);
@@ -741,8 +711,6 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
     }
     const std::string btnId = isOutput ? "##saida" : "##entrada";
     ImGui::InvisibleButton(btnId.c_str(), vpSize, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonMiddle);
-    // As setas sao da vista (nao navegam entre itens) e o Alt tambem: segurar Alt para desligar o ima nao pode, ao soltar,
-    // ativar a navegacao da barra de menu do ImGui (que tiraria o foco do teclado da vista)
     for (ImGuiKey k : {ImGuiKey_LeftArrow, ImGuiKey_RightArrow, ImGuiKey_UpArrow, ImGuiKey_DownArrow, ImGuiMod_Alt})
         ImGui::SetItemKeyOwner(k);
     const bool hovered = ImGui::IsItemHovered();
@@ -755,7 +723,6 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
     const ImVec2 mouse = io.MousePos;
     ImDrawList* dl = ImGui::GetWindowDrawList();
 
-    // Ajustar a vista: o conteudo inteiro, centrado, com margem para as alcas e a regua
     const float cw = static_cast<float>(content.w), ch = static_cast<float>(content.h);
     const float margin = dp(34.0f);
     const float rulerW = g_shared.ruler ? dp(30.0f) : 0.0f, rulerH = g_shared.ruler ? dp(14.0f) : 0.0f;
@@ -771,7 +738,7 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
     if (v.autoFit) {
         v.scale = fitScale;
         v.offset = ImVec2(rulerW + (vpSize.x - rulerW - cw * v.scale) * 0.5f, rulerH + (vpSize.y - rulerH - ch * v.scale) * 0.5f);
-    } else if (v.recenter) { // pedido de 100%: centraliza
+    } else if (v.recenter) {
         v.offset = ImVec2(rulerW + (vpSize.x - rulerW - cw * v.scale) * 0.5f, rulerH + (vpSize.y - rulerH - ch * v.scale) * 0.5f);
     }
     v.recenter = false;
@@ -783,7 +750,6 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
         return Point2{(m.x - vpMin.x - v.offset.x) / v.scale, (m.y - vpMin.y - v.offset.y) / v.scale};
     };
 
-    // Zoom na roda, no ponto do cursor
     if (hovered && io.MouseWheel != 0.0f && v.drag.kind == DragKind::None) {
         const Point2 anchor = toContent(mouse);
         v.scale = std::clamp(v.scale * std::pow(1.12f, io.MouseWheel), 0.02f, 64.0f);
@@ -791,14 +757,13 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
         v.autoFit = false;
     }
 
-    // --- Estado de selecao desta vista -----------------------------------------------------------------------
     std::vector<int> selIdx;
     bool single = false;
     int primary = -1;
     bool exactRect = true;
     Xform primaryX;
     bool transformHandles = false;
-    auto refreshSelection = [&]() { // de novo depois de qualquer mudanca de selecao ou de geometria
+    auto refreshSelection = [&]() {
         selIdx = selectedIndices(sel, screen);
         single = selIdx.size() == 1;
         primary = single ? selIdx.front() : -1;
@@ -844,7 +809,6 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
 
     const bool spaceHeld = ImGui::IsKeyDown(ImGuiKey_Space) && focused;
 
-    // --- Pressionou o mouse -----------------------------------------------------------------------------------
     if (activated) {
         DragState d;
         d.startMouse = mouse;
@@ -871,7 +835,7 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
                 d.kind = DragKind::Resize;
                 d.handle = hitResizeHandle(mouse);
                 d.startX = primaryX;
-                if (d.handle % 2 == 0) // alcas de canto: 0 TL, 2 TR, 4 BR, 6 BL
+                if (d.handle % 2 == 0)
                     sel.corner = d.handle / 2;
             } else {
                 const int hit = hitSlice(kind, screen, sel, d.startContent);
@@ -905,9 +869,8 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
         v.drag = std::move(d);
     }
 
-    // --- Arrasto -------------------------------------------------------------------------------------------------
     if (v.drag.kind != DragKind::None && !active && !deactivated)
-        v.drag = {}; // perdeu o gesto (troca de modo, popup...)
+        v.drag = {};
     if (v.drag.kind != DragKind::None && (active || deactivated)) {
         DragState& d = v.drag;
         if (!d.moved && dist(mouse, d.startMouse) > dp(3.0f))
@@ -944,7 +907,6 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
             m.xs.push_back(b0.cx() + dx);
             m.ys.push_back(b0.cy() + dy);
             m.extent = {b0.x0 + dx, b0.y0 + dy, b0.x1 + dx, b0.y1 + dy};
-            // o Snap trabalha com a posicao proposta; os valores acima ja incluem dx/dy
             snap::Result r = snap::snapMoving(m, buildTargets(kind, screen, content, d.idx), snapOptions(v));
             float fx = dx + r.dx, fy = dy + r.dy;
             const float cx = clampRange(fx, lim.x0 - b0.x0, lim.x1 - b0.x1);
@@ -984,7 +946,7 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
             Point2 local = mapedit::toLocal(s0, dx, dy);
             mapedit::ResizeOptions ro;
             ro.keepAspect = io.KeyShift;
-            ro.fromCenter = io.KeyAlt; // Alt: do centro (e sem ima)
+            ro.fromCenter = io.KeyAlt;
             if (axisAligned && !ro.keepAspect && !ro.fromCenter) {
                 snap::Moving m;
                 if (mapedit::handleLeft(d.handle)) m.xs.push_back(s0.x() + local.x);
@@ -1000,7 +962,6 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
             Xform n = mapedit::resizeXform(s0, d.handle, local.x, local.y, ro);
             if (axisAligned) {
                 mapedit::roundToPixels(n);
-                // dentro dos limites (a Entrada nao sai do canvas)
                 float x0 = std::max(n.x(), lim.x0), y0 = std::max(n.y(), lim.y0);
                 float x1 = std::min(n.x() + n.w, lim.x1), y1 = std::min(n.y() + n.h, lim.y1);
                 x1 = std::max(x1, x0 + 1.0f);
@@ -1038,7 +999,6 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
         }
     }
 
-    // Cursor nas alcas
     if ((hovered || active) && v.drag.kind == DragKind::None) {
         if (spaceHeld)
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
@@ -1068,7 +1028,6 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
 
     refreshSelection();
 
-    // --- Teclado (so com o foco na vista) -----------------------------------------------------------------------
     const bool popupOpen = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
     if (focused && !io.WantTextInput && !popupOpen && v.drag.kind == DragKind::None) {
         if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
@@ -1103,7 +1062,7 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
             if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true)) dy += step;
             if ((dx != 0 || dy != 0) && !selIdx.empty()) {
                 const Point2 delta{static_cast<float>(dx), static_cast<float>(dy)};
-                if (pointsMode && single && sel.corner >= 0) { // Pontos: o canto selecionado
+                if (pointsMode && single && sel.corner >= 0) {
                     Slice& s = screen.slices[static_cast<size_t>(primary)];
                     Quad q = quadOf(kind, s);
                     Point2& p = q[static_cast<size_t>(sel.corner)];
@@ -1124,8 +1083,6 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
     }
     refreshSelection();
 
-    // ================================================================================================================
-    // Desenho
     dl->PushClipRect(vpMin, vpMax, true);
     dl->AddRectFilled(vpMin, vpMax, color(theme::kField));
 
@@ -1140,13 +1097,33 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
         const Compositor& canvas = ctx.canvas;
         const float s = canvas.uvMax();
         const float hx = 0.5f / cw, hy = 0.5f / ch;
-        dl->AddImage(static_cast<ImTextureID>(canvas.texture()), ia, ib, ImVec2(hx, s - hy), ImVec2(s - hx, hy));
+        GLuint bgTex = canvas.texture();
+        const Slice* srcSlice = sel.slice >= 0 && sel.slice < static_cast<int>(screen.slices.size())
+                                    ? &screen.slices[static_cast<size_t>(sel.slice)]
+                                    : nullptr;
+        const bool layerBg = srcSlice && srcSlice->source == kSliceFromLayer;
+        if (layerBg && !canvas.layerView(srcSlice->layerId, srcSlice->includeMaster, bgTex, srcSlice->applyLayerTransform))
+            bgTex = 0;
+        if (bgTex != 0)
+            dl->AddImage(static_cast<ImTextureID>(bgTex), ia, ib, ImVec2(hx, s - hy), ImVec2(s - hx, hy));
+        else
+            dl->AddRectFilled(ia, ib, IM_COL32(0, 0, 0, 255));
+        if (layerBg) {
+            const bool gone = sliceLayerMissing(ctx.composition, *srcSlice);
+            const std::string note = gone ? "Camada removida: o slice mostra preto"
+                                          : "Fonte: " + sliceSourceLabel(ctx.composition, *srcSlice)
+                                                + (srcSlice->includeMaster ? "  (com o master)" : "");
+            const ImVec2 ts = ImGui::CalcTextSize(note.c_str());
+            const ImVec2 p(std::max(ia.x, vpMin.x) + dp(8.0f), std::max(ia.y, vpMin.y) + dp(26.0f));
+            dl->AddRectFilled(ImVec2(p.x - dp(5.0f), p.y - dp(2.0f)), ImVec2(p.x + ts.x + dp(5.0f), p.y + ts.y + dp(2.0f)),
+                              color(theme::kBackground, 0.8f), rounding());
+            dl->AddText(p, color(gone ? theme::kWarning : theme::kAccent), note.c_str());
+        }
     }
     dl->AddRect(ia, ib, color(theme::kBorder));
     qa::noteRect(isOutput ? "saida:imagem" : "entrada:imagem", ia.x, ia.y, ib.x, ib.y);
     qa::noteRect(isOutput ? "saida:vista" : "entrada:vista", vpMin.x, vpMin.y, vpMax.x, vpMax.y);
 
-    // Grade
     if (g_shared.gridOn) {
         const float step = static_cast<float>(kGridSteps[g_shared.gridIdx]);
         if (step * v.scale >= dp(4.0f)) {
@@ -1166,7 +1143,6 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
         }
     }
 
-    // Slices: cinza nos demais, vermelho nos selecionados
     ImFont* body = fonts().body;
     const float line1 = std::max(1.0f, dp(1.5f));
     const float line2 = std::max(1.0f, dp(2.0f));
@@ -1194,14 +1170,13 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
     for (const int j : selIdx)
         drawSlice(j, true);
 
-    // Alcas
     const float hs = dp(4.0f);
     auto square = [&](ImVec2 p) {
         dl->AddRectFilled(ImVec2(p.x - hs, p.y - hs), ImVec2(p.x + hs, p.y + hs), color(theme::kText));
         dl->AddRect(ImVec2(p.x - hs, p.y - hs), ImVec2(p.x + hs, p.y + hs), color(theme::kAccent), 0.0f, 0, line1);
     };
     if (transformHandles) {
-        if (!exactRect) { // quad deformado: a caixa que envolve os cantos e o que se transforma
+        if (!exactRect) {
             const ImVec2 b0 = handleScreen(0), b1 = handleScreen(4);
             drawDashedRect(dl, b0, b1, color(theme::kWarning, 0.8f));
         }
@@ -1226,7 +1201,6 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
         }
     }
 
-    // Retangulo de selecao
     if (v.drag.kind == DragKind::Marquee && v.drag.moved) {
         const ImVec2 a = toScreen(v.drag.startContent);
         const ImVec2 lo(std::min(a.x, mouse.x), std::min(a.y, mouse.y)), hi(std::max(a.x, mouse.x), std::max(a.y, mouse.y));
@@ -1234,10 +1208,9 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
         dl->AddRect(lo, hi, color(theme::kAccent, 0.9f), 0.0f, 0, std::max(1.0f, dp(1.0f)));
     }
 
-    // Linhas-guia do ima (vermelhas, finas) e cantos encaixados
     if (v.drag.kind != DragKind::None) {
         const float gl = std::max(1.0f, dp(1.0f));
-        const float ext = dp(28.0f); // a linha passa um pouco das pontas, como nos apps da Adobe
+        const float ext = dp(28.0f);
         for (const snap::Guide& g : v.drag.snap.guides) {
             ImVec2 p0 = g.vertical ? toScreen({g.pos, g.lo}) : toScreen({g.lo, g.pos});
             ImVec2 p1 = g.vertical ? toScreen({g.pos, g.hi}) : toScreen({g.hi, g.pos});
@@ -1265,7 +1238,6 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
         }
     }
 
-    // Aviso discreto: quad deformado no modo Transformar
     if (transformHandles && isOutput && !exactRect) {
         const char* msg = "Quad deformado: o modo Transformar usa a caixa que envolve os cantos";
         const ImVec2 sz = ImGui::CalcTextSize(msg);
@@ -1279,7 +1251,6 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
         drawRulers(dl, vpMin, vpMax, ImVec2(vpMin.x + v.offset.x, vpMin.y + v.offset.y), v.scale, mouse, hovered);
     dl->PopClipRect();
 
-    // --- Legenda ---------------------------------------------------------------------------------------------------
     {
         char buf[320];
         const int nSel = static_cast<int>(selIdx.size());
@@ -1308,7 +1279,51 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
         ImGui::PopFont();
     }
 
-    // --- Confirmacao de remocao em lote -------------------------------------------------------------------------
+    const char* ctxName = "##map_ctx_slice";
+    if (hovered && v.drag.kind == DragKind::None && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        const int hit = hitSlice(kind, screen, sel, toContent(mouse));
+        if (hit >= 0) {
+            if (!isSliceSelected(sel, hit))
+                selectOnly(sel, hit);
+            else
+                sel.slice = hit;
+            v.ctxSlice = hit;
+            ImGui::OpenPopup(ctxName);
+        }
+    }
+    if (ImGui::BeginPopup(ctxName)) {
+        const bool valid = v.ctxSlice >= 0 && v.ctxSlice < static_cast<int>(screen.slices.size());
+        if (!valid) {
+            ImGui::CloseCurrentPopup();
+        } else {
+            Slice& target = screen.slices[static_cast<size_t>(v.ctxSlice)];
+            ImGui::TextColored(theme::kTextDim, "%s", target.name.c_str());
+            ImGui::Separator();
+            if (ImGui::BeginMenu("Vincular à camada…##map_ctx_vincular")) {
+                const std::vector<int> targets = selectedIndices(sel, screen);
+                auto apply = [&](int layerIndex) {
+                    for (const int j : targets)
+                        setSliceSource(ctx.composition, screen.slices[static_cast<size_t>(j)], layerIndex);
+                };
+                if (ImGui::MenuItem("Composição (sem camada)##map_ctx_comp", nullptr, target.source == kSliceFromComposition))
+                    apply(-1);
+                for (int l = 0; l < ctx.composition.layerCount(); ++l) {
+                    const Layer& layer = ctx.composition.layers[static_cast<size_t>(l)];
+                    const bool on = target.source == kSliceFromLayer && target.layerId == layer.id;
+                    const std::string label = "Camada " + std::to_string(l + 1) + (layer.name.empty() ? "" : ": " + layer.name)
+                                              + "##map_ctx_camada_" + std::to_string(l + 1);
+                    if (ImGui::MenuItem(label.c_str(), nullptr, on))
+                        apply(l);
+                }
+                ImGui::EndMenu();
+            }
+            if (ImGui::MenuItem("Criar camada para este slice##map_ctx_criar")) {
+                ctx.composition.addLayerForSlice(target);
+            }
+        }
+        ImGui::EndPopup();
+    }
+
     const char* popupName = "Remover slices##map_remover_conf";
     if (v.openDelete) {
         ImGui::OpenPopup(popupName);
@@ -1332,4 +1347,4 @@ void drawMapView(PanelContext& ctx, MapViewKind kind)
     ImGui::PopStyleVar();
 }
 
-} // namespace bsl::ui
+}

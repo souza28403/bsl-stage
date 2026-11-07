@@ -1,5 +1,7 @@
 #include "ui/LayoutPreset.h"
 
+#include "ui/ViewState.h"
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -22,7 +24,7 @@ using nlohmann::json;
 
 namespace {
 
-constexpr size_t kMaxDockBytes = 256 * 1024;   // um preset real tem alguns KB
+constexpr size_t kMaxDockBytes = 256 * 1024;
 constexpr size_t kMaxFileBytes = 512 * 1024;
 constexpr size_t kMaxNameBytes = 64;
 
@@ -44,14 +46,11 @@ bool setError(std::string* error, const std::string& text)
     return false;
 }
 
-// ---------------------------------------------------------------------------------------------------------------
-// imgui.ini
-
 struct Section
 {
-    std::string header; // "[Window][cmp_saida]"
-    std::string type;   // "Window"
-    std::string name;   // "cmp_saida"
+    std::string header;
+    std::string type;
+    std::string name;
     std::vector<std::string> lines;
 };
 
@@ -89,7 +88,7 @@ std::vector<Section> parseIni(const std::string& text)
             }
         }
         if (line.front() == ';' || sections.empty())
-            continue; // comentario ou texto solto antes da primeira secao
+            continue;
         sections.back().lines.push_back(line);
     }
     return sections;
@@ -110,7 +109,6 @@ std::string writeIni(const std::vector<Section>& sections)
     return out;
 }
 
-// Janelas dos paineis (Composicao: nomes com "###cmp_..."; Mapeamento: Lista/Entrada/Saida/Propriedades)
 bool isPanelWindow(const std::string& name)
 {
     if (name.find("cmp_") != std::string::npos)
@@ -133,7 +131,6 @@ bool isKnownRoot(unsigned id)
     return id == kCompDockRoot || id == kMapDockRoot;
 }
 
-// Procura "key" (ex.: "ID=0x") no inicio da linha ou depois de um espaco
 size_t findKey(const std::string& line, const char* key, size_t from = 0)
 {
     const std::string k(key);
@@ -179,7 +176,6 @@ std::string hex8(unsigned v)
     return buf;
 }
 
-// Troca o numero hexadecimal que vem depois de "key" por map[valor] (ou so o valor, se nao houver no mapa)
 bool remapHex(std::string& line, const char* key, const std::map<unsigned, unsigned>& remap)
 {
     const size_t pos = findKey(line, key);
@@ -199,7 +195,6 @@ bool remapHex(std::string& line, const char* key, const std::map<unsigned, unsig
     return true;
 }
 
-// "Key=a,b" -> a*sx, b*sy
 void scalePair(std::string& line, const char* key, double sx, double sy)
 {
     const size_t pos = findKey(line, key);
@@ -215,13 +210,11 @@ void scalePair(std::string& line, const char* key, double sx, double sy)
     const long b = std::strtol(second, &end, 10);
     if (end == second)
         return;
-    // O ImGui guarda estes valores em short: nada de estourar com um fator grande
     const long na = std::clamp(std::lround(static_cast<double>(a) * sx), -30000L, 30000L);
     const long nb = std::clamp(std::lround(static_cast<double>(b) * sy), -30000L, 30000L);
     line.replace(start, static_cast<size_t>(end - text), std::to_string(na) + "," + std::to_string(nb));
 }
 
-// Bloco do [Docking][Data]: a linha da raiz (sem recuo) e as indentadas que vem depois
 struct DockBlock
 {
     unsigned root = 0;
@@ -233,7 +226,6 @@ bool startsWithWord(const std::string& s, const char* word)
     return s.compare(0, std::char_traits<char>::length(word), word) == 0;
 }
 
-// Valida: raiz "DockSpace" conhecida com Pos/Size; todo no filho aponta para um pai ja definido no bloco
 bool blockValid(const DockBlock& b)
 {
     if (b.lines.empty() || !startsWithWord(b.lines.front(), "DockSpace") || !isKnownRoot(b.root))
@@ -297,10 +289,7 @@ void dropKeys(Section& s, const char* prefix)
     std::erase_if(s.lines, [&](const std::string& l) { return startsWithWord(l, prefix); });
 }
 
-} // namespace
-
-// ---------------------------------------------------------------------------------------------------------------
-// Nome
+}
 
 std::string sanitizeName(const std::string& name)
 {
@@ -315,16 +304,13 @@ std::string sanitizeName(const std::string& name)
     if (s.size() > kMaxNameBytes) {
         size_t cut = kMaxNameBytes;
         while (cut > 0 && (static_cast<unsigned char>(s[cut]) & 0xC0) == 0x80)
-            --cut; // nao parte um caractere UTF-8
+            --cut;
         s.resize(cut);
         const size_t last = s.find_last_not_of(' ');
         s = last == std::string::npos ? std::string() : s.substr(0, last + 1);
     }
     return s;
 }
-
-// ---------------------------------------------------------------------------------------------------------------
-// JSON
 
 std::string toJson(const LayoutPreset& p)
 {
@@ -336,6 +322,7 @@ std::string toJson(const LayoutPreset& p)
     j["refSize"] = {p.refW, p.refH};
     j["builtin"] = p.builtin;
     j["preview"] = {{"source", p.preview.source}, {"checker", p.preview.checker}, {"fit", p.preview.fit}};
+    j["hidden"] = p.hidden;
     if (p.hasUiScale)
         j["uiScale"] = {{"mode", p.uiMode}, {"value", p.uiScale}};
     j["dock"] = p.dock;
@@ -391,6 +378,13 @@ bool fromJson(const std::string& text, LayoutPreset& out, std::string* error)
             if (v.contains("fit") && v["fit"].is_string())
                 p.preview.fit = v["fit"].get<std::string>() == "fill" ? "fill" : "fit";
         }
+        if (j.contains("hidden") && j["hidden"].is_array()) {
+            std::vector<std::string> keys;
+            for (const json& item : j["hidden"])
+                if (item.is_string())
+                    keys.push_back(item.get<std::string>());
+            p.hidden = view::sanitizeKeys(keys);
+        }
         if (j.contains("uiScale") && j["uiScale"].is_object()) {
             const json& u = j["uiScale"];
             p.hasUiScale = true;
@@ -436,16 +430,13 @@ bool writeFile(const fs::path& file, const LayoutPreset& preset, std::string* er
         if (!out)
             return setError(error, "falha ao gravar o arquivo");
     }
-    fs::rename(tmp, file, ec); // no Windows substitui o destino existente
+    fs::rename(tmp, file, ec);
     if (ec) {
         fs::remove(tmp, ec);
         return setError(error, "não foi possível gravar o arquivo");
     }
     return true;
 }
-
-// ---------------------------------------------------------------------------------------------------------------
-// imgui.ini
 
 std::string extractDock(const std::string& fullIni)
 {
@@ -494,7 +485,6 @@ std::string applyDock(const std::string& currentIni, const std::string& presetDo
     const std::vector<Section> cur = parseIni(currentIni);
     const std::vector<Section> pre = parseIni(presetDock);
 
-    // Blocos do preset (so os validos) e as raizes que eles substituem
     std::vector<DockBlock> preBlocks;
     std::set<unsigned> replaced;
     for (DockBlock& b : dockBlocks(pre))
@@ -503,13 +493,11 @@ std::string applyDock(const std::string& currentIni, const std::string& presetDo
             preBlocks.push_back(std::move(b));
         }
 
-    // Do ini atual ficam os blocos que o preset nao toca
     std::vector<DockBlock> kept;
     for (DockBlock& b : dockBlocks(cur))
         if (!replaced.count(b.root))
             kept.push_back(std::move(b));
 
-    // Renumera os nos do preset para IDs livres (as raizes mantem o ID: sao os dockspaces do app)
     std::set<unsigned> used = definedIds(kept);
     used.insert(replaced.begin(), replaced.end());
     used.insert(kCompDockRoot);
@@ -544,7 +532,6 @@ std::string applyDock(const std::string& currentIni, const std::string& presetDo
     finalBlocks.insert(finalBlocks.end(), placed.begin(), placed.end());
     const std::set<unsigned> defined = definedIds(finalBlocks);
 
-    // Janelas dos paineis do preset (IDs de dock renumerados, posicao e tamanho na escala nova)
     std::vector<Section> presetWindows;
     std::set<std::string> presetNames;
     for (const Section& s : pre) {
@@ -558,11 +545,11 @@ std::string applyDock(const std::string& currentIni, const std::string& presetDo
         for (const std::string& orig : s.lines) {
             if (startsWithWord(orig, "LastUsed="))
                 continue;
-            if (startsWithWord(orig, "DockId=0x")) { // "DockId=0x00000011,0": no renumerado + posicao na aba
+            if (startsWithWord(orig, "DockId=0x")) {
                 const std::optional<unsigned> old = hexAfter(orig, "DockId=0x");
                 const auto it = old ? remap.find(*old) : remap.end();
                 if (it == remap.end() || !defined.count(it->second))
-                    continue; // aponta para um no que o preset nao define: janela solta
+                    continue;
                 const size_t comma = orig.find(',');
                 w.lines.push_back("DockId=0x" + hex8(it->second) + (comma == std::string::npos ? "" : orig.substr(comma)));
                 continue;
@@ -580,9 +567,9 @@ std::string applyDock(const std::string& currentIni, const std::string& presetDo
         if (isDockSection(s))
             continue;
         if (s.type == "Window" && presetNames.count(s.name))
-            continue; // o preset traz a sua
+            continue;
         Section copy = s;
-        if (s.type == "Window") { // janela que fica apontando para um no que sumiu: solta o DockId
+        if (s.type == "Window") {
             std::erase_if(copy.lines, [&](const std::string& l) {
                 if (!startsWithWord(l, "DockId=0x"))
                     return false;
@@ -604,9 +591,6 @@ std::string applyDock(const std::string& currentIni, const std::string& presetDo
         out.push_back(std::move(dock));
     return writeIni(out);
 }
-
-// ---------------------------------------------------------------------------------------------------------------
-// Pasta de presets
 
 PresetStore::PresetStore(fs::path dir) : dir_(std::move(dir)) {}
 
@@ -635,7 +619,7 @@ void PresetStore::reload()
     std::sort(files.begin(), files.end());
     for (const fs::path& f : files) {
         Entry e;
-        if (!readFile(f, e.preset, nullptr) || find(e.preset.name) >= 0) { // invalido ou nome repetido
+        if (!readFile(f, e.preset, nullptr) || find(e.preset.name) >= 0) {
             ++skipped_;
             continue;
         }
@@ -696,7 +680,7 @@ bool PresetStore::save(LayoutPreset preset, std::string* error)
     const int existing = find(preset.name);
     if (existing >= 0) {
         Entry& e = entries_[static_cast<size_t>(existing)];
-        preset.name = e.preset.name; // mantem a grafia que ja existia
+        preset.name = e.preset.name;
         preset.created = e.preset.created;
         if (!writeFile(e.file, preset, error))
             return false;
@@ -760,7 +744,6 @@ bool PresetStore::importFrom(const fs::path& file, std::string* error, std::stri
     LayoutPreset p;
     if (!readFile(file, p, error))
         return false;
-    // Nome repetido: "Nome (2)", "Nome (3)"...
     const std::string base = p.name;
     for (int n = 2; find(p.name) >= 0 && n < 1000; ++n)
         p.name = sanitizeName(base.substr(0, kMaxNameBytes - 8) + " (" + std::to_string(n) + ")");
@@ -771,4 +754,4 @@ bool PresetStore::importFrom(const fs::path& file, std::string* error, std::stri
     return save(std::move(p), error);
 }
 
-} // namespace bsl::ui::layout
+}

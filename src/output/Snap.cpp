@@ -17,7 +17,6 @@ struct Pick
     float d = 0.0f;
 };
 
-// Menor deslocamento que leva algum valor de 'vals' a uma linha (ou a grade), dentro do limiar
 Pick pickAxis(const std::vector<float>& vals, const std::vector<Line>& lines, const Options& o, float thr)
 {
     Pick best;
@@ -36,7 +35,7 @@ Pick pickAxis(const std::vector<float>& vals, const std::vector<Line>& lines, co
             const float g = std::round(v / o.gridStep) * o.gridStep;
             const float d = g - v;
             const float ad = std::abs(d);
-            if (ad <= thr && ad < bestAbs - 1.0e-4f) { // empate: o alvo (outro slice) ganha da grade
+            if (ad <= thr && ad < bestAbs - 1.0e-4f) {
                 best = {true, d};
                 bestAbs = ad;
             }
@@ -55,7 +54,6 @@ void addGuide(std::vector<Guide>& guides, bool vertical, float pos, float lo, fl
     guides.push_back({vertical, pos, lo, hi});
 }
 
-// Linhas-guia nas bordas que ficaram alinhadas e marcas nos cantos que caem sobre elas
 void finalize(Result& r, const Moving& m, const Targets& t)
 {
     const RectF ext{m.extent.x0 + r.dx, m.extent.y0 + r.dy, m.extent.x1 + r.dx, m.extent.y1 + r.dy};
@@ -100,7 +98,7 @@ Point2 closestOnSegment(const Segment& s, Point2 p)
     return {s.a.x + vx * u, s.a.y + vy * u};
 }
 
-} // namespace
+}
 
 RectF boundsOf(const Point2 c[4])
 {
@@ -189,7 +187,6 @@ Result snapPoint(Point2 p, const Targets& t, const Options& o)
         return r;
     const float thr = o.threshold();
 
-    // 1) outro canto/centro: encaixa exatamente (e o que "conecta" um slice no outro)
     int best = -1;
     float bestD = thr;
     for (size_t i = 0; i < t.points.size(); ++i) {
@@ -214,12 +211,10 @@ Result snapPoint(Point2 p, const Targets& t, const Options& o)
         return r;
     }
 
-    // 2) linhas x/y (bordas e centros)
     r = snapMoving(m, t, o);
     if (r.snappedX || r.snappedY)
         return r;
 
-    // 3) aresta mais proxima de outro quad
     float bestEdge = thr;
     Point2 hit{};
     bool found = false;
@@ -331,7 +326,7 @@ bool abutOffset(const RectF& g, const std::vector<RectF>& others, Dir dir, Point
         }
         if (!inDir)
             continue;
-        const int ov = overlap ? 0 : 1; // quem se sobrepoe na outra direcao ganha de quem esta "de lado"
+        const int ov = overlap ? 0 : 1;
         const float gap = std::abs(shift);
         if (!found || ov < bestOverlap || (ov == bestOverlap && gap < bestGap)) {
             found = true;
@@ -346,4 +341,4 @@ bool abutOffset(const RectF& g, const std::vector<RectF>& others, Dir dir, Point
     return true;
 }
 
-} // namespace bsl::snap
+}

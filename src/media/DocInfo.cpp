@@ -24,7 +24,7 @@ std::wstring keyOf(const std::filesystem::path& p)
     return s;
 }
 
-} // namespace
+}
 
 void setDocPageCount(const std::filesystem::path& file, int pages)
 {
@@ -41,4 +41,4 @@ int docPageCount(const std::filesystem::path& file)
     return it == table().end() ? 0 : it->second;
 }
 
-} // namespace bsl::media
+}

@@ -115,8 +115,6 @@ void syncInput(Config& c, int canvasW, int canvasH)
     c.inH = std::clamp(canvasH, 1, kMaxDim);
 }
 
-// ------------------------------------------------------------------------------------------------ validacao
-
 bool isCleanScale(double s)
 {
     if (!(s > 0.0))
@@ -154,8 +152,6 @@ Validation validate(const Config& c)
     return v;
 }
 
-// ------------------------------------------------------------------------------------------------ CSV
-
 namespace {
 
 void csvField(std::string& out, const std::string& f)
@@ -174,14 +170,13 @@ void csvField(std::string& out, const std::string& f)
     out += '"';
 }
 
-// Divide o texto em linhas de campos (aspas duplas, "" = aspas literal, quebra de linha dentro de aspas)
 std::vector<std::vector<std::string>> csvRows(std::string_view text, char delim)
 {
     std::vector<std::vector<std::string>> rows;
     std::vector<std::string> row;
     std::string field;
     bool quoted = false;
-    bool any = false; // a linha tem conteudo (ignora linhas em branco)
+    bool any = false;
     auto endField = [&]() {
         row.push_back(field);
         field.clear();
@@ -215,7 +210,6 @@ std::vector<std::vector<std::string>> csvRows(std::string_view text, char delim)
             endField();
             any = true;
         } else if (ch == '\r') {
-            // fim de linha tratado no '\n' (ou aqui, se for CR sozinho)
             if (i + 1 >= text.size() || text[i + 1] != '\n')
                 endRow();
         } else if (ch == '\n') {
@@ -245,14 +239,14 @@ bool parseNumber(const std::string& raw, double& out)
     std::string s = trim(raw);
     if (s.empty())
         return false;
-    std::replace(s.begin(), s.end(), ',', '.'); // virgula decimal (Excel pt-BR)
+    std::replace(s.begin(), s.end(), ',', '.');
     const char* b = s.data();
     const char* e = s.data() + s.size();
     const auto r = std::from_chars(b, e, out);
     return r.ec == std::errc() && r.ptr == e && std::isfinite(out);
 }
 
-} // namespace
+}
 
 std::string toCsv(const Config& c)
 {
@@ -281,7 +275,6 @@ bool fromCsv(const std::string& textIn, std::vector<Panel>& out, std::string* er
     if (text.starts_with("\xEF\xBB\xBF"))
         text.remove_prefix(3);
 
-    // Delimitador: o mais frequente na primeira linha com conteudo
     size_t lineEnd = text.find('\n');
     const std::string_view first = text.substr(0, lineEnd == std::string_view::npos ? text.size() : lineEnd);
     char delim = ';';
@@ -307,7 +300,7 @@ bool fromCsv(const std::string& textIn, std::vector<Panel>& out, std::string* er
             numeric = numeric && parseNumber(row[static_cast<size_t>(k) + 1], v[k]);
         if (!numeric) {
             if (line == 1)
-                continue; // cabecalho
+                continue;
             return fail("linha " + std::to_string(line) + ": valores numéricos inválidos");
         }
         if (v[2] < 1.0 || v[3] < 1.0 || v[2] > kMaxDim || v[3] > kMaxDim || std::abs(v[0]) > kMaxDim || std::abs(v[1]) > kMaxDim)
@@ -329,8 +322,6 @@ bool fromCsv(const std::string& textIn, std::vector<Panel>& out, std::string* er
     out = std::move(panels);
     return true;
 }
-
-// ------------------------------------------------------------------------------------------------ nomes
 
 std::string sanitizeFileName(const std::string& name)
 {
@@ -377,4 +368,4 @@ std::string upperUtf8(const std::string& s)
     return out;
 }
 
-} // namespace bsl::pixelmap
+}

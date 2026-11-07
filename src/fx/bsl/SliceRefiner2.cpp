@@ -1,9 +1,3 @@
-// BSL Slice Refiner 2 (plugin FFGL "BSS2", "BSL Slice Source 2.0"): desenha molduras nos slices (11 modos: neon, gradiente,
-// radar, perseguidor, pulsante, mascara de video, brilhos, glow, onda RGB, pontilhado, glitch) para ate 8 slices.
-//
-// Diferenca em relacao ao plugin: ele lia o AdvancedOutput.xml do Resolume; aqui os slices sao os do proprio BSL Stage
-// (OutputSetup, publicados em SliceFeed pelo app). Opcionalmente le um XML do Resolume (importar).
-
 #include "fx/bsl/BslCommon.h"
 #include "fx/bsl/BslEffects.h"
 #include "fx/bsl/SliceFeed.h"
@@ -24,12 +18,10 @@ using namespace media::param;
 
 constexpr int kMaxSlices = 8;
 
-// Port do fragment shader original (GLSL 4.10 -> 3.30). Os slices chegam em pixels da textura, com o canto superior
-// esquerdo como origem (como o XML); a matematica roda em y para CIMA como no OpenGL do plugin.
 const char* const kSliceBody = R"(
-uniform vec4 uRect[8];   // x, y, w, h (px)
-uniform vec4 uA[8];      // ativo, modo, arredondamento (0..1), espessura (px)
-uniform vec4 uB[8];      // velocidade, r, g, b
+uniform vec4 uRect[8];
+uniform vec4 uA[8];
+uniform vec4 uB[8];
 
 float sdRoundedBox(vec2 p, vec2 b, float r)
 {
@@ -59,7 +51,7 @@ void main()
 
         vec2 sSize = uRect[i].zw;
         vec2 sCenter = uRect[i].xy + sSize * 0.5;
-        sCenter.y = uSize.y - sCenter.y;              // o XML tem a origem no topo
+        sCenter.y = uSize.y - sCenter.y;
 
         vec2 p = uvPixels - sCenter;
         float maxR = min(sSize.x, sSize.y) * 0.5;
@@ -73,47 +65,47 @@ void main()
 
         vec4 sliceColor = vec4(0.0);
         if (mode < 0.1) {
-            sliceColor = vec4(color, 1.0) * border;                                       // 0: neon
+            sliceColor = vec4(color, 1.0) * border;
         } else if (mode < 1.1) {
             float angle = Time * speed * 2.0;
             vec2 rotP = rotate(p, angle);
             float grad = rotP.x / (b.x * 2.0) + 0.5;
-            sliceColor = vec4(color * grad, 1.0) * border;                                // 1: gradiente
+            sliceColor = vec4(color * grad, 1.0) * border;
         } else if (mode < 2.1) {
             float angle = atan(p.y, p.x);
             float radar = mod(angle + Time * speed * 5.0, 6.28318) / 6.28318;
-            sliceColor = vec4(color * radar, radar) * border;                             // 2: radar
+            sliceColor = vec4(color * radar, radar) * border;
         } else if (mode < 3.1) {
             float angle = atan(p.y, p.x);
             float radar = mod(angle + Time * speed * 5.0, 6.28318) / 6.28318;
             float dash = step(0.8, radar);
-            sliceColor = vec4(color * dash, dash) * border;                               // 3: perseguidor
+            sliceColor = vec4(color * dash, dash) * border;
         } else if (mode < 4.1) {
             float pulse = sin(Time * speed * 10.0) * 0.5 + 0.5;
-            sliceColor = vec4(color * pulse, pulse) * fill;                               // 4: bumper
+            sliceColor = vec4(color * pulse, pulse) * fill;
         } else if (mode < 5.1) {
-            sliceColor = videoSample * border;                                            // 5: mascara de video
+            sliceColor = videoSample * border;
         } else if (mode < 6.1) {
             float n = fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
             float sparkle = step(0.9, n) * sin(Time * speed * 20.0 + n * 10.0);
-            sliceColor = vec4(color * sparkle, sparkle) * border;                         // 6: brilhos
+            sliceColor = vec4(color * sparkle, sparkle) * border;
         } else if (mode < 7.1) {
             float pulse = sin(Time * speed * 5.0) * 0.5 + 0.5;
             float softBorder = 1.0 - smoothstep(strokeWidth * 0.1, strokeWidth * 2.0, abs(d));
-            sliceColor = vec4(color * pulse, pulse) * softBorder;                         // 7: glow pulsante
+            sliceColor = vec4(color * pulse, pulse) * softBorder;
         } else if (mode < 8.1) {
             float angle = atan(p.y, p.x);
             float wave = angle + Time * speed * 5.0;
             vec3 rgb = vec3(sin(wave) * 0.5 + 0.5, sin(wave + 2.094) * 0.5 + 0.5, sin(wave + 4.188) * 0.5 + 0.5);
-            sliceColor = vec4(rgb, 1.0) * border;                                         // 8: onda RGB
+            sliceColor = vec4(rgb, 1.0) * border;
         } else if (mode < 9.1) {
             float angle = atan(p.y, p.x);
             float dash = step(0.5, fract(angle * 10.0 + Time * speed * 5.0));
-            sliceColor = vec4(color * dash, dash) * border;                               // 9: pontilhado
+            sliceColor = vec4(color * dash, dash) * border;
         } else if (mode < 10.1) {
             float jitter = fract(sin(floor(p.y / 10.0) * 100.0 + Time * speed * 10.0) * 43758.5453) * 2.0 - 1.0;
             float glitchBorder = 1.0 - smoothstep(strokeWidth * 0.5 - 1.0, strokeWidth * 0.5 + 1.0, abs(d + jitter * strokeWidth * 0.5));
-            sliceColor = vec4(color, 1.0) * glitchBorder;                                 // 10: glitch
+            sliceColor = vec4(color, 1.0) * glitchBorder;
         }
         finalColor += sliceColor;
     }
@@ -122,7 +114,6 @@ void main()
 }
 )";
 
-// Cor do matiz (0..1), a mesma funcao do plugin
 void hueColor(float hue01, float rgb[3])
 {
     const float h = hue01 * 6.0f;
@@ -178,14 +169,11 @@ protected:
     }
 
 private:
-    // Slices vindos da saida do BSL Stage ou do XML do Resolume
     void refreshSlices(const ParamSet& p, const EffectContext& ctx)
     {
         using Clock = std::chrono::steady_clock;
         if (p.s("source") == "xml") {
             std::string path = p.s("xmlFile");
-            if (path.empty())
-                path = defaultResolumeSliceXmlPath();
             const auto now = Clock::now();
             if (path != xmlPath_ || now - lastXmlRead_ > std::chrono::seconds(2)) {
                 lastXmlRead_ = now;
@@ -200,7 +188,7 @@ private:
                     if (in) {
                         const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
                         if (text.size() < (64u << 20))
-                            slices_ = parseResolumeSlices(text);
+                            slices_ = parseSliceXml(text);
                     }
                 }
             }
@@ -232,17 +220,17 @@ private:
     std::chrono::steady_clock::time_point lastXmlRead_{};
 };
 
-} // namespace
+}
 
 std::vector<media::ParamDesc> describeSliceRefiner()
 {
     std::vector<media::ParamDesc> d;
     d.push_back(makeEnum("source", "Origem dos slices",
-                         {{"output", "Saída do BSL Stage"}, {"xml", "XML do Resolume"}}, "output", "Slices"));
-    d.back().tooltip = "Saída: os slices da aba Saída / Mapeamento do projeto. XML: importa um AdvancedOutput.xml do Resolume";
-    d.push_back(makeFile("xmlFile", "XML do Resolume", "XML do Resolume (*.xml)|*.xml"));
+                         {{"output", "Saída do BSL Stage"}, {"xml", "XML de slices"}}, "output", "Slices"));
+    d.back().tooltip = "Saída: os slices da aba Saída / Mapeamento do projeto. XML: importa um arquivo XML de slices";
+    d.push_back(makeFile("xmlFile", "XML de slices", "XML de slices (*.xml)|*.xml"));
     d.back().enabledIf = "source=xml";
-    d.back().tooltip = "Vazio = Documents\\Resolume Arena\\Preferences\\AdvancedOutput.xml";
+    d.back().tooltip = "Arquivo XML com os slices";
 
     static const std::vector<media::ParamOption> kModes = {
         {"neon", "Neon sólido"},     {"gradient", "Gradiente"},   {"radar", "Radar"},
@@ -272,4 +260,4 @@ std::unique_ptr<IEffect> makeSliceRefiner()
     return std::make_unique<SliceRefinerEffect>();
 }
 
-} // namespace bsl::fx::bsllight
+}

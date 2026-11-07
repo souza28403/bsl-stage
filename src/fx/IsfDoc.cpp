@@ -41,7 +41,6 @@ int countLines(const std::string& s)
     return static_cast<int>(std::count(s.begin(), s.end(), '\n'));
 }
 
-// Numero tolerante: numero, booleano (0/1) ou texto numerico
 bool asNumber(const Json& j, double& out)
 {
     if (j.is_number()) {
@@ -120,7 +119,6 @@ bool isSamplerType(IsfInputType t)
     return t == IsfInputType::Image || t == IsfInputType::Audio || t == IsfInputType::AudioFft || t == IsfInputType::Cube;
 }
 
-// "linha" do arquivo onde comeca o offset (1-based)
 int lineOfOffset(const std::string& s, size_t offset)
 {
     return 1 + static_cast<int>(std::count(s.begin(), s.begin() + static_cast<std::ptrdiff_t>(std::min(offset, s.size())), '\n'));
@@ -138,7 +136,7 @@ std::string exprFromJson(const Json& obj, const char* key)
     return {};
 }
 
-} // namespace
+}
 
 bool IsfDoc::isEffect() const
 {
@@ -151,7 +149,7 @@ IsfParseResult parseIsf(const std::string& fragmentIn, const std::string& vertex
     IsfParseResult res;
     std::string fragment = fragmentIn;
     if (fragment.compare(0, 3, "\xEF\xBB\xBF") == 0)
-        fragment.erase(0, 3); // BOM
+        fragment.erase(0, 3);
 
     const size_t open = fragment.find("/*");
     if (open == std::string::npos) {
@@ -168,9 +166,8 @@ IsfParseResult parseIsf(const std::string& fragmentIn, const std::string& vertex
 
     Json root;
     try {
-        root = Json::parse(jsonText, nullptr, true, true); // aceita comentarios dentro do JSON
+        root = Json::parse(jsonText, nullptr, true, true);
     } catch (const Json::parse_error& e) {
-        // O texto do nlohmann é "[json.exception.parse_error.101] parse error at line 3, column 5: <detalhe>"; só o detalhe interessa
         std::string detail = e.what();
         const size_t colon = detail.find(": ", detail.find("column"));
         if (colon != std::string::npos)
@@ -243,7 +240,7 @@ IsfParseResult parseIsf(const std::string& fragmentIn, const std::string& vertex
                 if (const auto lit = ij.find("LABELS"); lit != ij.end() && lit->is_array())
                     for (const Json& l : *lit)
                         in.labels.push_back(l.is_string() ? l.get<std::string>() : l.dump());
-                if (in.values.empty()) { // sem VALUES: faixa MIN..MAX
+                if (in.values.empty()) {
                     const long long lo = std::llround(numberOr(ij, "MIN", 0.0));
                     const long long hi = std::min(std::llround(numberOr(ij, "MAX", 1.0)), lo + 63);
                     for (long long v = lo; v <= hi; ++v)
@@ -266,9 +263,10 @@ IsfParseResult parseIsf(const std::string& fragmentIn, const std::string& vertex
             case IsfInputType::Event:
             case IsfInputType::Image:
                 break;
-            case IsfInputType::Audio:
             case IsfInputType::AudioFft:
-                doc->warnings.push_back("Entrada de áudio \"" + in.name + "\" não é suportada (ignorada).");
+                break;
+            case IsfInputType::Audio:
+                doc->warnings.push_back("Entrada de áudio \"" + in.name + "\" (forma de onda) não é suportada: use audioFFT.");
                 break;
             case IsfInputType::Cube:
                 doc->warnings.push_back("Entrada cube \"" + in.name + "\" não é suportada (ignorada).");
@@ -361,7 +359,7 @@ std::vector<media::ParamDesc> isfParamDescs(const IsfDoc& doc)
                                             media::Json::array({floatJson(in.defPoint[0]), floatJson(in.defPoint[1])}));
             d.min = std::min(in.minPoint[0], in.minPoint[1]);
             d.max = std::max(in.maxPoint[0], in.maxPoint[1]);
-            if (d.max <= d.min) { // MIN/MAX nao informados
+            if (d.max <= d.min) {
                 d.min = std::min<double>({d.min, in.defPoint[0], in.defPoint[1]});
                 d.max = std::max<double>({d.min + 1.0, 4096.0, in.defPoint[0], in.defPoint[1]});
             }
@@ -371,20 +369,16 @@ std::vector<media::ParamDesc> isfParamDescs(const IsfDoc& doc)
         case IsfInputType::Event: {
             media::ParamDesc d = makeCustom(in.name, in.label, "event", media::Json(0));
             d.min = 0.0;
-            d.max = 2147483647.0; // contador de cliques (nao pode ser limitado a 0..1)
+            d.max = 2147483647.0;
             out.push_back(std::move(d));
             break;
         }
         default:
-            break; // imagens e audio nao viram parametro
+            break;
         }
     }
     return out;
 }
-
-// ---------------------------------------------------------------------------------------------------------------
-// Expressoes
-// ---------------------------------------------------------------------------------------------------------------
 
 namespace {
 
@@ -508,7 +502,7 @@ private:
 
     bool call(const std::string& fn, double& out)
     {
-        ++pos_; // (
+        ++pos_;
         std::vector<double> args;
         skip();
         if (pos_ < s_.size() && s_[pos_] == ')') {
@@ -549,7 +543,7 @@ private:
     size_t pos_ = 0;
 };
 
-} // namespace
+}
 
 bool evalIsfExpression(const std::string& expr, const IsfVariableLookup& variable, double& result)
 {
@@ -557,15 +551,10 @@ bool evalIsfExpression(const std::string& expr, const IsfVariableLookup& variabl
     return p.parse(result);
 }
 
-// ---------------------------------------------------------------------------------------------------------------
-// Geracao do GLSL
-// ---------------------------------------------------------------------------------------------------------------
-
 namespace {
 
 std::string rewriteImpl(const std::string& s, bool frag);
 
-// Procura o ')' que fecha o '(' em 'open'; separa os argumentos de profundidade 1. false se nao fecha.
 bool splitCall(const std::string& s, size_t open, size_t& close, std::vector<std::string>& args)
 {
     int depth = 0;
@@ -599,7 +588,6 @@ std::string trim(const std::string& s)
     return s.substr(a, b - a);
 }
 
-// Fora de comentarios o GLSL so tem ASCII; dentro deles alguns drivers reclamam de UTF-8 (acentos do cabecalho JSON)
 std::string asciiOnly(std::string s)
 {
     for (char& c : s)
@@ -616,7 +604,7 @@ std::string rewriteImpl(const std::string& s, bool frag)
     size_t i = 0;
     while (i < n) {
         const char c = s[i];
-        if (c == '/' && i + 1 < n && s[i + 1] == '/') { // comentario de linha
+        if (c == '/' && i + 1 < n && s[i + 1] == '/') {
             size_t j = s.find('\n', i);
             if (j == std::string::npos)
                 j = n;
@@ -624,7 +612,7 @@ std::string rewriteImpl(const std::string& s, bool frag)
             i = j;
             continue;
         }
-        if (c == '/' && i + 1 < n && s[i + 1] == '*') { // comentario de bloco
+        if (c == '/' && i + 1 < n && s[i + 1] == '*') {
             size_t j = s.find("*/", i + 2);
             j = j == std::string::npos ? n : j + 2;
             out.append(s, i, j - i);
@@ -632,7 +620,7 @@ std::string rewriteImpl(const std::string& s, bool frag)
             continue;
         }
         if (std::isdigit(static_cast<unsigned char>(c)) || (c == '.' && i + 1 < n && std::isdigit(static_cast<unsigned char>(s[i + 1])))) {
-            size_t j = i + 1; // literal numerico (1.0e-3, 0x1F, 2u): nao e identificador
+            size_t j = i + 1;
             while (j < n) {
                 const char d = s[j];
                 if (std::isalnum(static_cast<unsigned char>(d)) || d == '.' || d == '_')
@@ -656,7 +644,6 @@ std::string rewriteImpl(const std::string& s, bool frag)
             ++j;
         const std::string id = s.substr(i, j - i);
 
-        // Troca simples de nomes
         if (id == "gl_FragColor") { out += "isf_FragColor"; i = j; continue; }
         if (id == "texture2D") { out += "texture"; i = j; continue; }
         if (id == "texture2DLod") { out += "textureLod"; i = j; continue; }
@@ -685,7 +672,6 @@ std::string rewriteImpl(const std::string& s, bool frag)
                         rep = "_" + name + "_imgSize";
                     else
                         rep = "_isf_normPixel(" + name + ", _" + name + "_flip, isf_FragNormCoord)";
-                    // Mantem a contagem de linhas: as quebras que sumiram (entre o nome e os parenteses, no 1o argumento)
                     const std::string original = s.substr(i, close + 1 - i);
                     const int lost = countLines(original) - countLines(rep);
                     out += rep;
@@ -715,7 +701,7 @@ const char* glslTypeFor(IsfInputType t)
     }
 }
 
-} // namespace
+}
 
 std::string rewriteIsfSource(const std::string& source, bool fragmentStage)
 {
@@ -726,7 +712,6 @@ IsfSources buildIsfSources(const IsfDoc& doc)
 {
     IsfSources out;
 
-    // Samplers: inputs de imagem (e audio/cube, que viram uma textura vazia), imported e TARGET dos passes
     std::set<std::string> seen;
     auto addImage = [&](const std::string& nm) {
         if (validName(nm) && seen.insert(nm).second)
@@ -759,7 +744,6 @@ IsfSources buildIsfSources(const IsfDoc& doc)
         common += "uniform bool _" + nm + "_flip;\n";
     }
 
-    // Fragment
     std::string fp = "#version 330 core\n";
     fp += common;
     fp += "in vec2 isf_FragNormCoord;\n";
@@ -769,7 +753,6 @@ IsfSources buildIsfSources(const IsfDoc& doc)
     out.fragmentPreambleLines = countLines(fp);
     out.fragment = fp + asciiOnly(rewriteImpl(doc.fragmentSource, true));
 
-    // Vertex
     std::string vp = "#version 330 core\n";
     vp += common;
     vp += "uniform float _isf_flipOut;\n";
@@ -825,4 +808,4 @@ IsfCompileLog remapGlslLog(const std::string& log, int preambleLines, const char
     return out;
 }
 
-} // namespace bsl::fx
+}

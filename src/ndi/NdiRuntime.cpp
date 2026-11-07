@@ -40,12 +40,12 @@ bool fileExists(const fs::path& p)
     return fs::is_regular_file(p, ec);
 }
 
-} // namespace
+}
 
 std::vector<fs::path> Runtime::candidates(const fs::path& explicitDll)
 {
     std::vector<fs::path> out;
-    if (!explicitDll.empty()) { // caminho explícito é exclusivo
+    if (!explicitDll.empty()) {
         out.push_back(explicitDll);
         return out;
     }
@@ -61,7 +61,6 @@ Runtime::~Runtime()
 {
     if (initialized_ && api_ && api_->destroy)
         api_->destroy();
-    // A DLL fica carregada de propósito: o NDI mantém threads internas e descarregar no encerramento não ganha nada.
 }
 
 void Runtime::setLibraryOverride(const fs::path& dll)
@@ -72,7 +71,6 @@ void Runtime::setLibraryOverride(const fs::path& dll)
 
 Runtime& Runtime::instance()
 {
-    // Alocado e nunca destruído: o NDI_destroy no encerramento do processo disputaria com as threads do próprio NDI
     static Runtime* rt = [] {
         auto* r = new Runtime();
         fs::path override_;
@@ -102,7 +100,6 @@ bool Runtime::load(const fs::path& explicitDll)
             error_ = std::string(kMissingText) + " (arquivo inexistente: " + candidate.string() + ")";
             continue;
         }
-        // ALTERED_SEARCH_PATH: as dependências da DLL são procuradas na pasta dela
         HMODULE mod = LoadLibraryExW(candidate.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
         if (!mod) {
             error_ = std::string(kMissingText) + " (não foi possível carregar " + candidate.string() + ", erro "
@@ -143,4 +140,4 @@ bool Runtime::load(const fs::path& explicitDll)
     return false;
 }
 
-} // namespace bsl::ndi
+}

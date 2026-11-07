@@ -1,6 +1,3 @@
-// Provedor "bsl:" do registro de efeitos (os plugins BSL Light nativos, sempre instalados) e o registro das fontes BSL
-// em core/Generators. As descricoes (tooltips) vem dos MANUAL_DE_USO.md dos plugins originais, quando existem.
-
 #include "fx/EffectRegistry.h"
 #include "fx/bsl/BslCommon.h"
 #include "fx/bsl/BslEffects.h"
@@ -17,31 +14,16 @@ namespace bsllight {
 const std::vector<BslPluginInfo>& bslPlugins()
 {
     static const std::vector<BslPluginInfo> kPlugins = {
-        {kAlphaReactorId, "BSL Alpha Reactor", "Reativo ao áudio",
-         "Aura de raios de luz (god rays) e rastros infinitos atrás do DJ recortado (canal alpha), reagindo ao áudio: os "
-         "graves pulsam os rastros e os agudos pulsam a aura. Use logo depois de uma Remoção de Fundo ou Chroma Key na "
-         "câmera do DJ.",
-         false},
-        {kDatamoshId, "BSL Datamosh & Pixel Sort", "Reativo ao áudio",
-         "Datamosh em tempo real (derretimento por erro de I-frame) com pixel sorting na GPU, contorno neon (Sobel), "
-         "rastro fantasma e máscara de proteção do rosto. O grave reduz o limiar do sort e amplifica o mosh; os agudos "
-         "alongam o escorrido.",
-         false},
-        {kTypoId, "BSL AudioReactive Typo", "Reativo ao áudio",
-         "Tipografia cinética e HUD de transmissão (estilo Boiler Room) sobre a câmera do DJ: 4 modos visuais, 4 "
-         "mesclagens, REC, timecode, VU meters, tremor no kick, RGB split, P&B rave, scanlines e vinheta. Tudo reage ao "
-         "áudio.",
-         false},
         {kSliceRefinerId, "BSL Slice Refiner 2", "Slices",
          "Desenha molduras nos slices da saída (11 modos: neon, gradiente, radar, perseguidor, pulsante, máscara de "
          "vídeo, brilhos, glow, onda RGB, pontilhado e glitch), até 8 slices. Usa os slices do próprio BSL Stage; também "
-         "pode importar um XML do Resolume.",
+         "pode importar um arquivo XML de slices.",
          false},
         {kSliceRefiner3Id, "BSL Slice Refiner", "Slices",
          "Recorta o vídeo do clip nos formatos dos slices da saída, em até 8 grupos: cantos arredondados, slices unidos "
          "sem linha no meio, borda com 12 efeitos (manchas, espiral, ondas, zebra, disco, corrida, tracejado, arco-íris, "
          "brilhos, glitch, pulsar, scanner), piscar, bounce no BPM e giro de cor. Usa os slices do próprio BSL Stage; "
-         "também pode importar o AdvancedOutput.xml do Resolume. O painel de controle é nativo; com Controle remoto pela "
+         "também pode importar um arquivo XML de slices. O painel de controle é nativo; com Controle remoto pela "
          "rede dá para usar o painel web de tablet ou celular.",
          false},
         {kVhsId, "BSL VHS", "Estilo",
@@ -73,28 +55,11 @@ const std::vector<BslPluginInfo>& bslPlugins()
          "Mapeamento, qual zona ele mostra: a frente nos totens de LED, o fundo na parede principal. O botão "
          "\"Rotear zonas para slices…\" faz isso de uma vez. Tudo é processado neste PC. Desligado no perfil Eco.",
          false, true},
-        {kGenBackgroundsId, "BSL Background", "Fundos",
-         "Fundos generativos em tempo real, 22 estilos (ondas, células, estrelas, nuvens, plasma, matrix, espiral, cyber "
-         "grid, aurora, Balatro, feixes, CRT, dither, galáxia, radar, seda...) com 3 cores, detalhe, densidade, "
-         "suavidade, distorção e rotação. Vinheta e grão de filme no final.",
-         true},
         {kWebBackgroundsId, "BSL WebBackgrounds", "Fundos",
          "Mais de 40 fundos generativos ao vivo (Silk, Aurora, Galaxy, Balatro...), paletas, efeitos de imagem (espelho, "
          "pixel, LED, CRT, strobo no BPM), texto e logo animados com entrada, loop e saída. Roda a página do BSL Studio "
-         "na fonte Web do app; todos os controles são parâmetros do clip.",
-         true},
-        {kWebMotionId, "BSL WebMotion", "Texto e web",
-         "Texto e logo com animação letra por letra (Slide UP ou Zoom IN) e imagens PNG separadas em letras pela "
-         "transparência. Com um endereço próprio vira um navegador para vídeos e sites.",
-         true},
-        {kPptManagerId, "BSL PPT Manager", "Documentos",
-         "Apresenta um PPTX, PPT, ODP ou PDF slide a slide: slide anterior e próximo, índice, avanço automático por tempo "
-         "ou batidas e transição em fade. A conversão roda em segundo plano (PowerPoint ou LibreOffice), sem travar a saída.",
-         true},
-        {kLedMapperId, "LED Mapper Pro", "Mapeamento",
-         "Grade de cabinets de LED (colunas × linhas, tamanho e espaço) para mapear e calibrar o painel, em dois tons "
-         "alternados com borda branca. O botão Exportar… grava um XML no formato Advanced Output do Resolume com um slice "
-         "por cabinet.",
+         "na fonte Web do app; todos os controles são parâmetros do clip e também podem ser mexidos pelo painel de "
+         "controle (botão \"Abrir painel de controle\" no painel Clip).",
          true},
         {kPixelMapPatternId, "Padrão de calibração BSL", "Mapeamento",
          "Desenha, ao vivo no canvas, o padrão de calibração HD de cada painel do modo Pixel Map no seu retângulo escalado "
@@ -120,7 +85,7 @@ struct Node
     GeneratorInfo info;
 };
 
-} // namespace
+}
 
 const GeneratorInfo* bslGeneratorInfo(const std::string& id)
 {
@@ -138,26 +103,15 @@ const GeneratorInfo* bslGeneratorInfo(const std::string& id)
     node->info.name = plugin->name;
     node->info.live = false;
     node->info.needsSetup = false;
-    if (id == kGenBackgroundsId) {
-        node->info.describe = [](const media::ParamValues&) { return describeGenBackgrounds(); };
-        node->info.create = [](int w, int h) { return makeGenBackgrounds(w, h); };
-    } else if (id == kWebBackgroundsId) {
+    if (id == kWebBackgroundsId) {
         node->info.live = true;
         node->info.describe = [](const media::ParamValues& v) { return describeWebBackgrounds(v); };
         node->info.create = [](int w, int h) { return makeWebBackgrounds(w, h); };
-    } else if (id == kWebMotionId) {
-        node->info.live = true;
-        node->info.describe = [](const media::ParamValues& v) { return describeWebMotion(v); };
-        node->info.create = [](int w, int h) { return makeWebMotion(w, h); };
-    } else if (id == kPptManagerId) {
-        node->info.describe = [](const media::ParamValues& v) { return describePptManager(v); };
-        node->info.create = [](int w, int h) { return makePptManager(w, h); };
     } else if (id == kPixelMapPatternId) {
         node->info.describe = [](const media::ParamValues&) { return describePixelMapPattern(); };
         node->info.create = [](int w, int h) { return makePixelMapPattern(w, h); };
     } else {
-        node->info.describe = [](const media::ParamValues&) { return describeLedMapper(); };
-        node->info.create = [](int w, int h) { return makeLedMapper(w, h); };
+        return nullptr;
     }
     const char* name = plugin->name;
     node->info.label = [name](const media::ParamValues&) { return std::string(name); };
@@ -166,7 +120,7 @@ const GeneratorInfo* bslGeneratorInfo(const std::string& id)
     return result;
 }
 
-} // namespace bsllight
+}
 
 namespace {
 
@@ -210,12 +164,6 @@ public:
 
     std::unique_ptr<IEffect> create(const std::string& typeId) const override
     {
-        if (typeId == bsllight::kAlphaReactorId)
-            return bsllight::makeAlphaReactor();
-        if (typeId == bsllight::kDatamoshId)
-            return bsllight::makeDatamosh();
-        if (typeId == bsllight::kTypoId)
-            return bsllight::makeAudioTypo();
         if (typeId == bsllight::kSliceRefinerId)
             return bsllight::makeSliceRefiner();
         if (typeId == bsllight::kSliceRefiner3Id)
@@ -235,12 +183,6 @@ public:
 
     std::vector<media::ParamDesc> describe(const std::string& typeId) const override
     {
-        if (typeId == bsllight::kAlphaReactorId)
-            return bsllight::describeAlphaReactor();
-        if (typeId == bsllight::kDatamoshId)
-            return bsllight::describeDatamosh();
-        if (typeId == bsllight::kTypoId)
-            return bsllight::describeAudioTypo();
         if (typeId == bsllight::kSliceRefinerId)
             return bsllight::describeSliceRefiner();
         if (typeId == bsllight::kSliceRefiner3Id)
@@ -259,11 +201,11 @@ public:
     }
 };
 
-} // namespace
+}
 
 std::shared_ptr<IEffectProvider> makeBslProvider()
 {
     return std::make_shared<BslProvider>();
 }
 
-} // namespace bsl::fx
+}

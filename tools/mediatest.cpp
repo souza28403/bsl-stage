@@ -1,6 +1,3 @@
-// bslstage_mediatest: valida a decodificacao de midia (sem GL).
-// Uso: bslstage_mediatest <pasta> [--eco]
-
 #include "media/ImageDecoder.h"
 #include "media/MediaFormats.h"
 #include "media/Thumbnailer.h"
@@ -80,7 +77,6 @@ Result testVideo(const fs::path& path, bool eco)
     r.detail = buf;
     r.alpha = vi.hasAlpha;
 
-    // 1) vazao: 60 frames
     int got = 0;
     bool anyAlphaFrame = false;
     std::string outFmt;
@@ -110,7 +106,6 @@ Result testVideo(const fs::path& path, bool eco)
         return r;
     }
 
-    // 2) seek exato
     if (vi.duration > 1.0) {
         const double target = vi.duration * 0.5;
         dec.seek(target);
@@ -127,7 +122,6 @@ Result testVideo(const fs::path& path, bool eco)
         }
     }
 
-    // 3) loop sem pausa: relogio de parede cruzando o fim do clip
     if (vi.duration > 1.0 && vi.fps >= 10.0) {
         dec.setLoop(true);
         const double start = std::max(0.0, vi.duration - 0.4);
@@ -187,7 +181,7 @@ Result testImage(const fs::path& path)
     return r;
 }
 
-} // namespace
+}
 
 int main(int argc, char** argv)
 {
@@ -214,13 +208,12 @@ int main(int argc, char** argv)
     for (const fs::path& p : files) {
         const MediaKind kind = classify(p);
         if (kind != MediaKind::Video && kind != MediaKind::Image)
-            continue; // PDF/Office/Web: ver bslstage_doctest
+            continue;
         Result r = (kind == MediaKind::Video) ? testVideo(p, eco) : testImage(p);
         const auto u8 = p.filename().u8string();
         r.name.assign(u8.begin(), u8.end());
         ++tested;
 
-        // Convencao: arquivos com "alpha" no nome precisam reportar alpha.
         if (r.ok && r.name.find("alpha") != std::string::npos && !r.alpha) {
             r.ok = false;
             r.detail += " | esperava alpha";
@@ -231,7 +224,6 @@ int main(int argc, char** argv)
                     r.msPerFrame, r.alpha ? "sim" : "nao", r.detail.c_str());
         std::fflush(stdout);
     }
-    // Miniaturas (thread de fundo)
     {
         Thumbnailer thumbs;
         int requested = 0;

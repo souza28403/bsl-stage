@@ -1,9 +1,4 @@
-// bslstage_projecttest: valida o formato .bslstage (sem janela e sem GL).
-// Uso: bslstage_projecttest [pasta-testmedia]
-//
-// Cobre: save -> load -> save identico, arquivo corrompido, versao futura, campos ausentes/extras,
-// relPath depois de mover a pasta do projeto, arquivo ausente e "Localizar".
-
+#include "control/ActionRegistry.h"
 #include "core/Composition.h"
 #include "media/DocInfo.h"
 #include "io/ProjectFile.h"
@@ -69,7 +64,6 @@ fs::path findTestMedia(int argc, char** argv)
     return {};
 }
 
-// Composicao do teste: 2 decks, 3 camadas, clips de arquivo e gerador
 Composition buildComposition(const fs::path& media)
 {
     Composition comp = Composition::createDefault(3, 8);
@@ -103,7 +97,7 @@ Composition buildComposition(const fs::path& media)
     const int d2 = comp.addDeck();
     comp.currentDeck = d2;
     comp.decks[static_cast<size_t>(d2)].name = "Segundo ato";
-    comp.addColumn(); // 9 colunas
+    comp.addColumn();
     comp.setClip(0, 8, Clip::fromFile(media / "alpha.png"));
     Clip hevc = Clip::fromFile(media / "hevc.mkv");
     hevc.setSpeed(2.0f);
@@ -111,7 +105,6 @@ Composition buildComposition(const fs::path& media)
     comp.setClip(2, 0, std::move(hevc));
     comp.setClip(1, 1, Clip::testPattern());
 
-    // Fase 3A: geradores com parametros (texto UTF-8 com acentos, cor, alvo da captura, dispositivo)
     Clip text = Clip::generator(kTextId);
     text.setParam("text", "Olá, ação\nSegunda linha");
     text.setParam("size", 72);
@@ -137,12 +130,11 @@ Composition buildComposition(const fs::path& media)
     ndi.setParam("lowLatency", true);
     comp.setClip(2, 7, std::move(ndi));
     Clip spout = Clip::generator(kSpoutId);
-    spout.setParam("sender", "Resolume Arena");
+    spout.setParam("sender", "Fonte de teste");
     comp.setClip(1, 7, std::move(spout));
     return comp;
 }
 
-// Saida do teste: 2 screens (monitor e Spout) com slices em warp
 OutputSetup buildOutput(int cw, int ch)
 {
     OutputSetup out;
@@ -169,7 +161,7 @@ OutputSetup buildOutput(int cw, int ch)
     left.gain[2] = 0.97f;
     left.brightness = -0.1f;
     left.opacity = 0.9f;
-    left.zFilter = kZoneFront; // roteamento por profundidade (Z-Slice): so a zona Frente, da camada 3
+    left.zFilter = kZoneFront;
     left.zSource = 2;
     Slice right = makeFullSlice("Direita", cw, ch, s1.width, s1.height);
     right.input = {cw / 2, 0, cw - cw / 2, ch};
@@ -178,7 +170,7 @@ OutputSetup buildOutput(int cw, int ch)
     right.flipH = true;
     right.flipV = true;
     right.enabled = false;
-    right.zFilter = kZoneBack; // Fundo, do master
+    right.zFilter = kZoneBack;
     right.zSource = kZoneSourceMaster;
     right.edges[kEdgeLeft].width = 64.0f;
     s1.slices.push_back(left);
@@ -204,7 +196,7 @@ int countClips(const Composition& c)
     return n;
 }
 
-} // namespace
+}
 
 int main(int argc, char** argv)
 {
@@ -217,7 +209,6 @@ int main(int argc, char** argv)
     std::error_code ec;
     const fs::path root = fs::temp_directory_path() / ("bslstage_projecttest_" + std::to_string(GetCurrentProcessId()));
     fs::remove_all(root, ec);
-    // Pasta com acentos: o caminho precisa sobreviver ao JSON em UTF-8
     const fs::path proj = root / u8"projeção";
     fs::create_directories(proj / "media", ec);
     for (const char* name : {"photo.jpg", "h264_1080p.mp4", "anim.gif", "alpha.png", "hevc.mkv"})
@@ -226,17 +217,24 @@ int main(int argc, char** argv)
     const fs::path file = proj / "show.bslstage";
     const fs::path mediaDir = proj / "media";
 
-    // ------------------------------------------------------------------ save -> load -> save
     section("save -> load -> save");
     Composition comp = buildComposition(mediaDir);
     OutputSetup out = buildOutput(comp.width, comp.height);
     CHECK(countClips(comp) == 13);
+    comp.layers[1].sliceOnly = true;
+    comp.nextLayerId = 9;
+    out.screens[0].slices[0].source = kSliceFromLayer;
+    out.screens[0].slices[0].layerId = comp.layers[1].id;
+    out.screens[0].slices[0].includeMaster = true;
+    out.screens[0].slices[1].source = kSliceFromLayer;
+    out.screens[0].slices[1].layerId = comp.layers[2].id;
+    const int layerIdA = comp.layers[1].id, layerIdB = comp.layers[2].id;
 
     const std::string text1 = project::serialize(comp, out, proj);
     std::string err;
     CHECK(project::saveFile(file, text1, &err));
     CHECK(readAll(file) == text1);
-    CHECK(!fs::exists(fs::path(file).concat(".tmp"), ec)); // gravacao atomica nao deixa o temporario
+    CHECK(!fs::exists(fs::path(file).concat(".tmp"), ec));
     CHECK(text1.find("\"format\": \"bslstage\"") != std::string::npos);
     CHECK(text1.find("\"relPath\": \"media/photo.jpg\"") != std::string::npos);
 
@@ -254,11 +252,9 @@ int main(int argc, char** argv)
         std::printf("  (diferenca em %s e %s)\n", (root / "a.json").string().c_str(), (root / "b.json").string().c_str());
     }
 
-    // Segundo save por cima do primeiro: arquivo identico
     CHECK(project::saveFile(file, text2, &err));
     CHECK(readAll(file) == text1);
 
-    // Conteudo carregado
     CHECK(comp2.width == 1280 && comp2.height == 720);
     CHECK(comp2.fps == 30.0f && comp2.bpm == 128.5f);
     CHECK(comp2.masterOpacity == 0.8f && comp2.masterBypass);
@@ -276,7 +272,6 @@ int main(int argc, char** argv)
     CHECK(comp2.clipAt(0, 0, 3).isTestPattern());
     CHECK(comp2.clipAt(0, 0, 3).params.empty());
     CHECK(comp2.clipAt(1, 2, 0).speed == 2.0f && comp2.clipAt(1, 2, 0).fit == FitMode::Original);
-    // Geradores com parametros: valores, tipos e nomes sobrevivem
     {
         const Clip& t = comp2.clipAt(1, 2, 3);
         CHECK(t.isGenerator() && t.generatorId == kTextId && !t.isLive());
@@ -287,7 +282,7 @@ int main(int argc, char** argv)
         const media::ParamSet ps(t.paramDescs(), t.params);
         CHECK(ps.i("size") == 72 && ps.f("marqueeSpeed") == 123.5f && ps.s("font") == "Barlow-Bold.ttf");
         CHECK(ps.c("color").r == 1.0f && ps.c("color").g == 0.5f && ps.c("color").a == 0.75f);
-        CHECK(ps.b("wrap") && ps.f("lineSpacing") == 1.0f); // padrao preenchido
+        CHECK(ps.b("wrap") && ps.f("lineSpacing") == 1.0f);
         CHECK(t.name.rfind("Texto: Olá", 0) == 0);
         const Clip& s = comp2.clipAt(1, 2, 4);
         CHECK(s.generatorId == kScreenCaptureId && s.isLive());
@@ -304,12 +299,12 @@ int main(int argc, char** argv)
         CHECK(media::ParamSet(n.paramDescs(), n.params).s("source") == "MAQUINA (BSL Stage - Tela 1)");
         CHECK(media::ParamSet(n.paramDescs(), n.params).b("lowLatency") && !media::ParamSet(n.paramDescs(), n.params).b("lowBandwidth"));
         const Clip& sp = comp2.clipAt(1, 1, 7);
-        CHECK(sp.generatorId == kSpoutId && sp.isLive() && sp.name == "Spout: Resolume Arena");
+        CHECK(sp.generatorId == kSpoutId && sp.isLive() && sp.name == "Spout: Fonte de teste");
     }
     CHECK(text1.find("\"generator\": \"gen:texto\"") != std::string::npos);
     CHECK(text1.find("\"params\"") != std::string::npos);
     for (const Layer& l : comp2.layers)
-        CHECK(l.activeDeck == -1 && l.activeColumn == -1); // nada comeca tocando
+        CHECK(l.activeDeck == -1 && l.activeColumn == -1);
     for (const Deck& d : comp2.decks)
         for (const auto& row : d.clips)
             for (const Clip& c : row)
@@ -323,13 +318,11 @@ int main(int argc, char** argv)
     CHECK(sc.slices[0].edges[kEdgeRight].width == 64.0f && sc.slices[0].edges[kEdgeRight].gamma == 1.8f);
     CHECK(sc.slices[0].gain[0] == 0.9f && sc.slices[0].brightness == -0.1f);
     CHECK(sc.slices[1].flipH && sc.slices[1].flipV && !sc.slices[1].enabled);
-    // Z-Slice: zona e fonte de cada slice sobrevivem; slice sem roteamento nao grava nada e volta com o padrao
     CHECK(sc.slices[0].zFilter == kZoneFront && sc.slices[0].zSource == 2);
     CHECK(sc.slices[1].zFilter == kZoneBack && sc.slices[1].zSource == kZoneSourceMaster);
     CHECK(out2.screens[1].slices[0].zFilter == kZoneAll && out2.screens[1].slices[0].zSource == kZoneSourceMaster);
     CHECK(text1.find("\"zFilter\": \"front\"") != std::string::npos && text1.find("\"zFilter\": \"back\"") != std::string::npos);
     {
-        // sem nenhum roteamento o arquivo fica como antes (sem as chaves novas)
         OutputSetup plain = buildOutput(comp.width, comp.height);
         for (Screen& s : plain.screens)
             for (Slice& sl : s.slices) {
@@ -338,7 +331,6 @@ int main(int argc, char** argv)
             }
         const std::string plainText = project::serialize(comp, plain, proj);
         CHECK(plainText.find("zFilter") == std::string::npos && plainText.find("zSource") == std::string::npos);
-        // e um arquivo com valores invalidos cai no padrao, sem recusar o projeto
         std::string bad = text1;
         const size_t at = bad.find("\"zFilter\": \"front\"");
         if (at != std::string::npos)
@@ -350,12 +342,28 @@ int main(int argc, char** argv)
         const project::LoadResult r3 = project::loadFile(badFile, c3, o3);
         CHECK(r3.ok && o3.screens.size() == 2 && o3.screens[0].slices[0].zFilter == kZoneAll);
     }
+    CHECK(sc.slices[0].source == kSliceFromLayer && sc.slices[0].layerId == layerIdA && sc.slices[0].includeMaster);
+    CHECK(sc.slices[1].source == kSliceFromLayer && sc.slices[1].layerId == layerIdB && !sc.slices[1].includeMaster);
+    CHECK(out2.screens[1].slices[0].source == kSliceFromComposition && out2.screens[1].slices[0].layerId == 0);
+    CHECK(comp2.layers[1].sliceOnly && !comp2.layers[0].sliceOnly && !comp2.layers[2].sliceOnly);
+    CHECK(comp2.layers[1].id == layerIdA && comp2.layers[2].id == layerIdB && comp2.nextLayerId == 9);
+    CHECK(comp2.findLayerById(layerIdA) == 1 && comp2.findLayerById(layerIdB) == 2 && comp2.findLayerById(999) < 0);
+    CHECK(text1.find("\"sliceOnly\": true") != std::string::npos && text1.find("\"source\": \"layer\"") != std::string::npos);
+    {
+        Composition plainComp = buildComposition(mediaDir);
+        OutputSetup plainOut = buildOutput(plainComp.width, plainComp.height);
+        const std::string plainText = project::serialize(plainComp, plainOut, proj);
+        CHECK(plainText.find("sliceOnly") == std::string::npos && plainText.find("includeMaster") == std::string::npos
+              && plainText.find("\"source\": \"layer\"") == std::string::npos && plainText.find("\"layerId\"") == std::string::npos);
+        std::swap(comp2.layers[1], comp2.layers[2]);
+        CHECK(comp2.findLayerById(layerIdA) == 2 && comp2.findLayerById(layerIdB) == 1);
+        std::swap(comp2.layers[1], comp2.layers[2]);
+    }
     CHECK(out2.screens[1].kind == OutputKind::Spout && out2.screens[1].spoutName == "BSL Stage - Spout A");
     CHECK(!out2.screens[1].enabled);
     CHECK(out2.screens[1].ndiName == "BSL Stage - NDI A" && out2.screens[1].ndiBgra && !out2.screens[0].ndiBgra);
     CHECK(out2.screens[0].id != out2.screens[1].id);
 
-    // ------------------------------------------------------------------ PDF, Office e Web
     section("PDF, Office e Web: parametros no projeto");
     {
         writeAll(mediaDir / "doc.pdf", "%PDF-1.4\n");
@@ -368,7 +376,7 @@ int main(int argc, char** argv)
         CHECK(pdf.kind == media::MediaKind::Document && ppt.kind == media::MediaKind::Office
               && html.kind == media::MediaKind::Web);
         CHECK(pdf.isPaged() && ppt.isPaged() && !html.isPaged() && html.isWeb() && html.isLive() && html.isExclusive());
-        CHECK(!pdf.params.empty() && pdf.params.has("autoMode") && html.params.has("zoom")); // padrao preenchido
+        CHECK(!pdf.params.empty() && pdf.params.has("autoMode") && html.params.has("zoom"));
         pdf.setParam("page", 3);
         pdf.setParam("autoMode", "beats");
         pdf.setParam("autoBeats", 2);
@@ -408,7 +416,6 @@ int main(int argc, char** argv)
         const Clip& w2 = cd2.clipAt(0, 1, 1);
         CHECK(w2.generatorId == kWebUrlId && w2.name == "Web: example.com" && !media::ParamSet(w2.paramDescs(), w2.params).b("muted"));
         CHECK(media::ParamSet(w2.paramDescs(), w2.params).s("url") == "https://example.com/ao-vivo");
-        // Expandir paginas na linha: 4 paginas conhecidas, comecando na coluna 3 (a grade cresce)
         {
             Composition ce = Composition::createDefault(2, 4);
             Clip doc = Clip::fromFile(mediaDir / "doc.pdf");
@@ -416,7 +423,7 @@ int main(int argc, char** argv)
             doc.setParam("bg", media::param::colorJson({0.1f, 0.2f, 0.3f, 1.0f}));
             doc.fit = FitMode::Stretch;
             ce.setClip(1, 3, std::move(doc));
-            CHECK(ce.expandPages(1, 3) == 0); // total de paginas ainda desconhecido
+            CHECK(ce.expandPages(1, 3) == 0);
             media::setDocPageCount(mediaDir / "doc.pdf", 4);
             CHECK(ce.expandPages(1, 3) == 4);
             CHECK(ce.columnCount() == 7);
@@ -426,28 +433,26 @@ int main(int argc, char** argv)
                 CHECK(c.isPaged() && pe.i("page") == i + 1 && pe.s("autoMode") == "off" && c.fit == FitMode::Stretch);
                 CHECK(pe.c("bg").b == 0.3f && c.name == "doc.pdf (p. " + std::to_string(i + 1) + ")");
             }
-            CHECK(ce.clip(0, 3).empty()); // so a linha do clip
-            CHECK(ce.expandPages(0, 0) == 0); // celula vazia
+            CHECK(ce.clip(0, 3).empty());
+            CHECK(ce.expandPages(0, 0) == 0);
         }
 
-        // Solta o arquivo do clip e relinka: continua com os parametros e ganha os padroes que faltavam
         Clip moved = Clip::fromFile(mediaDir / "doc.pdf");
         moved.params = media::ParamValues();
         CHECK(project::relinkClip(moved, mediaDir / "doc.pdf") && moved.params.has("page"));
     }
 
-    // ------------------------------------------------------------------ arquivo corrompido
     section("arquivo corrompido");
     {
         const std::string before = project::serialize(comp2, out2, proj);
         const std::string cases[] = {
             "",
             "isto nao e json",
-            text1.substr(0, text1.size() / 2),                 // truncado
-            "[1, 2, 3]",                                       // JSON, mas nao um objeto
-            "{\"format\": \"outra-coisa\", \"version\": 1}",   // formato errado
-            "{\"version\": 1}",                                // sem formato
-            std::string("\x00\x01\x02\xff\xfe", 5),            // binario
+            text1.substr(0, text1.size() / 2),
+            "[1, 2, 3]",
+            "{\"format\": \"outra-coisa\", \"version\": 1}",
+            "{\"version\": 1}",
+            std::string("\x00\x01\x02\xff\xfe", 5),
         };
         for (const std::string& bad : cases) {
             Composition c = buildComposition(mediaDir);
@@ -456,15 +461,13 @@ int main(int argc, char** argv)
             project::LoadResult br = project::parse(bad, proj, c, o);
             CHECK(!br.ok);
             CHECK(!br.error.empty());
-            CHECK(project::serialize(c, o, proj) == ref); // o projeto atual fica intacto
+            CHECK(project::serialize(c, o, proj) == ref);
         }
-        // Arquivo inexistente
         Composition c = buildComposition(mediaDir);
         OutputSetup o;
         CHECK(!project::loadFile(proj / "nao-existe.bslstage", c, o).ok);
         CHECK(project::serialize(comp2, out2, proj) == before);
 
-        // Tipos errados nos campos: nao pode quebrar (cai no padrao)
         const std::string weird =
             "{\"format\":\"bslstage\",\"version\":1,\"composition\":{\"width\":\"larga\",\"bpm\":null,"
             "\"master\":5},\"layers\":[7,{\"name\":3,\"opacity\":\"x\"}],\"decks\":[{\"columns\":-4,"
@@ -475,10 +478,9 @@ int main(int argc, char** argv)
         project::LoadResult wr = project::parse(weird, proj, w, wo);
         CHECK(wr.ok);
         CHECK(w.width == 1920 && w.layerCount() == 2 && w.deckCount() == 1);
-        CHECK(w.decks[0].columnCount() == 1); // clamp de -4 para o minimo
+        CHECK(w.decks[0].columnCount() == 1);
     }
 
-    // ------------------------------------------------------------------ parametros invalidos / gerador desconhecido
     section("parametros de gerador");
     {
         const std::string odd =
@@ -492,20 +494,87 @@ int main(int argc, char** argv)
         OutputSetup wo;
         project::LoadResult wr = project::parse(odd, proj, w, wo);
         CHECK(wr.ok);
-        CHECK(wr.warnings.size() == 1); // so o gerador desconhecido
+        CHECK(wr.warnings.size() == 1);
         const Clip& t = w.clipAt(0, 0, 0);
         const media::ParamSet ps(t.paramDescs(), t.params);
-        CHECK(ps.i("size") == 96);                    // tipo errado -> padrao
+        CHECK(ps.i("size") == 96);
         CHECK(ps.s("text") == "Seu texto aqui");
         CHECK(ps.c("color").r == 1.0f && ps.c("color").a == 1.0f);
         CHECK(ps.s("marquee") == "none");
-        CHECK(t.params.has("campoNovo"));             // chave desconhecida e mantida
+        CHECK(t.params.has("campoNovo"));
         CHECK(w.clipAt(0, 0, 1).generatorId == kSolidColorId);
-        CHECK(w.clipAt(0, 0, 2).empty());             // gerador desconhecido: ignorado
+        CHECK(!w.clipAt(0, 0, 2).empty() && w.clipAt(0, 0, 2).missingPlugin);
+        CHECK(w.clipAt(0, 0, 2).generatorId == "gen:que-nao-existe");
         CHECK(w.clipAt(0, 0, 3).isTestPattern());
     }
 
-    // ------------------------------------------------------------------ versao futura / extras / ausentes
+    section("plugins removidos: projeto antigo abre com o clip e o efeito ausentes, params preservados");
+    {
+        const std::string old =
+            "{\"format\":\"bslstage\",\"version\":1,\"decks\":[{\"columns\":4,\"clips\":["
+            "{\"layer\":0,\"column\":0,\"generator\":\"bsl:led-mapper\",\"params\":{\"columns\":4,\"rows\":3}},"
+            "{\"layer\":0,\"column\":1,\"generator\":\"bsl:web-motion\",\"params\":{\"text\":\"OI\"}},"
+            "{\"layer\":0,\"column\":2,\"generator\":\"bsl:ppt-manager\",\"params\":{\"document\":\"C:/x.pptx\"}},"
+            "{\"layer\":0,\"column\":3,\"generator\":\"bsl:gen-backgrounds\",\"params\":{\"style\":\"aurora\"},"
+            "\"effects\":[{\"type\":\"bsl:alpha-reactor\",\"params\":{\"auraIntensity\":70}},"
+            "{\"type\":\"bsl:datamosh-pixelsort\"},{\"type\":\"bsl:audio-typo\",\"params\":{\"djText\":\"DJ X\"}}]}"
+            "]}]}";
+        Composition w;
+        OutputSetup wo;
+        project::LoadResult oldRes = project::parse(old, proj, w, wo);
+        CHECK(oldRes.ok);
+        CHECK(oldRes.warnings.size() == 4);
+        const char* ids[] = {"bsl:led-mapper", "bsl:web-motion", "bsl:ppt-manager", "bsl:gen-backgrounds"};
+        for (int i = 0; i < 4; ++i) {
+            const Clip& c = w.clipAt(0, 0, i);
+            CHECK(!c.empty() && c.missing && c.missingPlugin && c.generatorId == ids[i]);
+            CHECK(!c.isOpen() && c.paramDescs().empty());
+        }
+        CHECK(w.clipAt(0, 0, 0).params.json().value("columns", 0) == 4);
+        CHECK(w.clipAt(0, 0, 1).params.json().value("text", std::string()) == "OI");
+        CHECK(w.clipAt(0, 0, 2).params.json().value("document", std::string()) == "C:/x.pptx");
+        CHECK(!w.trigger(0, 0));
+        const fx::EffectChain& chain = w.clipAt(0, 0, 3).effects;
+        CHECK(chain.size() == 3 && chain.items[0].typeId == "bsl:alpha-reactor" && chain.items[1].typeId == "bsl:datamosh-pixelsort");
+        CHECK(chain.items[0].params.json().value("auraIntensity", 0.0) == 70.0);
+        CHECK(chain.items[2].params.json().value("djText", std::string()) == "DJ X");
+        const std::string again = project::serialize(w, wo, proj);
+        Composition w2;
+        OutputSetup wo2;
+        project::LoadResult againRes = project::parse(again, proj, w2, wo2);
+        CHECK(againRes.ok && w2.clipAt(0, 0, 0).generatorId == "bsl:led-mapper" && w2.clipAt(0, 0, 0).params.json().value("rows", 0) == 3);
+        CHECK(w2.clipAt(0, 0, 3).effects.size() == 3 && w2.clipAt(0, 0, 3).effects.items[2].typeId == "bsl:audio-typo");
+        CHECK(project::serialize(w2, wo2, proj) == again);
+    }
+
+    section("replayMode: padrao por tipo e ida e volta");
+    {
+        Composition w = Composition::createDefault(1, 4);
+        w.setClip(0, 0, Clip::generator(kWebUrlId));
+        w.setClip(0, 1, Clip::generator(kNdiId));
+        w.setClip(0, 2, Clip::generator(kSolidColorId));
+        CHECK(w.clip(0, 0).replay == ReplayMode::Resume && w.clip(0, 1).replay == ReplayMode::Resume);
+        CHECK(w.clip(0, 2).replay == ReplayMode::Restart);
+        if (!media.empty()) {
+            w.setClip(0, 3, Clip::fromFile(media / "h264_1080p.mp4"));
+            CHECK(w.clip(0, 3).replay == ReplayMode::Restart);
+            w.clip(0, 3).replay = ReplayMode::Resume;
+        }
+        w.clip(0, 0).replay = ReplayMode::Restart;
+        OutputSetup wo = buildOutput(w.width, w.height);
+        const std::string text = project::serialize(w, wo, proj);
+        Composition back;
+        OutputSetup backOut;
+        CHECK(project::parse(text, proj, back, backOut).ok);
+        CHECK(back.clip(0, 0).replay == ReplayMode::Restart);
+        CHECK(back.clip(0, 1).replay == ReplayMode::Resume);
+        if (!media.empty())
+            CHECK(back.clip(0, 3).replay == ReplayMode::Resume);
+        Composition plain = Composition::createDefault(1, 2);
+        plain.setClip(0, 0, Clip::generator(kWebUrlId));
+        CHECK(project::serialize(plain, wo, proj).find("replayMode") == std::string::npos);
+    }
+
     section("versao futura e campos desconhecidos");
     {
         std::string future = text1;
@@ -518,7 +587,6 @@ int main(int argc, char** argv)
         CHECK(!fr.warnings.empty());
         CHECK(countClips(c) == 13);
 
-        // Campos ausentes recebem o padrao
         Composition d;
         OutputSetup dout;
         project::LoadResult mr = project::parse("{\"format\":\"bslstage\",\"version\":1}", proj, d, dout);
@@ -528,7 +596,54 @@ int main(int argc, char** argv)
         CHECK(dout.screens.size() == 1 && dout.screens[0].slices.size() == 1);
     }
 
-    // ------------------------------------------------------------------ mover a pasta do projeto (relPath)
+    section("slices e camadas: projeto antigo e ids");
+    {
+        const std::string old = "{\"format\":\"bslstage\",\"version\":1,\"composition\":{\"width\":640,\"height\":360},"
+                                "\"layers\":[{\"name\":\"A\"},{\"name\":\"B\"},{\"name\":\"C\"}],"
+                                "\"decks\":[{\"name\":\"D\",\"columns\":2}],"
+                                "\"output\":{\"screens\":[{\"name\":\"T\",\"slices\":[{\"name\":\"S\","
+                                "\"input\":{\"x\":0,\"y\":0,\"w\":640,\"h\":360}}]}]}}";
+        Composition c;
+        OutputSetup o;
+        const project::LoadResult lr = project::parse(old, proj, c, o);
+        CHECK(lr.ok && lr.warnings.empty());
+        CHECK(c.layerCount() == 3 && c.layers[0].id == 1 && c.layers[1].id == 2 && c.layers[2].id == 3 && c.nextLayerId == 4);
+        CHECK(!c.layers[0].sliceOnly && !c.layers[1].sliceOnly && !c.layers[2].sliceOnly);
+        CHECK(o.screens.size() == 1 && o.screens[0].slices.size() == 1);
+        const Slice& s = o.screens[0].slices[0];
+        CHECK(s.source == kSliceFromComposition && s.layerId == 0 && !s.includeMaster);
+        const std::string saved = project::serialize(c, o, proj);
+        Composition c2;
+        OutputSetup o2;
+        CHECK(project::parse(saved, proj, c2, o2).ok);
+        CHECK(c2.layers[0].id == 1 && c2.layers[2].id == 3 && c2.nextLayerId == 4);
+        CHECK(project::serialize(c2, o2, proj) == saved);
+
+        const std::string dup = "{\"format\":\"bslstage\",\"version\":1,\"layers\":[{\"id\":5,\"name\":\"A\"},"
+                                "{\"id\":5,\"name\":\"B\"},{\"id\":-3,\"name\":\"C\"},{\"id\":2,\"name\":\"D\"}],"
+                                "\"composition\":{\"nextLayerId\":4}}";
+        Composition c3;
+        OutputSetup o3;
+        CHECK(project::parse(dup, proj, c3, o3).ok && c3.layerCount() == 4);
+        CHECK(c3.layers[0].id == 5 && c3.layers[3].id == 2);
+        CHECK(c3.layers[1].id > 0 && c3.layers[2].id > 0 && c3.layers[1].id != c3.layers[0].id
+              && c3.layers[1].id != c3.layers[2].id && c3.layers[1].id != c3.layers[3].id && c3.layers[2].id != c3.layers[3].id);
+        CHECK(c3.findLayerById(c3.layers[1].id) == 1 && c3.nextLayerId > 5);
+        const std::string orphan = "{\"format\":\"bslstage\",\"version\":1,\"layers\":[{\"id\":1,\"name\":\"A\"}],"
+                                   "\"output\":{\"screens\":[{\"name\":\"T\",\"slices\":[{\"name\":\"S\","
+                                   "\"source\":\"layer\",\"layerId\":77,\"includeMaster\":true}]}]}}";
+        Composition c4;
+        OutputSetup o4;
+        CHECK(project::parse(orphan, proj, c4, o4).ok);
+        const Slice& os = o4.screens[0].slices[0];
+        CHECK(os.source == kSliceFromLayer && os.layerId == 77 && os.includeMaster && c4.findLayerById(77) < 0);
+        std::string weird = orphan;
+        weird.replace(weird.find("\"layer\""), 7, "\"xyz\"");
+        Composition c5;
+        OutputSetup o5;
+        CHECK(project::parse(weird, proj, c5, o5).ok && o5.screens[0].slices[0].source == kSliceFromComposition);
+    }
+
     section("mover a pasta do projeto");
     {
         const fs::path moved = root / u8"movido";
@@ -539,12 +654,11 @@ int main(int argc, char** argv)
         OutputSetup o;
         project::LoadResult mr = project::loadFile(movedFile, c, o);
         CHECK(mr.ok);
-        CHECK(mr.missingFiles == 0); // o path absoluto antigo nao existe mais: quem achou foi o relPath
+        CHECK(mr.missingFiles == 0);
         const Clip& photo = c.clipAt(0, 0, 0);
         CHECK(!photo.missing);
         CHECK(photo.path.lexically_normal() == (moved / "media" / "photo.jpg").lexically_normal());
         CHECK(!fs::exists(mediaDir / "photo.jpg", ec));
-        // Salvar na nova pasta e reabrir continua identico
         const std::string t = project::serialize(c, o, moved);
         CHECK(project::saveFile(movedFile, t, &err));
         Composition c2;
@@ -552,7 +666,6 @@ int main(int argc, char** argv)
         CHECK(project::loadFile(movedFile, c2, o2).ok);
         CHECK(project::serialize(c2, o2, moved) == t);
 
-        // ------------------------------------------------------------ arquivo ausente + Localizar
         section("arquivo ausente e localizar");
         fs::remove(moved / "media" / "photo.jpg", ec);
         fs::remove(moved / "media" / "anim.gif", ec);
@@ -563,16 +676,14 @@ int main(int argc, char** argv)
         CHECK(ar.missingFiles == 2);
         CHECK(m.clipAt(0, 0, 0).missing && m.clipAt(0, 2, 7).missing);
         CHECK(!m.clipAt(0, 1, 2).missing && !m.clipAt(1, 2, 0).missing);
-        CHECK(m.clipAt(0, 0, 0).name == "photo.jpg");   // o nome continua visivel
+        CHECK(m.clipAt(0, 0, 0).name == "photo.jpg");
         CHECK(m.clipAt(0, 0, 0).type == Clip::Type::File);
-        CHECK(countClips(m) == 13);                      // o clip ausente continua na grade
-        CHECK(!m.trigger(0, 0));                         // disparar nao faz nada
+        CHECK(countClips(m) == 13);
+        CHECK(!m.trigger(0, 0));
         CHECK(m.layers[0].activeColumn == -1);
-        // O ausente sobrevive a um save: nada e perdido
         const std::string mt = project::serialize(m, mo, moved);
         CHECK(mt.find("photo.jpg") != std::string::npos && mt.find("anim.gif") != std::string::npos);
 
-        // Localizar um deles em outra pasta; o outro e reencontrado pelo nome na mesma pasta
         const fs::path found = root / "achados";
         fs::create_directories(found, ec);
         fs::copy_file(media / "photo.jpg", found / "photo.jpg", fs::copy_options::overwrite_existing, ec);
@@ -583,10 +694,9 @@ int main(int argc, char** argv)
         CHECK(project::relinkMissingInFolder(m, found) == 1);
         CHECK(!m.clipAt(0, 2, 7).missing);
         CHECK(project::relinkMissingInFolder(m, found) == 0);
-        CHECK(!project::relinkClip(m.clipAt(0, 0, 0), found / "arquivo.txt")); // formato nao suportado
+        CHECK(!project::relinkClip(m.clipAt(0, 0, 0), found / "arquivo.txt"));
     }
 
-    // ------------------------------------------------------------ efeitos (Fase 4A)
     {
         section("efeitos: cadeias de clip, camada e master");
         Composition fxComp = Composition::createDefault(2, 3);
@@ -594,7 +704,7 @@ int main(int argc, char** argv)
         fx::EffectChain& chain = fxComp.clip(0, 0).effects;
         chain.add("native:blur").setParam("radius", media::param::floatJson(12.5f));
         chain.add("native:invert").bypass = true;
-        chain.add("ffgl:plugin-ausente").setParam("x", 0.5); // tipo desconhecido: preservado
+        chain.add("ffgl:plugin-ausente").setParam("x", 0.5);
         fxComp.setClip(1, 1, Clip::generator("isf:Gradiente animado.fs"));
         fxComp.layers[1].effects.add("native:color").setParam("hue", 45.0);
         fxComp.masterEffects.add("native:vignette");
@@ -617,12 +727,10 @@ int main(int argc, char** argv)
         CHECK(back.layers[0].effects.empty() && back.layers[1].effects.size() == 1);
         CHECK(back.layers[1].effects.items[0].params.json().value("hue", 0.0) == 45.0);
         CHECK(back.masterEffects.size() == 2 && back.masterEffects.items[1].typeId == "native:strobe");
-        CHECK(project::serialize(back, backOut, proj) == t); // ida e volta identica
-        // projeto sem efeitos nao grava a chave
+        CHECK(project::serialize(back, backOut, proj) == t);
         Composition plain = Composition::createDefault(1, 1);
         CHECK(project::serialize(plain, backOut, proj).find("effects") == std::string::npos);
 
-        // entradas de efeito invalidas: ignoradas com aviso, o resto carrega
         using OJson = nlohmann::ordered_json;
         OJson j = OJson::parse(t);
         for (auto& clip : j["decks"][0]["clips"])
@@ -636,13 +744,11 @@ int main(int argc, char** argv)
         CHECK(odd.clipAt(0, 0, 0).effects.size() == 1 && !odd.clipAt(0, 0, 0).effects.items[0].bypass);
         CHECK(odd.layers[1].effects.empty() && odd.masterEffects.size() == 2);
 
-        // copiar a cadeia copia so os dados (o efeito de execucao nasce de novo na copia)
         fx::EffectChain copy = fxComp.clipAt(0, 0, 0).effects;
         CHECK(copy.size() == 3 && copy.items[0].uid != fxComp.clipAt(0, 0, 0).effects.items[0].uid);
         CHECK(copy.toJson() == fxComp.clipAt(0, 0, 0).effects.toJson());
     }
 
-    // ------------------------------------------------------------ Pixel Map (aditivo)
     {
         section("Pixel Map: configuracao no projeto (aditivo)");
         Composition pc = Composition::createDefault(2, 3);
@@ -650,7 +756,6 @@ int main(int argc, char** argv)
         pc.height = 1080;
         const OutputSetup pOut = buildOutput(pc.width, pc.height);
 
-        // Intocado: o arquivo nao ganha a chave (projetos antigos continuam identicos) e o input do canvas nao conta
         const std::string untouched = project::serialize(pc, pOut, proj);
         CHECK(untouched.find("pixelMap") == std::string::npos);
         pc.width = 1280;
@@ -680,13 +785,12 @@ int main(int argc, char** argv)
         OutputSetup backOut;
         const project::LoadResult lr = project::parse(t, proj, back, backOut);
         CHECK(lr.ok && lr.warnings.empty());
-        CHECK(back.pixelMap == pc.pixelMap); // nada se perde (paineis, gabinetes, cor, marca, fisico, ligacao ao canvas)
+        CHECK(back.pixelMap == pc.pixelMap);
         CHECK(back.pixelMap.panels.size() == 2 && back.pixelMap.panels[1].color == 0x123456 && back.pixelMap.panels[1].byCabinets);
         CHECK(back.pixelMap.panels[1].cols == 4 && back.pixelMap.panels[1].w == 512 && back.pixelMap.panels[1].name == "Lateral \xC3\x8D");
         CHECK(back.pixelMap.watermark == pixelmap::Watermark::Image && back.pixelMap.watermarkPath == cfg.watermarkPath);
-        CHECK(project::serialize(back, backOut, proj) == t); // ida e volta identica
+        CHECK(project::serialize(back, backOut, proj) == t);
 
-        // Input livre fica como esta; ligado, acompanha o canvas ao abrir
         cfg.linkCanvas = false;
         cfg.inW = 3000;
         cfg.inH = 900;
@@ -705,9 +809,8 @@ int main(int argc, char** argv)
         CHECK(project::parse(j.dump(), proj, linked, linkedOut).ok);
         CHECK(linked.pixelMap.inW == 1000 && linked.pixelMap.inH == 500);
 
-        // Arquivo adulterado: campos com tipo errado/limites absurdos viram o padrao e o resto carrega
         j["pixelMap"]["physical"] = {{"w", "x"}, {"h", 99999999}};
-        j["pixelMap"]["watermark"] = {{"kind", "image"}}; // imagem sem caminho: volta ao monograma
+        j["pixelMap"]["watermark"] = {{"kind", "image"}};
         j["pixelMap"]["panels"] = OJson::array({5, OJson{{"name", 3}, {"w", -4}, {"h", 1e9}, {"x", "a"}}});
         Composition odd;
         OutputSetup oddOut;
@@ -716,11 +819,161 @@ int main(int argc, char** argv)
         CHECK(odd.pixelMap.physW == 2048 && odd.pixelMap.physH == pixelmap::kMaxDim);
         CHECK(odd.pixelMap.watermark == pixelmap::Watermark::Monogram);
         CHECK(odd.pixelMap.panels.size() == 2 && odd.pixelMap.panels[1].w == 1 && odd.pixelMap.panels[1].h == pixelmap::kMaxDim);
-        // projeto sem a chave = configuracao padrao
         Composition none;
         OutputSetup noneOut;
         CHECK(project::parse(untouched, proj, none, noneOut).ok && none.pixelMap.panels.empty() && none.pixelMap.linkCanvas);
     }
+
+    {
+        section("atalhos de teclado: acompanham o projeto (aditivo)");
+        Composition kc = Composition::createDefault(3, 8);
+        const OutputSetup kOut = buildOutput(kc.width, kc.height);
+
+        CHECK(kc.keys == control::defaultProjectKeys());
+        const std::string untouched = project::serialize(kc, kOut, proj);
+        CHECK(untouched.find("\"keys\"") == std::string::npos);
+        Composition old;
+        OutputSetup oldOut;
+        old.keys.items.clear();
+        const project::LoadResult olr = project::parse(untouched, proj, old, oldOut);
+        CHECK(olr.ok && olr.warnings.empty() && old.keys == control::defaultProjectKeys());
+
+        control::KeyBinding cell;
+        cell.action = "clip.trigger";
+        cell.chord = {control::Key::J, control::ModNone};
+        cell.args.deck = 0;
+        cell.args.layer = 2;
+        cell.args.column = 4;
+        control::KeyBinding power;
+        power.action = "layer.power";
+        power.chord = {control::Key::K, control::ModCtrl};
+        power.args.layer = 1;
+        control::KeyBinding black;
+        black.action = "master.blackout";
+        black.chord = {control::Key::F, control::ModNone};
+        black.mode = control::Mode::Hold;
+        black.global = true;
+        kc.keys.items.erase(kc.keys.items.begin(), kc.keys.items.begin() + 10);
+        kc.keys.items.push_back(cell);
+        kc.keys.items.push_back(power);
+        kc.keys.items.push_back(black);
+        const std::string kt = project::serialize(kc, kOut, proj);
+        CHECK(kt.find("\"keys\"") != std::string::npos && kt.find("\"layer.power\"") != std::string::npos);
+        Composition kb;
+        OutputSetup kbOut;
+        const project::LoadResult klr = project::parse(kt, proj, kb, kbOut);
+        CHECK(klr.ok && klr.warnings.empty());
+        control::KeyBindingSet migrated = kc.keys;
+        CHECK(control::stampLayerIds(migrated, kc) == 2);
+        CHECK(kb.keys == migrated && !(kb.keys == kc.keys));
+        CHECK(kb.keys.items.size() == kc.keys.items.size());
+        for (const control::KeyBinding& b : kb.keys.items) {
+            if (b.action == "layer.power")
+                CHECK(b.args.layerId == kc.layers[1].id);
+            if (b.action == "clip.trigger" && !b.args.selected)
+                CHECK(b.args.layerId == kc.layers[2].id);
+        }
+        const control::KeyBinding& last = kb.keys.items.back();
+        CHECK(last.action == "master.blackout" && last.mode == control::Mode::Hold && last.global
+              && last.chord.key == control::Key::F);
+        const std::string kt2 = project::serialize(kb, kbOut, proj);
+        CHECK(kt2.find("\"layerId\"") != std::string::npos && kt2 != kt);
+        Composition kb2;
+        OutputSetup kb2Out;
+        CHECK(project::parse(kt2, proj, kb2, kb2Out).ok && kb2.keys == kb.keys);
+        CHECK(project::serialize(kb2, kb2Out, proj) == kt2);
+
+        kc.keys.items.clear();
+        const std::string et = project::serialize(kc, kOut, proj);
+        Composition empty;
+        OutputSetup emptyOut;
+        CHECK(project::parse(et, proj, empty, emptyOut).ok && empty.keys.items.empty());
+
+        using OJson = nlohmann::ordered_json;
+        OJson j = OJson::parse(kt);
+        j["keys"].push_back({{"action", "acao.futura"}, {"key", "Q"}});
+        j["keys"].push_back({{"action", "clip.trigger"}, {"key", "Ctrl+Nada"}});
+        j["keys"].push_back(7);
+        Composition odd;
+        OutputSetup oddOut;
+        const project::LoadResult odr = project::parse(j.dump(), proj, odd, oddOut);
+        CHECK(odr.ok && odr.warnings.size() == 2 && odd.keys == kb.keys);
+        j["keys"] = "nao e lista";
+        Composition wrong;
+        OutputSetup wrongOut;
+        CHECK(project::parse(j.dump(), proj, wrong, wrongOut).ok && wrong.keys == control::defaultProjectKeys());
+    }
+
+    {
+        section("Transform da camada e do clip: ida e volta (aditivo)");
+        Composition tc = Composition::createDefault(3, 4);
+        const OutputSetup tOut = buildOutput(tc.width, tc.height);
+        const std::string plain = project::serialize(tc, tOut, proj);
+        CHECK(plain.find("\"transform\"") == std::string::npos && plain.find("ownTransform") == std::string::npos
+              && plain.find("applyLayerTransform") == std::string::npos);
+
+        tc.layers[0].transform.w = static_cast<float>(tc.width);
+        tc.layers[0].transform.h = static_cast<float>(tc.height);
+        CHECK(project::serialize(tc, tOut, proj) == plain);
+        tc.layers[0].transform = LayerTransform{};
+
+        tc.layers[1].transform = LayerTransform::rect(480, 270, 960, 540);
+        tc.layers[1].transform.rotation = 15.5f;
+        tc.layers[1].transform.anchorX = 0.25f;
+        tc.layers[1].transform.anchorY = 0.75f;
+        tc.layers[1].transform.cropL = 10;
+        tc.layers[1].transform.cropB = 20;
+        tc.layers[2].transform = gridCellTransform(2, 2, 1, 1, tc.width, tc.height);
+        Clip clip = Clip::generator("gen:test-pattern");
+        if (clip.empty())
+            clip = Clip::testPattern();
+        clip.ownTransform = true;
+        clip.transform = LayerTransform::rect(0, 0, 640, 360);
+        tc.setClip(2, 1, std::move(clip));
+        OutputSetup linked = tOut;
+        linked.screens[0].slices[0].source = kSliceFromLayer;
+        linked.screens[0].slices[0].layerId = tc.layers[1].id;
+        linked.screens[0].slices[0].applyLayerTransform = true;
+        linked.screens[0].slices[1].source = kSliceFromLayer;
+        linked.screens[0].slices[1].layerId = tc.layers[2].id;
+
+        const std::string tt = project::serialize(tc, linked, proj);
+        CHECK(tt.find("\"transform\"") != std::string::npos && tt.find("\"ownTransform\": true") != std::string::npos);
+        CHECK(tt.find("applyLayerTransform") != std::string::npos);
+        Composition tb;
+        OutputSetup tbOut;
+        const project::LoadResult tr = project::parse(tt, proj, tb, tbOut);
+        CHECK(tr.ok && tr.warnings.empty());
+        CHECK(tb.layers[0].transform.isDefault());
+        CHECK(tb.layers[1].transform == tc.layers[1].transform);
+        CHECK(tb.layers[2].transform == tc.layers[2].transform);
+        CHECK(tb.clip(2, 1).ownTransform && tb.clip(2, 1).transform == LayerTransform::rect(0, 0, 640, 360));
+        CHECK(tbOut.screens[0].slices[0].applyLayerTransform && !tbOut.screens[0].slices[1].applyLayerTransform);
+        CHECK(project::serialize(tb, tbOut, proj) == tt);
+
+        Composition legacy;
+        OutputSetup legacyOut;
+        CHECK(project::parse(plain, proj, legacy, legacyOut).ok);
+        bool allDefault = true;
+        for (const Layer& l : legacy.layers)
+            allDefault = allDefault && l.transform.isDefault();
+        CHECK(allDefault && !legacyOut.screens[0].slices[0].applyLayerTransform);
+
+        using OJson = nlohmann::ordered_json;
+        OJson j = OJson::parse(tt);
+        j["layers"][1]["transform"]["crop"] = OJson::array({999999, 0, 999999, 0});
+        j["layers"][1]["transform"]["anchor"] = OJson::array({7, -3});
+        Composition wild;
+        OutputSetup wildOut;
+        CHECK(project::parse(j.dump(), proj, wild, wildOut).ok);
+        const LayerTransform& wt = wild.layers[1].transform;
+        CHECK(wt.anchorX == 1.0f && wt.anchorY == 0.0f && wt.cropL + wt.cropR <= wt.width(wild.width) - 1.0f);
+        j["layers"][1]["transform"] = "texto";
+        Composition bad;
+        OutputSetup badOut;
+        CHECK(project::parse(j.dump(), proj, bad, badOut).ok && bad.layers[1].transform.isDefault());
+    }
+
 
     fs::remove_all(root, ec);
     std::printf("\n%d verificacoes, %d falha(s)\n", g_checks, g_failures);

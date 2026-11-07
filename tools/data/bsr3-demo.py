@@ -8,7 +8,6 @@ import os
 import sys
 
 out = sys.argv[1] if len(sys.argv) > 1 else "bsr3-demo.bslstage"
-# Foto do testmedia (sem parametros de fonte: o editor do efeito aparece logo abaixo no painel Clip)
 PHOTO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "testmedia", "photo.jpg")).replace("\\", "/")
 screen = "Painel LED"
 slices = [("Coluna 1", 160, 200, 560, 680), ("Coluna 2", 720, 200, 480, 680), ("Torre", 1300, 300, 460, 480)]

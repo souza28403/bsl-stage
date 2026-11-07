@@ -4,11 +4,13 @@
 #include "ui/Theme.h"
 #include "ui/Widgets.h"
 #include "ui/panels/AudioWindow.h"
+#include "ui/panels/DmxWindow.h"
+#include "ui/panels/UpdateUi.h"
 
 #include <glad/gl.h>
 
 #include <imgui.h>
-#include <imgui_internal.h> // BeginViewportSideBar
+#include <imgui_internal.h>
 
 #include <windows.h>
 #include <psapi.h>
@@ -23,10 +25,9 @@ namespace bsl::ui {
 
 namespace {
 
-// Extensões de memória de vídeo (não estão no glad 3.3 core)
-constexpr GLenum kNvxTotalAvailableKb = 0x9048; // GL_GPU_MEMORY_INFO_TOTAL_AVAILABLE_MEMORY_NVX
-constexpr GLenum kNvxCurrentAvailableKb = 0x9049; // GL_GPU_MEMORY_INFO_CURRENT_AVAILABLE_VIDMEM_NVX
-constexpr GLenum kAtiTextureFreeMemory = 0x87FC; // GL_TEXTURE_FREE_MEMORY_ATI
+constexpr GLenum kNvxTotalAvailableKb = 0x9048;
+constexpr GLenum kNvxCurrentAvailableKb = 0x9049;
+constexpr GLenum kAtiTextureFreeMemory = 0x87FC;
 
 enum class VramSource { Unknown, Nvidia, Ati, None };
 
@@ -36,11 +37,11 @@ struct SystemStats
     double ramMb = 0.0;
     VramSource vramSource = VramSource::Unknown;
     double vramUsedMb = 0.0;
-    double vramTotalMb = 0.0; // 0 = só sabemos o livre (ATI)
+    double vramTotalMb = 0.0;
     double vramFreeMb = 0.0;
 
     std::chrono::steady_clock::time_point lastSample{};
-    ULONGLONG lastProcessTime = 0; // kernel + user, em unidades de 100 ns
+    ULONGLONG lastProcessTime = 0;
     bool hasLast = false;
 };
 
@@ -90,7 +91,7 @@ void sampleVram(SystemStats& s)
             s.vramSource = VramSource::None;
         }
     } else if (s.vramSource == VramSource::Ati) {
-        GLint info[4] = {0, 0, 0, 0}; // [0] = memória livre total do pool, em KB
+        GLint info[4] = {0, 0, 0, 0};
         glGetIntegerv(kAtiTextureFreeMemory, info);
         if (glGetError() == GL_NO_ERROR) {
             s.vramFreeMb = info[0] / 1024.0;
@@ -101,7 +102,6 @@ void sampleVram(SystemStats& s)
     }
 }
 
-// Atualiza CPU / RAM / VRAM no máximo uma vez por segundo
 void sampleSystem(SystemStats& s)
 {
     const auto now = std::chrono::steady_clock::now();
@@ -132,7 +132,6 @@ void sampleSystem(SystemStats& s)
     s.hasLast = true;
 }
 
-// "rótulo" cinza + valor em mono
 void stat(const char* label, const std::string& value, const ImVec4& color)
 {
     ImGui::TextColored(theme::kTextDim, "%s", label);
@@ -140,7 +139,7 @@ void stat(const char* label, const std::string& value, const ImVec4& color)
     ImFont* mono = fonts().mono;
     const ImVec2 size = mono->CalcTextSizeA(fontPx(mono), FLT_MAX, 0.0f, value.c_str());
     const ImVec2 pos = ImGui::GetCursorScreenPos();
-    const float dy = ImGui::GetStyle().FramePadding.y + (ImGui::GetFontSize() - fontPx(mono)) * 0.5f + dp(1.0f); // alinha a linha de base
+    const float dy = ImGui::GetStyle().FramePadding.y + (ImGui::GetFontSize() - fontPx(mono)) * 0.5f + dp(1.0f);
     ImGui::GetWindowDrawList()->AddText(mono, fontPx(mono), ImVec2(pos.x, pos.y + dy),
                                         ImGui::GetColorU32(color), value.c_str());
     ImGui::Dummy(size);
@@ -165,7 +164,7 @@ std::string vramText(const SystemStats& s)
     }
 }
 
-} // namespace
+}
 
 void drawStatusBar(PanelContext& ctx)
 {
@@ -187,7 +186,6 @@ void drawStatusBar(PanelContext& ctx)
         ImGui::SameLine(0.0f, dp(20.0f));
         stat("VRAM", vramText(g_stats), theme::kText);
         ImGui::SameLine(0.0f, dp(20.0f));
-        // verde = fluido, ambar = caindo frames
         const bool smooth = ctx.stats.frameMs <= 34.0f;
         stat("FPS", format("%.0f", static_cast<double>(ctx.stats.fps)), smooth ? theme::kSuccess : theme::kWarning);
         if (ImGui::IsItemHovered()) {
@@ -209,7 +207,6 @@ void drawStatusBar(PanelContext& ctx)
             ImGui::EndCombo();
         }
 
-        // Medidor de áudio: o clique abre a configuração (Ver > Áudio)
         ImGui::SameLine(0.0f, dp(20.0f));
         ImGui::TextColored(theme::kTextDim, "Áudio");
         ImGui::SameLine(0.0f, dp(6.0f));
@@ -217,7 +214,13 @@ void drawStatusBar(PanelContext& ctx)
         if (audioMeter("##audio_medidor", ImVec2(dp(64.0f), dp(12.0f))))
             openAudioWindow();
 
-        // Relógio à direita
+        ImGui::SameLine(0.0f, dp(20.0f));
+        ImGui::TextColored(theme::kTextDim, "DMX");
+        ImGui::SameLine(0.0f, dp(6.0f));
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (ImGui::GetFrameHeight() - dp(16.0f)) * 0.5f);
+        if (dmxIndicator("##dmx_indicador", ImVec2(dp(92.0f), dp(16.0f))))
+            openDmxWindow();
+
         const std::time_t t = std::time(nullptr);
         std::tm local{};
         localtime_s(&local, &t);
@@ -227,19 +230,28 @@ void drawStatusBar(PanelContext& ctx)
         const float clockW = mono->CalcTextSizeA(fontPx(mono), FLT_MAX, 0.0f, clock).x;
         const float clockX = ImGui::GetWindowWidth() - padding() - clockW;
 
-        // Aviso recente entre o perfil e o relógio (cortado se não couber)
+        const float noticeW = updateNoticeWidth(ctx);
+        const float noticeX = clockX - dp(20.0f) - noticeW;
+        const float rightEdge = noticeW > 0.0f ? noticeX : clockX;
+
         std::string warning = log::recentWarning();
         if (!warning.empty()) {
             ImGui::SameLine(0.0f, dp(20.0f));
-            const float room = clockX - dp(16.0f) - ImGui::GetCursorPosX();
+            const float room = rightEdge - dp(16.0f) - ImGui::GetCursorPosX();
             while (!warning.empty() && ImGui::CalcTextSize(warning.c_str()).x > room) {
                 warning.pop_back();
-                // não corta no meio de um caractere UTF-8
                 while (!warning.empty() && (static_cast<unsigned char>(warning.back()) & 0xC0) == 0x80)
                     warning.pop_back();
             }
             if (!warning.empty())
                 ImGui::TextColored(theme::kWarning, "%s", warning.c_str());
+        }
+
+        if (noticeW > 0.0f) {
+            ImGui::SameLine(noticeX);
+            drawUpdateNotice(ctx);
+        } else {
+            drawUpdateNotice(ctx);
         }
 
         ImGui::SameLine(clockX);
@@ -252,4 +264,4 @@ void drawStatusBar(PanelContext& ctx)
     ImGui::PopStyleVar(2);
 }
 
-} // namespace bsl::ui
+}

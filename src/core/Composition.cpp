@@ -1,5 +1,6 @@
 #include "core/Composition.h"
 
+#include "core/Actions.h"
 #include "app/Log.h"
 #include "core/Generators.h"
 #include "app/Paths.h"
@@ -9,6 +10,8 @@
 #include "media/WebSource.h"
 #include "media/VideoSource.h"
 
+#include <algorithm>
+#include <set>
 #include <string>
 #include <utility>
 
@@ -40,18 +43,56 @@ Composition Composition::createDefault(int layerCount, int columns)
         row.resize(static_cast<size_t>(columns));
     }
     comp.decks.push_back(std::move(deck));
+    comp.ensureLayerIds();
     return comp;
+}
+
+int Composition::findLayerById(int id) const
+{
+    if (id <= 0)
+        return -1;
+    for (int i = 0; i < layerCount(); ++i)
+        if (layers[static_cast<size_t>(i)].id == id)
+            return i;
+    return -1;
+}
+
+void Composition::ensureLayerIds()
+{
+    std::set<int> used;
+    for (Layer& l : layers) {
+        if (l.id > 0 && used.insert(l.id).second)
+            nextLayerId = std::max(nextLayerId, l.id + 1);
+        else
+            l.id = 0;
+    }
+    for (Layer& l : layers)
+        if (l.id == 0)
+            l.id = nextLayerId++;
 }
 
 void Composition::addLayer()
 {
     Layer layer;
     layer.name = "Camada " + std::to_string(layers.size() + 1);
+    layer.id = nextLayerId++;
     layers.push_back(std::move(layer));
     for (Deck& deck : decks) {
         const size_t columns = static_cast<size_t>(deck.columnCount());
         deck.clips.emplace_back().resize(columns);
     }
+}
+
+int Composition::addLayerForSlice(Slice& slice)
+{
+    addLayer();
+    Layer& layer = layers.back();
+    if (!slice.name.empty())
+        layer.name = slice.name;
+    layer.sliceOnly = true;
+    slice.source = kSliceFromLayer;
+    slice.layerId = layer.id;
+    return layerCount() - 1;
 }
 
 void Composition::addColumn()
@@ -79,7 +120,7 @@ void Composition::removeDeck(int index)
         return;
     for (int l = 0; l < layerCount(); ++l)
         if (layers[static_cast<size_t>(l)].activeDeck == index)
-            stopLayer(l);
+            closeActive(l);
     decks.erase(decks.begin() + index);
     for (Layer& l : layers)
         if (l.activeDeck > index)
@@ -90,15 +131,60 @@ void Composition::removeDeck(int index)
         currentDeck = deckCount() - 1;
 }
 
-void Composition::stopLayer(int layer)
+void Composition::closeActive(int layer)
 {
     if (layer < 0 || layer >= layerCount())
         return;
     Layer& l = layers[static_cast<size_t>(layer)];
-    if (validCell(l.activeDeck, layer, l.activeColumn))
-        clipAt(l.activeDeck, layer, l.activeColumn).source.reset();
+    if (validCell(l.activeDeck, layer, l.activeColumn)) {
+        Clip& c = clipAt(l.activeDeck, layer, l.activeColumn);
+        c.source.reset();
+        c.resumeSeconds = 0.0;
+    }
     l.activeColumn = -1;
     l.activeDeck = -1;
+}
+
+void Composition::deactivateLayer(int layer)
+{
+    if (layer < 0 || layer >= layerCount())
+        return;
+    Layer& l = layers[static_cast<size_t>(layer)];
+    if (validCell(l.activeDeck, layer, l.activeColumn)) {
+        Clip& c = clipAt(l.activeDeck, layer, l.activeColumn);
+        if (c.source && c.replay == ReplayMode::Resume) {
+            if (c.keepsAliveInBackground() && c.source->isOpen()) {
+                c.source->pause();
+                c.parked = std::move(c.source);
+                c.parkedStamp = ++parkCounter_;
+                c.parkedAccum = 0.0;
+                c.resumeSeconds = 0.0;
+            } else if (c.type == Clip::Type::File && c.kind == media::MediaKind::Video) {
+                c.resumeSeconds = c.source->position();
+                c.source.reset();
+            } else {
+                c.source.reset();
+            }
+        } else {
+            c.source.reset();
+            c.resumeSeconds = 0.0;
+        }
+    }
+    l.activeColumn = -1;
+    l.activeDeck = -1;
+    trimBackground();
+}
+
+void Composition::stopLayer(int layer)
+{
+    if (layer < 0 || layer >= layerCount())
+        return;
+    closeActive(layer);
+    for (Deck& deck : decks)
+        for (Clip& c : deck.clips[static_cast<size_t>(layer)]) {
+            c.parked.reset();
+            c.resumeSeconds = 0.0;
+        }
 }
 
 void Composition::stopAll()
@@ -106,6 +192,55 @@ void Composition::stopAll()
     for (int i = 0; i < layerCount(); ++i)
         stopLayer(i);
     paused = false;
+}
+
+int Composition::backgroundCount() const
+{
+    int n = 0;
+    for (const Deck& deck : decks)
+        for (const auto& row : deck.clips)
+            for (const Clip& c : row)
+                n += c.parked ? 1 : 0;
+    return n;
+}
+
+void Composition::trimBackground()
+{
+    const int limit = std::max(0, maxBackgroundSources);
+    int count = backgroundCount();
+    while (count > limit) {
+        Clip* oldest = nullptr;
+        for (Deck& deck : decks)
+            for (auto& row : deck.clips)
+                for (Clip& c : row)
+                    if (c.parked && (!oldest || c.parkedStamp < oldest->parkedStamp))
+                        oldest = &c;
+        if (!oldest)
+            break;
+        log::warn("Limite de fontes em segundo plano (" + std::to_string(limit) + "): \"" + oldest->name +
+                  "\" foi fechada; ao disparar de novo ela abre do início.");
+        oldest->parked.reset();
+        --count;
+    }
+}
+
+void Composition::updateBackground(double dt)
+{
+    constexpr double kPeriod = 0.25;
+    for (Deck& deck : decks)
+        for (auto& row : deck.clips)
+            for (Clip& c : row) {
+                if (!c.parked)
+                    continue;
+                c.parkedAccum += dt;
+                if (c.parkedAccum < kPeriod)
+                    continue;
+                const double elapsed = c.parkedAccum;
+                c.parkedAccum = 0.0;
+                c.parked->setCanvasSize(width, height);
+                c.parked->update(elapsed);
+                c.parked->pollParamChanges(c.params);
+            }
 }
 
 void Composition::pauseAll()
@@ -122,6 +257,69 @@ void Composition::resumeAll()
         if (Clip* c = activeClip(i); c && c->isOpen())
             c->setPlaying(true);
     paused = false;
+}
+
+int Composition::pageAction(PageAction action, int layer)
+{
+    int hit = 0;
+    for (int i = 0; i < layerCount(); ++i) {
+        if (layer >= 0 && i != layer)
+            continue;
+        Clip* c = activeClip(i);
+        if (!c || !c->isOpen() || !c->hasPageNav())
+            continue;
+        auto* pdf = dynamic_cast<media::PdfSource*>(c->source.get());
+        if (!pdf)
+            continue;
+        switch (action) {
+        case PageAction::Next: pdf->nextPage(); break;
+        case PageAction::Prev: pdf->prevPage(); break;
+        case PageAction::First: pdf->firstPage(); break;
+        case PageAction::Last: pdf->lastPage(); break;
+        case PageAction::Reload: pdf->reloadDocument(); break;
+        }
+        if (action != PageAction::Reload)
+            c->setParam("page", pdf->page());
+        ++hit;
+    }
+    return hit;
+}
+
+namespace {
+
+int docNext(Composition& c) { return c.pageAction(Composition::PageAction::Next); }
+int docPrev(Composition& c) { return c.pageAction(Composition::PageAction::Prev); }
+int docFirst(Composition& c) { return c.pageAction(Composition::PageAction::First); }
+int docLast(Composition& c) { return c.pageAction(Composition::PageAction::Last); }
+int docReload(Composition& c) { return c.pageAction(Composition::PageAction::Reload); }
+
+const ActionDef kActions[] = {
+    {"doc.next", "Próximo slide", "Documentos", &docNext},
+    {"doc.prev", "Slide anterior", "Documentos", &docPrev},
+    {"doc.first", "Voltar ao início (slide inicial)", "Documentos", &docFirst},
+    {"doc.last", "Último slide", "Documentos", &docLast},
+    {"doc.reload", "Recarregar documento", "Documentos", &docReload},
+};
+
+}
+
+std::span<const ActionDef> allActions()
+{
+    return kActions;
+}
+
+const ActionDef* findAction(const std::string& id)
+{
+    for (const ActionDef& a : kActions)
+        if (id == a.id)
+            return &a;
+    return nullptr;
+}
+
+bool runAction(Composition& comp, const std::string& id)
+{
+    const ActionDef* a = findAction(id);
+    return a && a->run(comp) > 0;
 }
 
 std::unique_ptr<media::ISource> Composition::openSource(const Clip& clipToOpen) const
@@ -175,9 +373,10 @@ bool Composition::trigger(int layer, int column)
     if (c.missing) {
         std::error_code ec;
         if (c.type == Clip::Type::File && std::filesystem::exists(c.path, ec)) {
-            c.missing = false; // o arquivo voltou ao lugar
+            c.missing = false;
         } else {
-            log::warn("Arquivo não encontrado: \"" + c.name + "\"");
+            log::warn(c.missingPlugin ? "Plugin ausente: \"" + c.generatorId + "\" não existe mais nesta versão."
+                                      : "Arquivo não encontrado: \"" + c.name + "\"");
             return false;
         }
     }
@@ -190,14 +389,29 @@ bool Composition::trigger(int layer, int column)
         return true;
     }
 
-    stopLayer(layer);
+    std::unique_ptr<media::ISource> resumed;
+    if (c.parked) {
+        if (c.replay == ReplayMode::Resume && c.parked->isOpen())
+            resumed = std::move(c.parked);
+        c.parked.reset();
+        c.parkedStamp = 0;
+    }
 
-    std::unique_ptr<media::ISource> src = openSource(c);
-    if (!src)
-        return false;
+    deactivateLayer(layer);
 
-    c.source = std::move(src);
-    c.playing = true; // disparar sempre comeca tocando
+    if (resumed)
+        c.source = std::move(resumed);
+    if (!c.source) {
+        std::unique_ptr<media::ISource> src = openSource(c);
+        if (!src)
+            return false;
+        c.source = std::move(src);
+        if (c.replay == ReplayMode::Resume && c.resumeSeconds > 0.0 && c.type == Clip::Type::File &&
+            c.kind == media::MediaKind::Video && c.resumeSeconds < c.source->duration() - 0.05)
+            c.source->seek(c.resumeSeconds);
+    }
+    c.resumeSeconds = 0.0;
+    c.playing = true;
     c.source->play();
     l.activeDeck = currentDeck;
     l.activeColumn = column;
@@ -237,11 +451,10 @@ int Composition::expandPages(int layer, int column)
     const int pages = media::docPageCount(base.path);
     if (!base.isPaged() || pages < 1 || base.missing)
         return 0;
-    // Copia o que vale antes de mexer na grade (a referencia acima aponta para a celula que sera substituida)
     const std::filesystem::path file = base.path;
     const media::ParamValues baseParams = base.params;
     const FitMode fit = base.fit;
-    const fx::EffectChain baseEffects = base.effects; // cada pagina herda os efeitos do clip original
+    const fx::EffectChain baseEffects = base.effects;
     const std::string baseName = paths::toUtf8(file.filename());
 
     int created = 0;
@@ -277,7 +490,6 @@ void Composition::swapClips(int layerA, int columnA, int layerB, int columnB)
     const bool activeA = isActiveCell(deck, layerA, columnA) && clip(layerA, columnA).isOpen();
     const bool activeB = isActiveCell(deck, layerB, columnB) && clip(layerB, columnB).isOpen();
 
-    // Quem estava tocando perde o marcador na posicao antiga (a fonte vai junto com o clip)
     if (activeA) {
         layers[static_cast<size_t>(layerA)].activeColumn = -1;
         layers[static_cast<size_t>(layerA)].activeDeck = -1;
@@ -289,10 +501,8 @@ void Composition::swapClips(int layerA, int columnA, int layerB, int columnB)
 
     std::swap(clip(layerA, columnA), clip(layerB, columnB));
 
-    // O clip de A agora esta em B (e vice-versa): reassume o posto de ativo da camada de destino,
-    // fechando o que a camada tocava antes (uma camada toca um clip por vez).
     auto place = [&](int layer, int column) {
-        stopLayer(layer);
+        deactivateLayer(layer);
         Layer& l = layers[static_cast<size_t>(layer)];
         l.activeDeck = deck;
         l.activeColumn = column;
@@ -315,9 +525,11 @@ void Composition::update(double dt)
         c->source->setCanvasSize(width, height);
         c->source->setTempo(beat, bpm);
         c->source->update(dt);
-        c->source->pollParamChanges(c->params); // fonte com interface propria (plugin FFGL) que mudou parametros
-        c->playing = c->source->isPlaying(); // "Uma vez" termina e pausa sozinho
+        c->source->pollParamChanges(c->params);
+        c->playing = c->source->isPlaying();
     }
+    updateBackground(dt);
+    trimBackground();
 }
 
 bool Composition::anyActive() const
@@ -345,4 +557,106 @@ const Clip* Composition::activeClip(int layer) const
     return const_cast<Composition*>(this)->activeClip(layer);
 }
 
-} // namespace bsl
+LayerTransform* Composition::transformRef(int layer)
+{
+    if (layer < 0 || layer >= layerCount())
+        return nullptr;
+    if (Clip* c = activeClip(layer); c && c->ownTransform)
+        return &c->transform;
+    return &layers[static_cast<size_t>(layer)].transform;
+}
+
+const LayerTransform* Composition::transformRef(int layer) const
+{
+    return const_cast<Composition*>(this)->transformRef(layer);
+}
+
+bool Composition::resetTransform(int layer)
+{
+    LayerTransform* t = transformRef(layer);
+    if (!t)
+        return false;
+    const LayerTransform before = *t;
+    *t = LayerTransform{};
+    return !(before == *t);
+}
+
+int Composition::layerAtPoint(float px, float py) const
+{
+    bool anySolo = false;
+    for (const Layer& l : layers)
+        anySolo = anySolo || (l.solo && !l.sliceOnly);
+    for (int i = layerCount() - 1; i >= 0; --i) {
+        const Layer& l = layers[static_cast<size_t>(i)];
+        if (l.sliceOnly || l.bypass || (anySolo && !l.solo) || l.opacity <= 0.0f)
+            continue;
+        const Clip* c = activeClip(i);
+        if (!c || !c->isOpen() || c->source->texture() == 0)
+            continue;
+        const LayerTransform& t = c->ownTransform ? c->transform : l.transform;
+        if (!t.contains(px, py, width, height))
+            continue;
+        float lx = 0.0f, ly = 0.0f;
+        t.toLocal(px, py, width, height, lx, ly);
+        const float u = lx / t.width(width), v = ly / t.height(height);
+        float sx = 1.0f, sy = 1.0f;
+        fitFraction(c->fit, width, height, c->source->width(), c->source->height(), sx, sy);
+        if (std::abs(u - 0.5f) > sx * 0.5f || std::abs(v - 0.5f) > sy * 0.5f)
+            continue;
+        return i;
+    }
+    return -1;
+}
+
+int Composition::applyTransformPreset(int layer, int preset)
+{
+    if (preset < 0 || preset >= kTransformPresetCount)
+        return 0;
+    const auto kind = static_cast<TransformPreset>(preset);
+
+    if (kind == TransformPreset::Grid2x2 || kind == TransformPreset::Grid3x3) {
+        const int n = kind == TransformPreset::Grid2x2 ? 2 : 3;
+        int changed = 0;
+        for (int i = 0; i < std::min(layerCount(), n * n); ++i) {
+            LayerTransform* t = transformRef(i);
+            const LayerTransform next = gridCellTransform(n, n, i % n, i / n, width, height);
+            changed += (*t == next) ? 0 : 1;
+            *t = next;
+        }
+        return changed;
+    }
+
+    LayerTransform* t = transformRef(layer);
+    if (!t)
+        return 0;
+    LayerTransform next;
+    switch (kind) {
+    case TransformPreset::Fit:
+    case TransformPreset::Fill: {
+        const Clip* c = activeClip(layer);
+        if (c && c->isOpen() && c->source->width() > 0 && c->source->height() > 0) {
+            const int sw = c->source->width(), sh = c->source->height();
+            float cx0 = 1.0f, cy0 = 1.0f, cxT = 1.0f, cyT = 1.0f;
+            fitFraction(c->fit, width, height, sw, sh, cx0, cy0);
+            fitFraction(kind == TransformPreset::Fit ? FitMode::Fit : FitMode::Fill, width, height, sw, sh, cxT, cyT);
+            const float bw = static_cast<float>(width) * cxT / cx0, bh = static_cast<float>(height) * cyT / cy0;
+            next = LayerTransform::rect((static_cast<float>(width) - bw) * 0.5f, (static_cast<float>(height) - bh) * 0.5f, bw, bh)
+                       .settled(width, height);
+        }
+        break;
+    }
+    case TransformPreset::LeftHalf: next = gridCellTransform(2, 1, 0, 0, width, height); break;
+    case TransformPreset::RightHalf: next = gridCellTransform(2, 1, 1, 0, width, height); break;
+    case TransformPreset::Quad1: next = gridCellTransform(2, 2, 0, 0, width, height); break;
+    case TransformPreset::Quad2: next = gridCellTransform(2, 2, 1, 0, width, height); break;
+    case TransformPreset::Quad3: next = gridCellTransform(2, 2, 0, 1, width, height); break;
+    case TransformPreset::Quad4: next = gridCellTransform(2, 2, 1, 1, width, height); break;
+    default: break;
+    }
+    if (*t == next)
+        return 0;
+    *t = next;
+    return 1;
+}
+
+}

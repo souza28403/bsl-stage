@@ -6,7 +6,6 @@ namespace bsl {
 
 bool squareToQuad(const Point2 c[4], Mat3& out)
 {
-    // Heckbert, "Fundamentals of Texture Mapping and Image Warping" (1989)
     const double x0 = c[0].x, y0 = c[0].y;
     const double x1 = c[1].x, y1 = c[1].y;
     const double x2 = c[2].x, y2 = c[2].y;
@@ -28,12 +27,10 @@ bool squareToQuad(const Point2 c[4], Mat3& out)
     const double d = y1 - y0 + g * y1;
     const double e = y3 - y0 + h * y3;
 
-    // X = M * [u v 1]^T
     const double m[9] = {a, b, x0, d, e, y0, g, h, 1.0};
     for (int i = 0; i < 9; ++i)
         out.m[i] = m[i];
 
-    // Degenerado se a matriz não tem inversa
     Mat3 inv;
     return invert(out, inv);
 }
@@ -93,4 +90,4 @@ bool pointInQuad(const Point2 c[4], Point2 p)
     return !(pos && neg);
 }
 
-} // namespace bsl
+}

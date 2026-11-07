@@ -19,13 +19,13 @@ Convenções:
 - Pasta: `source/plugins/AlphaReactor/` (arquivo principal `AlphaReactor.cpp`)
 
 **O que faz**
-Trabalha sobre a câmera já recortada (canal alpha, p.ex. Remoção de Fundo do Resolume 7.28+) e desenha, atrás do DJ, um halo de "god rays" (aura) que pulsa com os agudos, e rastros infinitos (feedback) cuja escala reage aos graves, com separação RGB opcional nos rastros. A câmera é composta por cima do feedback (over pré-multiplicado).
+Trabalha sobre a câmera já recortada (canal alpha, p.ex. uma remoção de fundo feita antes no host) e desenha, atrás do DJ, um halo de "god rays" (aura) que pulsa com os agudos, e rastros infinitos (feedback) cuja escala reage aos graves, com separação RGB opcional nos rastros. A câmera é composta por cima do feedback (over pré-multiplicado).
 
 **Parâmetros**
 
 | Nome | Tipo FFGL | Faixa / opções | Padrão | O que controla |
 |---|---|---|---|---|
-| Audio Source | STANDARD | `<0.34` loopback (desktop); `0.34–0.66` entrada (DJ/mic); `≥0.67` FFT do Resolume | 0 (loopback) | Origem do áudio |
+| Audio Source | STANDARD | `<0.34` loopback (desktop); `0.34–0.66` entrada (DJ/mic); `≥0.67` FFT do host | 0 (loopback) | Origem do áudio |
 | Audio Gain | STANDARD | 0–1 → ganho `v*4+0.1` (0.1×–4.1×) | 0.5 (2.1×) | Ganho do áudio capturado |
 | Noise Gate | STANDARD | 0–1 → gate `v*0.15` | 0.05 | Corte de ruído de fundo |
 | Aura Intensity | STANDARD | 0–1 | 0.5 | Força dos raios de luz |
@@ -83,7 +83,7 @@ Sobre a câmera do DJ, desenha tipografia cinética com dois textos (nome do DJ 
 | Text Scale | STANDARD | 0–1 | 0.65 | Escala do texto |
 | Position Y | STANDARD | 0–1 | 0.48 | Posição vertical |
 | Text Tracking | STANDARD | 0–1 | 0.15 | Espaçamento entre letras (força re-render do texto) |
-| Audio Source | STANDARD | `0–0.33` YouTube/Desktop (loopback); `0.34–0.66` Ext Mic/Line-In; `0.67–1` Resolume FFT Sliders | 0 | Origem do áudio; no modo 3 usa Bass/High React como envelope direto, sem captura |
+| Audio Source | STANDARD | `0–0.33` YouTube/Desktop (loopback); `0.34–0.66` Ext Mic/Line-In; `0.67–1` FFT do host (sliders) | 0 | Origem do áudio; no modo 3 usa Bass/High React como envelope direto, sem captura |
 | Audio Gain | STANDARD | 0–1 → `v*4+0.1` | 0.5 | Ganho |
 | Noise Gate | STANDARD | 0–1 → `v*0.15` | 0.05 | Corte de ruído |
 | Bass React | STANDARD | 0–1 | 0.0 | Soma ao grave capturado (× Audio Sensitivity) |
@@ -104,7 +104,7 @@ Sobre a câmera do DJ, desenha tipografia cinética com dois textos (nome do DJ 
 | Master Invert | BOOLEAN | 0 / 1 | 0 (OFF) | Inversão geral da saída |
 
 **Dependências externas**
-- Captura de áudio: sim, módulo compartilhado `AudioCapture` (WASAPI loopback no endpoint de saída ativo, ou entrada; FFT 512; bandas graves/médios/agudos; kick; AGC). Modo 3 (Resolume FFT) não captura: usa os sliders Bass/High React como envelope. O display mostra o nível (`Bass: 85% [YOUTUBE]`).
+- Captura de áudio: sim, módulo compartilhado `AudioCapture` (WASAPI loopback no endpoint de saída ativo, ou entrada; FFT 512; bandas graves/médios/agudos; kick; AGC). Modo 3 (FFT do host) não captura: usa os sliders Bass/High React como envelope. O display mostra o nível (`Bass: 85% [YOUTUBE]`).
 - CEF / servidor HTTP / porta: não.
 - Arquivos lidos: não.
 - stb_image: não.
@@ -139,7 +139,7 @@ Um shader só, mas exige substituir a rasterização GDI do texto (Windows-only)
 - Saída prevista: `BSL LIGHT Slice Refiner.dll` + `control.html`
 
 **O que faz**
-Recorta o vídeo do clipe nos formatos dos slices do Advanced Output do Resolume, com até 8 grupos. Cada grupo tem cantos arredondados, offset, união de slices (merge suave), borda com 12 efeitos (noise, spiral, radial, zebra, disco, chaser, dashes, rainbow, sparkle, glitch, pulse, scanner), blinker, bounce e rotação de cor. Toda a configuração é feita por um painel web (aba Slices do BSL Studio) via HTTP; o plugin serve o painel e a API, e persiste o estado em JSON. Recebe tempo e BPM do host (`SetTime`, `SetBeatInfo`).
+Recorta o vídeo do clipe nos formatos dos slices de um XML de saída, com até 8 grupos. Cada grupo tem cantos arredondados, offset, união de slices (merge suave), borda com 12 efeitos (noise, spiral, radial, zebra, disco, chaser, dashes, rainbow, sparkle, glitch, pulse, scanner), blinker, bounce e rotação de cor. Toda a configuração é feita por um painel web (aba Slices do BSL Studio) via HTTP; o plugin serve o painel e a API, e persiste o estado em JSON. Recebe tempo e BPM do host (`SetTime`, `SetBeatInfo`).
 
 **Parâmetros** (6, conforme `BSLSliceRefiner.cpp`, linhas 62–75)
 
@@ -149,7 +149,7 @@ Recorta o vídeo do clipe nos formatos dos slices do Advanced Output do Resolume
 | Black BG | BOOLEAN | 0 / 1 | 1 | Fora dos slices: preto (1) ou transparente (0) |
 | Master Speed | STANDARD | 0–1 → 0–2× | 0.5 (1×) | Velocidade global dos efeitos |
 | Blinker | BOOLEAN | 0 / 1 | 0 | Força todos os contornos a piscar |
-| Reload Slices | EVENT | — | — | Relê o `AdvancedOutput.xml` |
+| Reload Slices | EVENT | — | — | Relê o XML de slices |
 | Open Panel | EVENT | — | — | Abre `http://localhost:8083/` no navegador padrão (`ShellExecuteW`) |
 
 **Dependências externas**
@@ -163,8 +163,8 @@ Recorta o vídeo do clipe nos formatos dos slices do Advanced Output do Resolume
   - `GET /api/slices/screen`: JPEG ~640 px (GDI+), no máximo 10×/s; 204 se não houver quadro.
   - `OPTIONS`: 204.
 - Arquivos lidos:
-  - `%USERPROFILE%\Documents\Resolume Arena\Preferences\AdvancedOutput.xml` (verifica mtime a cada ~2 s; limite 64 MB).
-  - `%USERPROFILE%\Documents\Resolume Arena\BSL Slice Refiner\state.json` (limite 4 MB).
+  - o XML de slices padrão da pasta Documentos do usuário (verifica mtime a cada ~2 s; limite 64 MB).
+  - `state.json` na pasta de dados do plugin, em Documentos (limite 4 MB).
   - Hooks de teste: variáveis `BSL_STATE_DIR` e `BSL_SLICE_XML`.
 - stb_image: não (JSON próprio em `Json.h`).
 - COM / PowerPoint: não. GDI+ (`gdiplus.h`) para codificar JPEG.
@@ -181,7 +181,7 @@ Recorta o vídeo do clipe nos formatos dos slices do Advanced Output do Resolume
 
 **Estado / arquivos guardados**
 - `Core` (singleton intencionalmente vazado): `m_state`, `m_slices` (máx. 64), `m_groupOf`, versão compartilhada, mtime do XML, último quadro/JPEG.
-- `State.cpp`/`State.h`: modelo do estado e (de)serialização; `SliceXml.cpp`: leitura do Advanced Output.
+- `State.cpp`/`State.h`: modelo do estado e (de)serialização; `SliceXml.cpp`: leitura do XML de saída.
 - Persistência: `state.json` com escrita atômica (`state.json.tmp` + `MoveFileExW`), agendada ~0,5 s após mudanças.
 - Por instância: fases de efeitos e bounce (`GroupPhase`), blink, `m_beats`.
 
@@ -205,7 +205,7 @@ Combina pixel sorting (pixels escorrem a partir de um limiar de luminância, em 
 
 | Nome | Tipo FFGL | Faixa / opções | Padrão | O que controla |
 |---|---|---|---|---|
-| Audio Source | STANDARD | `<0.34` loopback; `0.34–0.66` entrada; `≥0.67` "Resolume FFT" (sem captura, ver observação) | 0 | Origem do áudio |
+| Audio Source | STANDARD | `<0.34` loopback; `0.34–0.66` entrada; `≥0.67` "FFT do host" (sem captura, ver observação) | 0 | Origem do áudio |
 | Audio Gain | STANDARD | 0–1 → `v*4+0.1` | 0.5 | Ganho |
 | Noise Gate | STANDARD | 0–1 → `v*0.15` | 0.05 | Corte de ruído |
 | Sort Threshold | STANDARD | 0–1 | 0.70 | Limiar de luma para escorrer (o grave reduz esse limiar) |
@@ -226,7 +226,7 @@ Combina pixel sorting (pixels escorrem a partir de um limiar de luminância, em 
 | High React | STANDARD | 0–1 (×2) | 0.5 | Quanto o agudo alonga o escorrido |
 
 **Dependências externas**
-- Captura de áudio: sim, módulo compartilhado `AudioCapture`. Observação: o manual diz que o modo "Resolume FFT Sliders" obedece aos sliders de FFT do Resolume, mas esta versão não registra buffer FFT (`SetBufferParamInfo` ausente) e, nesse modo, para a captura (`Stop()`) e zera grave/agudo. Ou seja, no modo 3 o efeito fica sem reatividade.
+- Captura de áudio: sim, módulo compartilhado `AudioCapture`. Observação: o manual diz que o modo "FFT do host" obedece aos sliders de FFT do host, mas esta versão não registra buffer FFT (`SetBufferParamInfo` ausente) e, nesse modo, para a captura (`Stop()`) e zera grave/agudo. Ou seja, no modo 3 o efeito fica sem reatividade.
 - CEF / servidor HTTP / porta: não.
 - Arquivos lidos: não.
 - stb_image: não.
@@ -314,7 +314,7 @@ Fonte sem estado, sem dependências externas e 1 passe; o trabalho é portar o G
 - Pasta: `source/plugins/LEDMapperPro/` (`LEDMapperPro.cpp`, 261 linhas)
 
 **O que faz**
-Desenha uma grade de cabinets de LED (colunas × linhas, com tamanho e espaçamento) centralizada na tela, com cabinets em dois tons alternados, borda branca, gap vermelho e fundo preto. Ao acionar "Export XML", grava um XML no formato Advanced Output do Resolume 7 com um Screen e um Slice por cabinet (InputRect e OutputRect iguais) para o Desktop.
+Desenha uma grade de cabinets de LED (colunas × linhas, com tamanho e espaçamento) centralizada na tela, com cabinets em dois tons alternados, borda branca, gap vermelho e fundo preto. Ao acionar "Export XML", grava um XML no formato de XML de slices com um Screen e um Slice por cabinet (InputRect e OutputRect iguais) para o Desktop.
 
 **Parâmetros** (7)
 
@@ -331,7 +331,7 @@ Desenha uma grade de cabinets de LED (colunas × linhas, com tamanho e espaçame
 **Dependências externas**
 - Captura de áudio: não.
 - CEF / servidor HTTP / porta: não.
-- Arquivo gravado: `%USERPROFILE%\Desktop\LEDMapperPro_AdvancedOutput.xml` (somente escrita; nada é lido).
+- Arquivo gravado: um XML de slices no Desktop, com nome começando em `LEDMapperPro_` (somente escrita; nada é lido).
 - stb_image: não.
 - COM / PowerPoint: não.
 - IDs de Screen e Slice: `rand()` (sem semente).
@@ -384,7 +384,7 @@ Carrega um documento (PPTX, PPT ou PDF), converte cada slide/página em JPG numa
   - PDF: WinRT `Windows.Data.Pdf` in-process (`PdfDocument`, `RenderToStreamAsync`, largura 2× até 3840 px), em thread de trabalho com apartamento single-threaded.
   - PPTX/PPT, tentativa 1: LibreOffice headless (`C:\Program Files\LibreOffice\program\soffice.exe --convert-to pdf`) via PowerShell, depois o PDF segue o caminho WinRT.
   - PPTX/PPT, tentativa 2 (fallback): PowerPoint via COM, script `export.ps1` com `New-Object -ComObject PowerPoint.Application`, `Presentations.Open` e `SaveAs(pasta, 17)` (17 = JPG).
-  - Observações: o fallback marca sucesso sem verificar (`extractionSuccess = true`); a linha de comando monta caminhos por concatenação de string (caminho com aspas quebra); a conversão roda na thread do host dentro de `SetTextParameter`, então bloqueia o Resolume enquanto converte.
+  - Observações: o fallback marca sucesso sem verificar (`extractionSuccess = true`); a linha de comando monta caminhos por concatenação de string (caminho com aspas quebra); a conversão roda na thread do host dentro de `SetTextParameter`, então bloqueia o host enquanto converte.
 
 **Shaders**
 - 1 passe de blit da textura do slide para a tela (`ProcessOpenGL`, uniform `InputTexture`). Sem feedback.
@@ -411,14 +411,14 @@ A conversão é específica do Windows (WinRT, LibreOffice ou PowerPoint COM). C
 - Pasta: `source/plugins/SliceRefiner2/` (`SliceRefiner2.cpp`, 394 linhas). Legado; o SPEC do BSLSliceRefiner diz para não mexer nele.
 
 **O que faz**
-Versão anterior do recorte por slices. Lê os slices do Advanced Output do Resolume (ou de um XML escolhido pelo usuário) e desenha até 8 slices, cada um com modo de contorno/preenchimento (11 modos), arredondamento, espessura, velocidade e cor próprios.
+Versão anterior do recorte por slices. Lê os slices de um XML de saída (ou de um XML escolhido pelo usuário) e desenha até 8 slices, cada um com modo de contorno/preenchimento (11 modos), arredondamento, espessura, velocidade e cor próprios.
 
 **Parâmetros** (50 índices)
 
 | Nome | Tipo FFGL | Faixa / opções | Padrão | O que controla |
 |---|---|---|---|---|
 | Load Custom XML | FILE | caminho | vazio | Carrega um XML de slices próprio |
-| Sync Resolume Slices | EVENT | — | — | Relê `AdvancedOutput.xml` |
+| Sync Slices | EVENT | — | — | Relê o XML de slices |
 | S1…S8 Enable | BOOLEAN | 0 / 1 | 1 | Liga o slice |
 | S1…S8 Mode | OPTION | 0–10 | 0 | Modo: 0 Neon Solid, 1 Gradient, 2 Radar, 3 Chaser, 4 Bumper, 5 Video Mask, 6 Sparkles, 7 Glow Pulse, 8 RGB Wave, 9 Dotted, 10 Glitch (rótulos dos comentários do shader) |
 | S1…S8 Roundness | STANDARD | 0–1 | 0 | Arredondamento |
@@ -432,7 +432,7 @@ Versão anterior do recorte por slices. Lê os slices do Advanced Output do Reso
 - Captura de áudio: não.
 - CEF / servidor HTTP / porta: não.
 - Arquivos lidos:
-  - `%USERPROFILE%\Documents\Resolume Arena\Preferences\AdvancedOutput.xml` (no init e no Sync).
+  - o XML de slices padrão da pasta Documentos do usuário (no init e no Sync).
   - XML escolhido pelo parâmetro FILE.
   - Parser por busca de strings (`find("<Slice")`, `"<Param name=\"Name\""`, `"<InputRect"`, `"<v x=\""`), sem parser XML de verdade.
 - stb_image: não.
@@ -467,16 +467,16 @@ Um passe e um parser simples; se o app já usar o parser do BSLSliceRefiner, a t
 Renderiza uma página web com CEF em off-screen (OSR) e entrega o resultado como textura de vídeo. A página padrão é `http://localhost:8081/app` (fundos WebGL e logo animada, servida do próprio plugin). Um painel HTTP na porta 8081 troca o fundo, ajusta a configuração, e controla a logo (texto ou URL, efeito, entrada, tamanho e tempos). O plugin mantém o último estado e a última logo como "fonte de verdade" para os painéis.
 
 **Parâmetros**
-Nenhum parâmetro FFGL é registrado: o construtor não chama `SetParamInfo` (comentário no código: "Resolume UI will be clean"). O enum `PT_*` (URL, Clean Fullscreen, Play, Pause, Restart, Mute, Volume, Reload, Mouse Click, Mouse X, Mouse Y) existe e é tratado em `SetFloatParameter`/`SetTextParameter`, mas o Resolume não o expõe. O controle é feito só pelo HTTP.
+Nenhum parâmetro FFGL é registrado: o construtor não chama `SetParamInfo`. O enum `PT_*` (URL, Clean Fullscreen, Play, Pause, Restart, Mute, Volume, Reload, Mouse Click, Mouse X, Mouse Y) existe e é tratado em `SetFloatParameter`/`SetTextParameter`, mas o host não o expõe. O controle é feito só pelo HTTP.
 
 **Dependências externas**
 - CEF:
   - `libcef.dll` na pasta do plugin (cada pasta pode ter sua cópia); o código procura a subpasta `WebBrowser.Cef` (`WebBackgrounds.cpp`, ~1196–1202) se ela existir.
   - Switches em `BrowserApp` (`WebBackgrounds.h`): `autoplay-policy`, user-agent Chrome 134, `enable-gpu`, `disable-gpu-vsync`, `enable-begin-frame-scheduling`, `allow-file-access-from-files`, `disable-web-security`, `remote-debugging-port=9222`.
   - `CefSettings`: `no_sandbox`, `multi_threaded_message_loop`, `windowless_rendering_enabled`, `remote_debugging_port=8088`. São duas portas de depuração diferentes.
-  - Cache: `%LOCALAPPDATA%\ResolumeArena\WebBackgroundsCache`.
+  - Cache: `WebBackgroundsCache` em `%LOCALAPPDATA%`.
   - Subprocesso: o código procura `WebBrowserSubprocess.exe` (nome herdado do WebBrowser), mas o CMake deste plugin gera `WebBackgroundsSubprocess.exe`. Verificar.
-  - Modelo: o processo browser fica no processo do Resolume (CefInitialize in-process); os renderers rodam no subprocesso.
+  - Modelo: o processo browser fica no processo do host (CefInitialize in-process); os renderers rodam no subprocesso.
 - Servidor HTTP: sim, Winsock próprio, singleton, **porta 8081** (`WebBackgrounds.cpp:2165`). O comentário no header diz 8080; o código usa 8081.
 - Arquivos lidos: `<plugin>\web_app_bg\control.html` (painel; fallback: HTML embutido) e `<plugin>\web_app_bg\index.html` (página `/app`). No repositório só existe `web_app/index.html`; a pasta `web_app_bg` provavelmente é copiada no deploy.
 - stb_image: não.
@@ -528,7 +528,7 @@ Renderiza com CEF OSR a página local `file:///…/web_app_motion/index.html`, q
 Nenhum FFGL registrado (sem `SetParamInfo` em `WebMotion.cpp`), mesmo caso do WebBackgrounds.
 
 **Dependências externas**
-- CEF: mesmo modelo do WebBackgrounds (switches com `remote-debugging-port=9222` no `BrowserApp`, `remote_debugging_port=8088` no `CefSettings`, `no_sandbox`, OSR). Cache: `%LOCALAPPDATA%\ResolumeArena\WebMotionCache`. Subprocesso procurado como `WebBrowserSubprocess.exe`, mas o CMake gera `WebMotionSubprocess.exe`. Verificar.
+- CEF: mesmo modelo do WebBackgrounds (switches com `remote-debugging-port=9222` no `BrowserApp`, `remote_debugging_port=8088` no `CefSettings`, `no_sandbox`, OSR). Cache: `WebMotionCache` em `%LOCALAPPDATA%`. Subprocesso procurado como `WebBrowserSubprocess.exe`, mas o CMake gera `WebMotionSubprocess.exe`. Verificar.
 - Servidor HTTP: sim, Winsock próprio, singleton, **porta 8082** (`WebMotion.cpp:1429`). O comentário diz 8082 e o código também.
 - Arquivos lidos: `web_app_motion/index.html` (no repositório o arquivo está em `web_app/index.html`; o nome do diretório de deploy é diferente).
 - stb_image: não.
@@ -584,7 +584,7 @@ Navegador web completo (CEF OSR) como fonte de vídeo. URL padrão `https://www.
 | Mouse Y | STANDARD | 0–1 | 0.5 | Coordenada Y normalizada do clique |
 
 **Dependências externas**
-- CEF: mesmo modelo dos outros dois (OSR, `no_sandbox`, `remote_debugging_port=8088` e `9222` no `BrowserApp`). Carrega `WebBrowser.Cef` quando existe (`SetDllDirectoryW`, linhas 69–72). Subprocesso `WebBrowserSubprocess.exe` (bate com o CMake deste plugin). Cache: `%LOCALAPPDATA%\ResolumeArena\WebBrowserCache`.
+- CEF: mesmo modelo dos outros dois (OSR, `no_sandbox`, `remote_debugging_port=8088` e `9222` no `BrowserApp`). Carrega `WebBrowser.Cef` quando existe (`SetDllDirectoryW`, linhas 69–72). Subprocesso `WebBrowserSubprocess.exe` (bate com o CMake deste plugin). Cache: `WebBrowserCache` em `%LOCALAPPDATA%`.
 - Servidor HTTP: sim, Winsock próprio, singleton, **porta 8080** (`WebBrowser.cpp:1756`).
 - Arquivos lidos: nenhum (painel HTML embutido em `s_remoteHtmlPage`, linha 277).
 - stb_image: não.
@@ -611,16 +611,16 @@ Rotas (`WebBrowser.cpp:1809–1930`): `GET /`, `/index*` (HTML embutido); `GET /
 
 ## Observações e anomalias encontradas
 
-1. **ID duplicado:** `WB01` aparece em `WebBrowser.cpp:15` e em `WebMotion.cpp:15`. Resolume identifica plugins pelo ID; um dos dois precisa de ID novo.
+1. **ID duplicado:** `WB01` aparece em `WebBrowser.cpp:15` e em `WebMotion.cpp:15`. O host identifica plugins pelo ID; um dos dois precisa de ID novo.
 2. **Nome do subprocesso CEF:** `WebBackgrounds` e `WebMotion` procuram `WebBrowserSubprocess.exe` (nome do WebBrowser), mas o CMake de cada um gera `WebBackgroundsSubprocess.exe` e `WebMotionSubprocess.exe`. Se a cópia não existir com o nome procurado, o CEF não sobe. Confirmar no deploy.
 3. **Portas de depuração e segurança do CEF:** `BrowserApp` define `remote-debugging-port=9222` e `CefSettings` define `8088`. Todos os três plugins web usam `disable-web-security`, `allow-file-access-from-files` e `no_sandbox`. Se a porta de depuração for exposta, qualquer página carregada tem acesso total.
 4. **Log de depuração no AlphaReactor:** `AudioCapture.cpp` da cópia do AlphaReactor grava em `C:\Users\GABRIEL - BSL LIGHT\Desktop\AlphaReactor_Audio.log` a cada start (append). Remover antes de distribuir.
-5. **DatamoshPixelSort sem reatividade no modo "Resolume FFT":** o manual promete obedecer aos sliders FFT do Resolume, mas não há buffer FFT registrado e, nesse modo, a captura para e grave/agudo ficam em 0.
+5. **DatamoshPixelSort sem reatividade no modo "FFT do host":** o manual promete obedecer aos sliders FFT do host, mas não há buffer FFT registrado e, nesse modo, a captura para e grave/agudo ficam em 0.
 6. **WebMotion:** o painel embutido chama `/api/action?cmd=text|logo|clear`, rota que o servidor não implementa (`not_found`).
 7. **WebBackgrounds:** o comentário do header diz porta 8080; o código usa 8081.
-8. **Parâmetros não registrados:** WebBackgrounds e WebMotion não expõem nenhum parâmetro no Resolume (controle só por HTTP).
+8. **Parâmetros não registrados:** WebBackgrounds e WebMotion não expõem nenhum parâmetro no host (controle só por HTTP).
 9. **WebBrowser:** URLs com "youtube" ou "youtu.be" passadas pelo parâmetro URL são ignoradas sem aviso (`SetTextParameter`).
-10. **PPTManager:** conversão síncrona (bloqueia o Resolume); fallback de PowerPoint marca sucesso sem checar; caminhos concatenados em linha de comando.
+10. **PPTManager:** conversão síncrona (bloqueia o host); fallback de PowerPoint marca sucesso sem checar; caminhos concatenados em linha de comando.
 11. **Arquivos fora do repositório:** `control.html` (BSLSliceRefiner e WebBackgrounds) e `web_app_bg/` (WebBackgrounds) não estão neste repositório; o painel do BSL Studio é o que os usa.
 12. **Taxas de frequência do áudio:** as faixas de bins (ex.: grave = bins 1–4) assumem 48 kHz. Se o dispositivo estiver em outra taxa, as bandas mudam de Hz (efeito pequeno).
 
@@ -634,8 +634,8 @@ Rotas (`WebBrowser.cpp:1809–1930`): `GET /`, `/index*` (HTML embutido); `GET /
 4. **Host CEF off-screen (inicialização singleton, subprocesso, cache, `OnPaint` → textura BGRA, `ExecuteJavaScript`, redimensionamento, mouse e scroll).** Usado por WebBackgrounds, WebMotion e WebBrowser. O app já tem isso.
 5. **Servidor HTTP embutido (Winsock, roteamento por path, CORS, respostas JSON e JPEG, singleton).** Usado por WebBackgrounds (8081), WebMotion (8082), WebBrowser (8080) e BSLSliceRefiner (8083).
 6. **Preview JPEG (readback do quadro + codificação com GDI+).** Usado por WebBackgrounds, WebMotion, WebBrowser e BSLSliceRefiner.
-7. **Leitura e escrita do Advanced Output do Resolume (`AdvancedOutput.xml`: slices, InputRect, mapeamento) e exportação de XML.** Usado por BSLSliceRefiner (`SliceXml`), SliceRefiner2 (leitura por string) e LEDMapperPro (exportação).
-8. **Estado JSON persistido em `Documents\Resolume Arena\…` com escrita atômica.** Usado por BSLSliceRefiner (`Json.h`, `State`, `Core`).
+7. **Leitura e escrita de XML de slices (slices, InputRect, mapeamento) e exportação de XML.** Usado por BSLSliceRefiner (`SliceXml`), SliceRefiner2 (leitura por string) e LEDMapperPro (exportação).
+8. **Estado JSON persistido em Documentos com escrita atômica.** Usado por BSLSliceRefiner (`Json.h`, `State`, `Core`).
 9. **Conversão de documentos em slides (PDF nativo, LibreOffice, PowerPoint COM) e carregamento de imagens.** Usado por PPTManager. O app já tem conversão de Office.
 10. **Relógio do host e BPM (`SetTime`, `SetBeatInfo`).** Usado por BSLSliceRefiner. Os demais usam `std::chrono`.
 11. **Quad de tela cheia, compilação de shader e passthrough de textura.** Usado por todos; já vem do SDK.
@@ -648,12 +648,12 @@ Rotas (`WebBrowser.cpp:1809–1930`): `GET /`, `/index*` (HTML embutido); `GET /
 |---|---|---|---|---|---|---|---|---|
 | AlphaReactor | ALPR | efeito | BSL Alpha Reactor | sim | não | não | não | Média |
 | AudioReactiveTypo | ARTY | efeito | BSL AudioReactive Typo | sim | não | não | não (GDI) | Média |
-| BSLSliceRefiner | BSR3 | efeito | BSL Slice Refiner | não | HTTP 8083 | AdvancedOutput.xml, state.json | não | Alta |
+| BSLSliceRefiner | BSR3 | efeito | BSL Slice Refiner | não | HTTP 8083 | XML de slices, state.json | não | Alta |
 | DatamoshPixelSort | DMSH | efeito | BSL Datamosh & Pixel Sort | sim | não | não | não | Média |
 | GenBackgrounds | GBG1 | fonte | BSL Background | não | não | não | não | Baixa |
 | LEDMapperPro | LMPR | fonte | LED Mapper Pro | não | não | grava XML no Desktop | não | Baixa |
 | PPTManager | BSPT | fonte | BSL PPT Manager | não | não | lê PPTX/PDF, grava JPGs em %TEMP% | WinRT PDF, LibreOffice, PowerPoint COM | Média |
-| SliceRefiner2 | BSS2 | efeito | BSL Slice Source 2.0 | não | não | AdvancedOutput.xml, XML próprio | não | Baixa |
+| SliceRefiner2 | BSS2 | efeito | BSL Slice Source 2.0 | não | não | XML de slices, XML próprio | não | Baixa |
 | WebBackgrounds | WBBG | fonte | BSL WebBackgrounds | não | CEF + HTTP 8081 | web_app_bg, cache CEF | não | Média |
 | WebMotion | WB01 (duplicado) | fonte | BSL WebMotion | não | CEF + HTTP 8082 | web_app_motion, cache CEF | não | Média |
 | WebBrowser | WB01 (duplicado) | fonte | BSL WebBrowser | não | CEF + HTTP 8080 | cache CEF | não | Baixa |
@@ -688,8 +688,8 @@ Quatro plugins que tinham servidor HTTP próprio, CEF ou conversão de documento
 
 ### Slice Refiner (BSR3)
 
-- Os slices vêm do próprio BSL Stage (`SliceFeed`, publicado a cada quadro a partir do `OutputSetup`); a origem "XML do
-  Resolume" importa um `AdvancedOutput.xml` (padrão `Documents\Resolume Arena\Preferences`), inclusive slices girados (retângulo
+- Os slices vêm do próprio BSL Stage (`SliceFeed`, publicado a cada quadro a partir do `OutputSetup`); a origem "XML de
+  slices" importa um arquivo XML escolhido pelo usuário, inclusive slices girados (retângulo
   orientado pelos 4 vértices do `InputRect`).
 - O `state.json` virou o parâmetro `state` (o mesmo JSON v1 do plugin: 8 grupos e `assign` slice -> grupo, com os mesmos limites),
   salvo no projeto. Os parâmetros do FFGL (Opacity, Black BG, Master Speed, Blinker, Reload) viraram `opacity` (0 a 100 %),
@@ -748,8 +748,6 @@ segundos ou batidas, voltar ao início, transição em fade). Setas de slide no 
 - **WebMotion, fundo:** a página declarava fundo transparente mas o CEF pintava preto opaco; agora é explícito (opção Fundo transparente).
 - **PPTManager:** a conversão bloqueava o host dentro de `SetTextParameter`; o caminho do PowerPoint marcava sucesso sem verificar; os
   caminhos eram montados por concatenação (aspas quebravam); os JPGs ficavam em `%TEMP%`. O worker converte em segundo plano, com cache.
-- **Etapa A, corrigido junto:** `defaultResolumeSliceXmlPath` só olhava `%USERPROFILE%\Documents`; agora usa a pasta Documentos de
-  verdade (pode estar no OneDrive).
 
 ### Conferência
 
@@ -757,7 +755,37 @@ segundos ou batidas, voltar ao início, transição em fade). Setas de slide no 
 - `bslstage_bsltest --compare docs/bsl-port`: BSR3 pelo host FFGL com o mesmo estado e o mesmo XML (diferença média 0,000,
   `bsr3-slice-refiner.png`) e WebBackgrounds pelo host FFGL (luminância e cor médias, `wbbg-web-backgrounds.png`; os fundos animam
   pelo relógio, então não dá comparar pixel a pixel).
-- `bslstage_bsltest --compare-motion docs/bsl-port`: o WebMotion original sozinho (no Resolume ele falha junto do WebBackgrounds por
+- `bslstage_bsltest --compare-motion docs/bsl-port`: o WebMotion original sozinho (no host ele falha junto do WebBackgrounds por
   causa do `libcef`), `wb01-web-motion.png`; `wb01-web-motion-texto.png` é o texto animado nativo.
 - `tools/data/bsr3-demo.py` gera o projeto do `docs/screenshot-bsl-nativos-b.png`; `tools/gen_webstudio_data.mjs` gera `assets/bsl/web_bg/studio.json`.
 
+
+## Etapa C: limpeza dos plugins e painel de controle do WebBackgrounds
+
+**Removidos** (registro, interface, `--demo`, testes e código): os efeitos `bsl:alpha-reactor`, `bsl:datamosh-pixelsort` e
+`bsl:audio-typo` e as fontes `bsl:web-motion`, `bsl:gen-backgrounds`, `bsl:led-mapper` e `bsl:ppt-manager` (com `assets/bsl/web_motion/`,
+`BslShaderSource` e o parâmetro `bsl-export`). Ficam: o módulo de áudio, `SliceFeed`, BSR3, SR2, WebBackgrounds, VHS, os efeitos de IA
+e o padrão de calibração. O `BodyGlitch` já tinha o próprio datamosh no shader e não dependia do arquivo removido.
+
+Projetos antigos com esses ids abrem: a célula fica em âmbar como "plugin ausente" (não toca) e o efeito aparece em âmbar na cadeia;
+o id e os parâmetros ficam no projeto e são salvos de volta sem perda (`Clip::absentGenerator`).
+
+**PPT Manager para a fonte PDF/Office nativa.** O que o plugin tinha: Documento (o clip já é o arquivo), Slide anterior/Próximo, Slide
+Index (= parâmetro Página) e Recarregar. Trazido para a nativa: Próximo/Anterior/Voltar ao início/Último/Recarregar como ações
+nomeadas (`core/Actions.h`: `doc.next`, `doc.prev`, `doc.first`, `doc.last`, `doc.reload`, prontas para o editor de atalhos);
+parâmetro "Slide inicial" (`startPage`, 0 = o campo Página); botões "voltar ao início" e "recarregar documento" no cabeçalho do
+painel Clip. As ações gravam o slide no clip, como as setas.
+
+**Item 7 (HTML reiniciava ao trocar de clip).** `Composition::stopLayer` destruía a fonte do clip anterior. Agora, com "Ao disparar de
+novo" = Retomar (padrão para Web, ao vivo e documentos), a fonte vai para `Clip::parked` (viva, só não é desenhada; atualizada 4x/s
+para manter conexão e eventos) e volta a mesma instância; vídeo guarda a posição e reabre com seek. Limite: `maxBackgroundSources`
+(8; 2 no Eco), a mais antiga fecha com aviso no log. "Limpar camada" e "Limpar tudo" fecham de verdade.
+
+**Padrão de calibração.** O app publicava o Pixel Map certo (também fora do modo Pixel Map), mas com o Pixel Map vazio a fonte saía
+preta (só havia uma linha pequena de status). Agora mostra o padrão do canvas inteiro com o aviso "PIXEL MAP VAZIO"; e o feed é
+publicado antes do update da composição (antes chegava um quadro atrasado).
+
+**Painel de controle do WebBackgrounds.** Botão "Abrir painel de controle" no painel Clip: liga o servidor local da própria instância
+(só `127.0.0.1`, porta do parâmetro, 8081) e abre `http://127.0.0.1:<porta>/` no navegador (ShellExecute) ou numa janela própria
+(`bslstage_worker.exe --panel`, CEF em janela comum). O acesso pela rede continua sendo o parâmetro "Controle remoto pela rede"
+(desligado). O comando `--compare-motion` do bsltest saiu junto com o WebMotion.

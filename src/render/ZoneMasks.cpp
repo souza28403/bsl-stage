@@ -57,4 +57,4 @@ bool ZoneMasks::available(int source) const
     return find(source, m);
 }
 
-} // namespace bsl
+}

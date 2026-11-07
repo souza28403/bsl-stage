@@ -1,19 +1,10 @@
-// BSL WebBackgrounds (plugin FFGL "WBBG") e BSL WebMotion ("WB01") como fontes nativas do BSL Stage.
-//
-// Diferencas em relacao aos plugins:
-//  - as paginas (assets/bsl/web_bg/index.html e assets/bsl/web_motion/index.html) rodam na fonte Web do app, no processo
-//    auxiliar com UM CEF so (o plugin carregava uma copia do libcef por pasta e brigava com os outros plugins web);
-//  - os controles que os plugins expunham so pela interface web (HTTP 8081/8082) sao parametros nativos do clip,
-//    enviados para a pagina por JavaScript (window.applyState, window.showText...);
-//  - "Controle remoto pela rede" (desligado por padrao) sobe o mesmo painel web e a mesma API nas portas 8081/8082
-//    (configuraveis), para controlar de tablet ou celular como antes.
-
 #include "fx/bsl/BslPreview.h"
 #include "fx/bsl/BslSources.h"
 #include "fx/bsl/WebStudio.h"
 
 #include "app/Log.h"
 #include "app/Paths.h"
+#include "media/ControlPanel.h"
 #include "media/WebSource.h"
 #include "net/MiniHttp.h"
 
@@ -35,8 +26,6 @@ using media::ParamSet;
 using media::ParamValues;
 using media::WorkerJson;
 using namespace media::param;
-
-// ----------------------------------------------------------------------------------------------- utilidades
 
 std::string base64Encode(const std::string& in)
 {
@@ -119,7 +108,6 @@ const char* mimeForImage(const std::string& ext)
     return "application/octet-stream";
 }
 
-// data:image/...;base64,... de um arquivo de imagem (vazio se nao der)
 std::string imageDataUrl(const std::string& pathUtf8)
 {
     if (pathUtf8.empty())
@@ -133,13 +121,11 @@ std::string imageDataUrl(const std::string& pathUtf8)
     return std::string("data:") + mimeForImage(ext) + ";base64," + base64Encode(bytes);
 }
 
-// Literal de string para JavaScript (JSON ASCII e valido)
 std::string jsString(const std::string& s)
 {
     return Json(s).dump(-1, ' ', true, Json::error_handler_t::replace);
 }
 
-// Roda 'body' quando a condicao JS (ex.: window.applyState) ja existe; tenta por ~15 s (a pagina pode ainda estar montando)
 std::string whenReady(const std::string& condition, const std::string& body)
 {
     return "(function w(n){if(" + condition + "){" + body + "}else if(n<150)setTimeout(function(){w(n+1)},100);})(0);";
@@ -156,19 +142,37 @@ std::string lowerCopy(std::string s)
     return s;
 }
 
-// ----------------------------------------------------------------------------------------------- a fonte
-
-enum class WebKind { Backgrounds, Motion };
-
-class BslWebSource final : public media::WebSource
+class BslWebSource final : public media::WebSource, public media::IControlPanel
 {
 public:
-    BslWebSource(WebKind kind, int w, int h) : media::WebSource(w, h), kind_(kind) {}
+    BslWebSource(int w, int h) : media::WebSource(w, h) {}
     ~BslWebSource() override { stopRemote(); }
 
-    std::vector<ParamDesc> paramDescs() const override
+    std::vector<ParamDesc> paramDescs() const override { return describeWebBackgrounds(values_); }
+
+    bool openControlServer(std::string& url, std::string* error) override
     {
-        return kind_ == WebKind::Backgrounds ? describeWebBackgrounds(values_) : describeWebMotion(values_);
+        panelWanted_ = true;
+        lastTry_ = {};
+        syncRemote();
+        std::lock_guard lk(mutex_);
+        if (!serverRunning_) {
+            if (error)
+                *error = remoteError_.empty() ? "não foi possível ligar o servidor local" : remoteError_;
+            return false;
+        }
+        url = "http://127.0.0.1:" + std::to_string(remotePortLive_) + "/";
+        return true;
+    }
+    std::string controlUrl() const override
+    {
+        std::lock_guard lk(mutex_);
+        return serverRunning_ ? "http://127.0.0.1:" + std::to_string(remotePortLive_) + "/" : std::string();
+    }
+    bool controlExposedToNetwork() const override
+    {
+        std::lock_guard lk(mutex_);
+        return serverRunning_ && !serverLoopback_;
     }
 
     void update(double dt) override
@@ -190,8 +194,6 @@ public:
             std::lock_guard lk(mutex_);
             take.state = std::move(pendingState_);
             pendingState_ = Json();
-            take.sets.swap(pendingSets_);
-            take.bumps.swap(pendingBumps_);
             take.js.swap(pendingJs_);
             take.logo = std::move(pendingLogo_);
             take.hasLogo = hasPendingLogo_;
@@ -204,24 +206,12 @@ public:
         bool changed = false;
         if (take.state.is_object())
             changed = applyStudioState(take.state, values) || changed;
-        for (auto& [id, v] : take.sets) {
-            const Json* cur = values.find(id);
-            if (!cur || *cur != v) {
-                values.set(id, std::move(v));
-                changed = true;
-            }
-        }
-        for (const std::string& id : take.bumps) {
-            const Json* cur = values.find(id);
-            values.set(id, (cur && cur->is_number() ? cur->get<int>() : 0) + 1);
-            changed = true;
-        }
         if (take.hasLogo)
             changed = adoptRemoteLogo(take.logo, values) || changed;
-        if (pendingModeLogo_) { // escolheu um arquivo de logo: o tipo vira Logo (como o painel original)
+        if (pendingModeLogo_) {
             pendingModeLogo_ = false;
             const Json* mode = values.find("text_mode");
-            if (kind_ == WebKind::Backgrounds && (!mode || *mode != Json("logo"))) {
+            if (!mode || *mode != Json("logo")) {
                 values.set("text_mode", "logo");
                 changed = true;
             }
@@ -251,6 +241,9 @@ public:
             return {media::SourceStatus::Level::Warning, "Controle remoto: " + remoteError_};
         if (!s.text.empty())
             return s;
+        if (serverRunning_ && serverLoopback_)
+            return {media::SourceStatus::Level::Info,
+                    "Painel de controle em http://127.0.0.1:" + std::to_string(remotePortLive_) + "/ (só neste computador)"};
         if (serverRunning_)
             return {media::SourceStatus::Level::Info,
                     "Controle remoto ligado: http://localhost:" + std::to_string(remotePortLive_) +
@@ -261,17 +254,6 @@ public:
 protected:
     std::string currentUrl() const override
     {
-        if (kind_ == WebKind::Motion) {
-            std::string url = currentParams().s("url");
-            while (!url.empty() && std::isspace(static_cast<unsigned char>(url.back())))
-                url.pop_back();
-            if (!url.empty()) {
-                if (url.find("://") == std::string::npos && url.rfind("about:", 0) != 0 && url.rfind("data:", 0) != 0)
-                    url = "https://" + url;
-                return url;
-            }
-            return fileUrl(assetFile(L"web_motion", L"index.html"));
-        }
         return fileUrl(assetFile(L"web_bg", L"index.html"));
     }
 
@@ -279,20 +261,18 @@ protected:
     {
         const ParamSet p = currentParams();
         return WorkerJson{{"zoom", 1.0},
-                          {"fps", p.s("fps") == "30" ? 30 : 60}, // o plugin pedia 60 quadros/s
+                          {"fps", p.s("fps") == "30" ? 30 : 60},
                           {"transparent", p.b("transparent")},
                           {"reloadMinutes", 0},
-                          {"muted", kind_ == WebKind::Backgrounds ? true : p.b("muted")},
+                          {"muted", true},
                           {"css", pageCss(p)}};
     }
 
-    // O raiz da pagina do BSL Studio pinta #000 e a pagina do WebMotion e transparente (o plugin desenhava os dois sobre
-    // preto): com "Fundo transparente" o CSS tira o preto; sem ele o WebMotion fica preto, como no original.
     std::string pageCss(const ParamSet& p) const
     {
         if (p.b("transparent"))
             return "html,body,#root,#root>div{background:transparent !important}";
-        return kind_ == WebKind::Motion ? "html,body{background:#000 !important}" : "";
+        return "";
     }
 
     WorkerJson buildOpenBody() const override
@@ -312,9 +292,6 @@ protected:
         outbox_.clear();
         lastStateStr_.clear();
         lastLogoPath_.clear();
-        lastImage_.clear();
-        counters_.clear();
-        readCounters(true);
         applyParams(true);
     }
 
@@ -323,7 +300,7 @@ protected:
         if (!isOpen())
             return;
         applyParams(false);
-        media::WebSource::onParamsChanged(); // pushOpen + url / params / tamanho
+        media::WebSource::onParamsChanged();
         flushOutbox();
     }
 
@@ -331,8 +308,6 @@ private:
     struct PendingTake
     {
         Json state;
-        std::vector<std::pair<std::string, Json>> sets;
-        std::vector<std::string> bumps;
         std::vector<std::string> js;
         std::string logo;
         bool hasLogo = false;
@@ -340,7 +315,6 @@ private:
         std::vector<std::pair<float, float>> clicks;
     };
 
-    // ----------------------------------------------------------------------------------------- scripts
     void setSticky(const std::string& key, const std::string& js)
     {
         bool found = false;
@@ -367,44 +341,14 @@ private:
         outbox_.clear();
     }
 
-    static int counterOf(const ParamSet& p, const std::string& id)
-    {
-        const Json v = p.raw(id);
-        return v.is_number() ? v.get<int>() : 0;
-    }
-
-    // Eventos do WebMotion e o flash: cada disparo soma 1 ao contador; 'baseline' = abrir o clip nao dispara nada
-    bool fired(const ParamSet& p, const std::string& id, bool baseline)
-    {
-        const int now = counterOf(p, id);
-        auto it = counters_.find(id);
-        if (it == counters_.end() || baseline) {
-            counters_[id] = now;
-            return false;
-        }
-        if (now == it->second)
-            return false;
-        it->second = now;
-        return true;
-    }
-    void readCounters(bool baseline)
-    {
-        const ParamSet p = currentParams();
-        for (const char* id : {"show", "showLogo", "clear", "replay", "play", "pause", "restart", "reload", "click"})
-            fired(p, id, baseline);
-    }
-
     void applyParams(bool opening)
     {
         const ParamSet p = currentParams();
         remoteWanted_ = p.b("remote");
         remotePort_ = std::clamp(p.i("remotePort"), 1024, 65535);
-        if (kind_ == WebKind::Backgrounds)
-            applyBackgrounds(p);
-        else
-            applyMotion(p, opening);
+        applyBackgrounds(p);
         if (opening)
-            outbox_.clear(); // o corpo do "open" ja leva os scripts guardados
+            outbox_.clear();
     }
 
     void applyBackgrounds(const ParamSet& p)
@@ -432,75 +376,6 @@ private:
         logoFromUser_ = true;
     }
 
-    void applyMotion(const ParamSet& p, bool opening)
-    {
-        const std::string cfg = "window.setMotion({delay:" + std::to_string(p.f("letterDelay")) + ",duration:" +
-                                std::to_string(p.f("animDuration")) + "});";
-        if (cfg != lastStateStr_) {
-            lastStateStr_ = cfg;
-            setSticky("cfg", whenReady("window.setMotion", cfg));
-        }
-        // Volume dos videos da pagina (so faz efeito com uma URL propria)
-        const std::string vol = "document.querySelectorAll('video').forEach(function(v){v.volume=" + std::to_string(p.f("volume")) + ";});";
-        if (vol != lastVolume_) {
-            lastVolume_ = vol;
-            if (!opening)
-                sendOnce(vol);
-        }
-        const std::string image = p.s("image");
-        if (image != lastImage_) {
-            lastImage_ = image;
-            if (!opening && !image.empty())
-                showImage(image);
-        }
-        if (opening)
-            return;
-        if (fired(p, "show", false)) {
-            const char* anim = p.s("textAnim") == "zoom" ? "zoom" : "slide";
-            const media::Color c = p.c("textColor");
-            char hex[16];
-            std::snprintf(hex, sizeof(hex), "#%02x%02x%02x", static_cast<int>(std::lround(c.r * 255.0f)),
-                          static_cast<int>(std::lround(c.g * 255.0f)), static_cast<int>(std::lround(c.b * 255.0f)));
-            sendOnce(whenReady("window.showText", "window.showText(" + jsString(p.s("text")) + "," + jsString(anim) + "," +
-                                                      jsString(hex) + "," + std::to_string(p.f("textSize")) + ");"));
-        }
-        if (fired(p, "showLogo", false)) {
-            std::string logo = p.s("logo");
-            // Arquivo local vira data URL (a pagina local nao carrega qualquer arquivo)
-            const std::string data = imageDataUrl(logo);
-            if (!data.empty())
-                logo = data;
-            sendOnce(whenReady("window.showLogo", "window.showLogo(" + jsString(logo) + ");"));
-        }
-        if (fired(p, "clear", false))
-            sendOnce(whenReady("window.clearAll", "window.clearAll();"));
-        if (fired(p, "replay", false)) {
-            if (!p.s("image").empty())
-                showImage(p.s("image"));
-            else
-                sendOnce(whenReady("window.replay", "window.replay();"));
-        }
-        const std::string videos = "document.querySelectorAll('video').forEach(function(v){";
-        if (fired(p, "play", false))
-            sendOnce(videos + "v.play();});");
-        if (fired(p, "pause", false))
-            sendOnce(videos + "v.pause();});");
-        if (fired(p, "restart", false))
-            sendOnce(videos + "v.currentTime=0;v.play();});");
-        if (fired(p, "reload", false))
-            requestReload();
-        if (fired(p, "click", false))
-            clickAt(p.f("mouseX"), p.f("mouseY"));
-    }
-
-    void showImage(const std::string& path)
-    {
-        const std::string url = imageDataUrl(path);
-        if (url.empty())
-            return;
-        sendOnce(whenReady("window.receiveImage", "window.receiveImageAuto(" + jsString(url) + ");"));
-    }
-
     void clickAt(float nx, float ny)
     {
         const int x = static_cast<int>(std::lround(std::clamp(nx, 0.0f, 1.0f) * static_cast<float>(std::max(width(), 1))));
@@ -510,7 +385,6 @@ private:
         sendMouse("up", x, y, 0, 1, 0);
     }
 
-    // Logo mandado pelo painel remoto (data URL): vira um arquivo em %APPDATA%\BSL Stage\web-logos e o parametro logoFile
     bool adoptRemoteLogo(const std::string& val, ParamValues& values)
     {
         if (val.empty() || val == "none") {
@@ -554,7 +428,6 @@ private:
         return true;
     }
 
-    // ----------------------------------------------------------------------------------------- rede
     void stopRemote()
     {
         server_.stop();
@@ -564,14 +437,16 @@ private:
 
     void syncRemote()
     {
-        if (!remoteWanted_) {
+        const bool wanted = remoteWanted_ || panelWanted_;
+        if (!wanted) {
             if (server_.running())
                 stopRemote();
             std::lock_guard lk(mutex_);
             remoteError_.clear();
             return;
         }
-        if (server_.running() && server_.port() == remotePort_)
+        const bool loopback = !remoteWanted_;
+        if (server_.running() && server_.port() == remotePort_ && serverLoopback_ == loopback)
             return;
         const auto now = std::chrono::steady_clock::now();
         if (server_.running())
@@ -580,12 +455,15 @@ private:
             return;
         lastTry_ = now;
         std::string error;
-        if (server_.start(remotePort_, [this](const net::HttpRequest& rq, net::HttpResponse& rs) { handle(rq, rs); }, &error)) {
+        if (server_.start(remotePort_, [this](const net::HttpRequest& rq, net::HttpResponse& rs) { handle(rq, rs); }, &error,
+                          loopback)) {
             std::lock_guard lk(mutex_);
             serverRunning_ = true;
+            serverLoopback_ = loopback;
             remotePortLive_ = remotePort_;
             remoteError_.clear();
-            log::info(std::string(kind_ == WebKind::Backgrounds ? "WebBackgrounds" : "WebMotion") + ": controle remoto em http://localhost:" +
+            log::info(std::string("WebBackgrounds: ") + (loopback ? "painel de controle (só neste computador) em http://127.0.0.1:"
+                                                                  : "controle remoto pela rede em http://localhost:") +
                       std::to_string(remotePort_) + "/");
         } else {
             std::lock_guard lk(mutex_);
@@ -605,16 +483,6 @@ private:
         rs.body = std::move(bytes);
     }
 
-    void queueSet(const std::string& id, Json v)
-    {
-        std::lock_guard lk(mutex_);
-        pendingSets_.emplace_back(id, std::move(v));
-    }
-    void queueBump(const std::string& id)
-    {
-        std::lock_guard lk(mutex_);
-        pendingBumps_.push_back(id);
-    }
     void queueJs(const std::string& js)
     {
         std::lock_guard lk(mutex_);
@@ -626,7 +494,7 @@ private:
         if (!pendingState_.is_object())
             pendingState_ = Json::object();
         pendingState_.merge_patch(patch);
-        ++rev_; // quem consultar /api/state ja ve a mudanca (o estado real chega no proximo quadro)
+        ++rev_;
     }
 
     std::string currentBgId()
@@ -637,7 +505,6 @@ private:
         return "Silk";
     }
 
-    // Comandos antigos do painel (/api/action?cmd=...) -> pedacos de estado
     void legacyAction(const std::string& cmd, const std::string& val, const std::string& param)
     {
         auto num = [](const std::string& s) { return std::atof(s.c_str()); };
@@ -647,7 +514,7 @@ private:
                 mergeState(st);
         } else if (cmd == "bg") {
             mergeState(Json{{"bg", {{"id", val}}}});
-        } else if (cmd == "config") { // "cor1,cor2,velocidade"
+        } else if (cmd == "config") {
             std::vector<std::string> parts;
             size_t pos = 0;
             while (pos <= val.size()) {
@@ -688,7 +555,6 @@ private:
         }
     }
 
-    // Rotas comuns a ambas as paginas (as do plugin original)
     bool commonRoute(const net::HttpRequest& rq, net::HttpResponse& rs)
     {
         const std::string& path = rq.path;
@@ -745,8 +611,6 @@ private:
             const auto v = q.find("val");
             const double vol = v == q.end() ? 1.0 : std::clamp(std::atof(v->second.c_str()), 0.0, 1.0);
             queueJs(std::string(videos) + "v.volume=" + std::to_string(vol) + ";});");
-            if (kind_ == WebKind::Motion)
-                queueSet("volume", floatJson(static_cast<float>(vol)));
             ok();
             return true;
         }
@@ -757,52 +621,28 @@ private:
     {
         const std::string& path = rq.path;
         const bool get = rq.method == "GET";
-        if (kind_ == WebKind::Backgrounds) {
-            if (get && (path == "/" || path == "/index.html" || path.rfind("/control", 0) == 0 || path.rfind("/index", 0) == 0)) {
-                serveFile(assetFile(L"web_bg", L"control.html"), "text/html; charset=utf-8", rs);
-                return;
-            }
-            if (get && path.rfind("/app", 0) == 0) {
-                serveFile(assetFile(L"web_bg", L"index.html"), "text/html; charset=utf-8", rs);
-                return;
-            }
-            if (path == "/api/state") {
-                Json out = Json::object();
-                {
-                    std::lock_guard lk(mutex_);
-                    out["rev"] = rev_.load();
-                    out["logoRev"] = logoRev_.load();
-                    out["state"] = snapshotState_.is_object() ? snapshotState_ : Json();
-                }
-                rs.json(out.dump());
-                return;
-            }
-            if (path == "/api/logo") {
-                std::lock_guard lk(mutex_);
-                rs.text(snapshotLogo_);
-                return;
-            }
-            if (path == "/api/action") {
-                auto form = net::parseForm(rq.query);
-                if (rq.method == "POST")
-                    for (auto& [k, v] : net::parseForm(rq.body))
-                        form[k] = v;
-                legacyAction(form["cmd"], form["val"], form["param"]);
-                rs.json("{\"status\":\"ok\",\"rev\":" + std::to_string(rev_.load()) + "}");
-                return;
-            }
-            if (commonRoute(rq, rs))
-                return;
-            rs.json("{\"status\":\"not_found\"}");
-            return;
-        }
-        // WebMotion
-        if (get && (path == "/" || path == "/index.html" || path == "/panel")) {
-            serveFile(assetFile(L"web_motion", L"panel.html"), "text/html; charset=utf-8", rs);
+        if (get && (path == "/" || path == "/index.html" || path.rfind("/control", 0) == 0 || path.rfind("/index", 0) == 0)) {
+            serveFile(assetFile(L"web_bg", L"control.html"), "text/html; charset=utf-8", rs);
             return;
         }
         if (get && path.rfind("/app", 0) == 0) {
-            serveFile(assetFile(L"web_motion", L"index.html"), "text/html; charset=utf-8", rs);
+            serveFile(assetFile(L"web_bg", L"index.html"), "text/html; charset=utf-8", rs);
+            return;
+        }
+        if (path == "/api/state") {
+            Json out = Json::object();
+            {
+                std::lock_guard lk(mutex_);
+                out["rev"] = rev_.load();
+                out["logoRev"] = logoRev_.load();
+                out["state"] = snapshotState_.is_object() ? snapshotState_ : Json();
+            }
+            rs.json(out.dump());
+            return;
+        }
+        if (path == "/api/logo") {
+            std::lock_guard lk(mutex_);
+            rs.text(snapshotLogo_);
             return;
         }
         if (path == "/api/action") {
@@ -810,50 +650,28 @@ private:
             if (rq.method == "POST")
                 for (auto& [k, v] : net::parseForm(rq.body))
                     form[k] = v;
-            const std::string cmd = form["cmd"];
-            if (cmd == "text") {
-                queueSet("text", Json(form["val"]));
-                queueSet("textAnim", Json(form["anim"] == "zoom" ? "zoom" : "slide"));
-                queueBump("show");
-            } else if (cmd == "logo") {
-                queueSet("logo", Json(form["val"]));
-                queueBump("showLogo");
-            } else if (cmd == "clear") {
-                queueBump("clear");
-            }
-            rs.json("{\"status\":\"ok\"}");
-            return;
-        }
-        if (path == "/api/load") {
-            const auto q = net::parseForm(rq.query);
-            const auto u = q.find("url");
-            if (u != q.end())
-                queueSet("url", Json(u->second));
-            rs.json("{\"status\":\"ok\"}");
+            legacyAction(form["cmd"], form["val"], form["param"]);
+            rs.json("{\"status\":\"ok\",\"rev\":" + std::to_string(rev_.load()) + "}");
             return;
         }
         if (commonRoute(rq, rs))
             return;
         rs.json("{\"status\":\"not_found\"}");
+        return;
     }
 
-    WebKind kind_;
-    // Estado do renderizador (thread de GL)
     std::vector<std::pair<std::string, std::string>> sticky_;
     std::vector<WorkerJson> outbox_;
-    std::map<std::string, int> counters_;
-    std::string lastStateStr_, lastLogoPath_, lastImage_, lastVolume_;
+    std::string lastStateStr_, lastLogoPath_;
     bool pendingModeLogo_ = false;
     bool logoFromUser_ = true;
     bool remoteWanted_ = false;
+    bool panelWanted_ = false;
     int remotePort_ = 0;
     std::chrono::steady_clock::time_point lastTry_{};
 
-    // Compartilhado com o servidor (mutex_)
     mutable std::mutex mutex_;
     Json pendingState_;
-    std::vector<std::pair<std::string, Json>> pendingSets_;
-    std::vector<std::string> pendingBumps_;
     std::vector<std::string> pendingJs_;
     std::vector<std::pair<float, float>> pendingClicks_;
     std::string pendingLogo_;
@@ -864,23 +682,25 @@ private:
     std::atomic<std::uint64_t> rev_{1}, logoRev_{0};
     std::string remoteError_;
     bool serverRunning_ = false;
+    bool serverLoopback_ = true;
     int remotePortLive_ = 0;
 
     net::HttpServer server_;
     PreviewCapture preview_;
 };
 
-void addRemoteParams(std::vector<ParamDesc>& d, int port, const char* what)
+void addRemoteParams(std::vector<ParamDesc>& d, int port)
 {
     d.push_back(makeBool("remote", "Controle remoto pela rede", false, "Controle remoto"));
-    d.back().tooltip = std::string("Sobe o painel web do ") + what +
-                       " neste computador para controlar de tablet ou celular na mesma rede. Desligado por padrão: nada fica aberto na rede";
+    d.back().tooltip = "Abre o painel de controle web para os outros aparelhos da rede (tablet, celular). Desligado por "
+                       "padrão: nada fica aberto na rede. O botão \"Abrir painel de controle\" funciona sem isto e só "
+                       "atende neste computador (127.0.0.1)";
     d.push_back(makeInt("remotePort", "Porta", port, 1024, 65535, "%d", "Controle remoto"));
-    d.back().tooltip = "Porta HTTP do painel remoto (a do plugin original era " + std::to_string(port) +
-                       "). O Windows pode pedir permissão de rede na primeira vez";
+    d.back().tooltip = "Porta HTTP do painel (a do plugin original era " + std::to_string(port) +
+                       "). O Windows pode pedir permissão de rede na primeira vez que a rede é aberta";
 }
 
-void addPageParams(std::vector<ParamDesc>& d, bool withTransparent = true)
+void addPageParams(std::vector<ParamDesc>& d)
 {
     d.push_back(makeInt("width", "Largura (0 = canvas)", 0, 0, 8192, "%d px", "Página"));
     d.back().tooltip = "Tamanho em que a página é desenhada; 0 acompanha o canvas";
@@ -888,85 +708,25 @@ void addPageParams(std::vector<ParamDesc>& d, bool withTransparent = true)
     d.back().tooltip = d[d.size() - 2].tooltip;
     d.push_back(makeEnum("fps", "FPS", {{"30", "30 fps"}, {"60", "60 fps"}}, "60", "Página"));
     d.back().tooltip = "Quadros por segundo da página (o plugin original usava 60)";
-    if (withTransparent) {
+    {
         d.push_back(makeBool("transparent", "Fundo transparente", false, "Página"));
         d.back().tooltip = "Fundo da página transparente (o plugin original desenhava sobre preto). Útil com o fundo \"nenhum\", texto ou logo";
     }
 }
 
-} // namespace
-
-// ----------------------------------------------------------------------------------------------- descritores
+}
 
 std::vector<ParamDesc> describeWebBackgrounds(const ParamValues& values)
 {
     std::vector<ParamDesc> d = describeStudioParams(values);
-    addRemoteParams(d, 8081, "BSL Studio");
-    addPageParams(d);
-    return d;
-}
-
-std::vector<ParamDesc> describeWebMotion(const ParamValues&)
-{
-    std::vector<ParamDesc> d;
-    const char* gText = "Texto animado";
-    d.push_back(makeText("text", "Texto", "BSL LIGHT", false, gText));
-    d.back().tooltip = "Avisos e letras: cada letra entra com um atraso";
-    d.push_back(makeEnum("textAnim", "Animação", {{"slide", "Slide UP"}, {"zoom", "Zoom IN"}}, "slide", gText));
-    d.push_back(makeColor("textColor", "Cor do texto", {1.0f, 1.0f, 1.0f, 1.0f}, gText));
-    d.push_back(makeFloat("textSize", "Tamanho", 12.0f, 2.0f, 60.0f, "%.1f %%", gText));
-    d.back().tooltip = "Altura do texto, em % da largura da tela";
-    d.push_back(makeCustom("show", "Projetar texto", "event", Json(0), gText));
-    d.back().tooltip = "Mostra o texto com a animação escolhida";
-
-    const char* gLogo = "Logo";
-    d.push_back(makeText("logo", "Logo (URL ou arquivo)", "", false, gLogo));
-    d.back().tooltip = "Endereço de uma imagem (https://…) ou o caminho de um arquivo PNG/JPG/SVG";
-    d.push_back(makeCustom("showLogo", "Projetar logo", "event", Json(0), gLogo));
-
-    d.push_back(makeCustom("clear", "Apagar tela (fade out)", "event", Json(0), "Tela"));
-    d.back().tooltip = "Faz o texto, o logo e a imagem sumirem";
-
-    const char* gImg = "Imagem por letras";
-    d.push_back(makeFile("image", "Imagem (PNG com transparência)", "Imagens (*.png;*.webp)|*.png;*.webp", gImg));
-    d.back().tooltip = "A imagem é separada em letras pela transparência (coluna por coluna) e cada letra entra com um atraso";
-    d.push_back(makeCustom("replay", "Repetir animação", "event", Json(0), gImg));
-
-    const char* gAnim = "Animação";
-    d.push_back(makeFloat("letterDelay", "Atraso entre letras", 0.1f, 0.0f, 1.0f, "%.2f s", gAnim));
-    d.back().tooltip = "Segundos entre a entrada de uma letra e a seguinte (o plugin usava 0,1)";
-    d.push_back(makeFloat("animDuration", "Duração da animação", 2.0f, 0.2f, 6.0f, "%.1f s", gAnim));
-    d.back().tooltip = "Duração da entrada de cada letra (o plugin usava 2 s)";
-
-    const char* gPage = "Página própria";
-    d.push_back(makeText("url", "Endereço (opcional)", "", false, gPage));
-    d.back().maxLength = 2048;
-    d.back().tooltip = "Vazio = a página de letras animadas. Com um endereço, a fonte vira um navegador (para vídeos e sites)";
-    d.push_back(makeBool("muted", "Áudio mudo", false, gPage));
-    d.push_back(makeFloat("volume", "Volume dos vídeos", 1.0f, 0.0f, 1.0f, "%.2f", gPage));
-    d.push_back(makeCustom("play", "Tocar vídeos", "event", Json(0), gPage));
-    d.push_back(makeCustom("pause", "Pausar vídeos", "event", Json(0), gPage));
-    d.push_back(makeCustom("restart", "Reiniciar vídeos", "event", Json(0), gPage));
-    d.push_back(makeCustom("reload", "Recarregar página", "event", Json(0), gPage));
-    d.push_back(makeFloat("mouseX", "Clique X", 0.5f, 0.0f, 1.0f, "%.2f", gPage));
-    d.back().tooltip = "Posição horizontal do clique, de 0 a 1 da largura";
-    d.push_back(makeFloat("mouseY", "Clique Y", 0.5f, 0.0f, 1.0f, "%.2f", gPage));
-    d.push_back(makeCustom("click", "Clicar", "event", Json(0), gPage));
-    d.back().tooltip = "Clica na posição X, Y da página";
-
-    addRemoteParams(d, 8082, "WebMotion");
+    addRemoteParams(d, 8081);
     addPageParams(d);
     return d;
 }
 
 std::unique_ptr<media::ISource> makeWebBackgrounds(int canvasW, int canvasH)
 {
-    return std::make_unique<BslWebSource>(WebKind::Backgrounds, canvasW, canvasH);
-}
-
-std::unique_ptr<media::ISource> makeWebMotion(int canvasW, int canvasH)
-{
-    return std::make_unique<BslWebSource>(WebKind::Motion, canvasW, canvasH);
+    return std::make_unique<BslWebSource>(canvasW, canvasH);
 }
 
 bool bslWebAvailable()
@@ -974,4 +734,4 @@ bool bslWebAvailable()
     return media::WebSource::available();
 }
 
-} // namespace bsl::fx::bsllight
+}

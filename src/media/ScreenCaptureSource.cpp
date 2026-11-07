@@ -45,7 +45,6 @@ namespace {
 CaptureBackend g_forcedBackend = CaptureBackend::Auto;
 bool g_forceCpu = false;
 
-// Acesso ao ID3D11Texture2D por tras de uma IDirect3DSurface (a interface nao vem nos headers C++/WinRT)
 struct __declspec(uuid("A9B3D012-3DF2-4EE3-B8D1-8695F457D3C1")) IDxgiSurfaceAccess : ::IUnknown
 {
     virtual HRESULT __stdcall GetInterface(GUID const& id, void** object) = 0;
@@ -55,7 +54,6 @@ void ensureApartment()
 {
     static std::once_flag once;
     std::call_once(once, [] {
-        // MTA; se a thread ja esta em STA (RPC_E_CHANGED_MODE) o WinRT funciona do mesmo jeito
         RoInitialize(RO_INIT_MULTITHREADED);
     });
 }
@@ -74,9 +72,7 @@ struct Region
 
 const std::vector<ParamOption> kFps = {{"15", "15 fps"}, {"30", "30 fps"}, {"60", "60 fps"}};
 
-} // namespace
-
-// ----------------------------------------------------------------------------- Impl
+}
 
 struct ScreenCaptureSource::Impl
 {
@@ -92,7 +88,6 @@ struct ScreenCaptureSource::Impl
         bool borderless = true;
     };
 
-    // Desktop Duplication (so monitor, device proprio no adaptador do monitor)
     struct Dup
     {
         ComPtr<ID3D11Device> dev;
@@ -119,7 +114,6 @@ struct ScreenCaptureSource::Impl
     Clock::time_point lastRetry{}, lastCopy{}, startedAt{};
     unsigned long long frames = 0;
 
-    // WGC
     wgc::GraphicsCaptureItem item{nullptr};
     wgc::Direct3D11CaptureFramePool pool{nullptr};
     wgc::GraphicsCaptureSession session{nullptr};
@@ -128,15 +122,12 @@ struct ScreenCaptureSource::Impl
     std::shared_ptr<std::atomic<bool>> closedFlag;
     winrt::Windows::Graphics::SizeInt32 poolSize{};
 
-    // Saida
-    std::unique_ptr<render::InteropTexture> tex; // WGC
-    GLuint ddTex = 0;                            // Desktop Duplication
+    std::unique_ptr<render::InteropTexture> tex;
+    GLuint ddTex = 0;
     int ddTexW = 0, ddTexH = 0;
     int outW = 0, outH = 0;
     Dup dup;
     bool pathLogged = false;
-
-    // --------------------------------------------------------------------- configuracao
 
     Settings readSettings() const
     {
@@ -191,8 +182,6 @@ struct ScreenCaptureSource::Impl
         r.h = std::max(1, r.h);
         return r;
     }
-
-    // --------------------------------------------------------------------- inicio / parada
 
     void stopWgc()
     {
@@ -267,7 +256,7 @@ struct ScreenCaptureSource::Impl
         stateText = text;
         lastRetry = Clock::now();
         if (tex)
-            tex->clear(0.0f, 0.0f, 0.0f, 1.0f); // sem sinal: preto
+            tex->clear(0.0f, 0.0f, 0.0f, 1.0f);
     }
 
     void start()
@@ -324,7 +313,7 @@ struct ScreenCaptureSource::Impl
         if (!session)
             return;
         if (cur.borderless) {
-            static int access = -1; // -1: ainda nao pediu; 0: negado; 1: concedido
+            static int access = -1;
             if (access < 0) {
                 access = 0;
                 try {
@@ -334,7 +323,6 @@ struct ScreenCaptureSource::Impl
                     if (op.Status() == winrt::Windows::Foundation::AsyncStatus::Completed)
                         access = op.GetResults() == winrt::Windows::Security::Authorization::AppCapabilityAccess::AppCapabilityAccessStatus::Allowed ? 1 : 0;
                 } catch (const winrt::hresult_error&) {
-                    // API ausente (Windows mais antigo): tenta direto abaixo
                 }
             }
         }
@@ -354,7 +342,6 @@ struct ScreenCaptureSource::Impl
             session.MinUpdateInterval(std::chrono::duration_cast<winrt::Windows::Foundation::TimeSpan>(
                 std::chrono::microseconds(1000000 / std::max(1, cur.fps))));
         } catch (const winrt::hresult_error&) {
-            // Windows anterior ao 11 22H2: o limite de FPS fica por conta do update()
         }
     }
 
@@ -399,7 +386,6 @@ struct ScreenCaptureSource::Impl
             session.StartCapture();
 
             backend = Backend::Wgc;
-            // Textura inicial (preta) ja no tamanho da regiao: o compositor nunca ve textura invalida
             const Region r = region(poolSize.Width, poolSize.Height);
             ensureTex(r.w, r.h);
             if (tex)
@@ -431,7 +417,6 @@ struct ScreenCaptureSource::Impl
                 output->GetDesc(&od);
                 if (od.Monitor != mon)
                     continue;
-                // O device precisa estar no adaptador que dirige o monitor (no Optimus, o da Intel)
                 const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0};
                 Dup d;
                 if (FAILED(D3D11CreateDevice(adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
@@ -446,7 +431,6 @@ struct ScreenCaptureSource::Impl
                     return false;
                 }
                 HRESULT hr = E_FAIL;
-                // DuplicateOutput1 (Win10 1803+) funciona em mais configuracoes de GPU hibrida que o DuplicateOutput
                 ComPtr<IDXGIOutput5> out5;
                 if (SUCCEEDED(output.As(&out5))) {
                     const DXGI_FORMAT formats[] = {DXGI_FORMAT_B8G8R8A8_UNORM};
@@ -467,7 +451,7 @@ struct ScreenCaptureSource::Impl
                 const Region r = region(dup.deskW, dup.deskH);
                 outW = r.w;
                 outH = r.h;
-                uploadDup(nullptr, 0, r.w, r.h); // textura GL preta
+                uploadDup(nullptr, 0, r.w, r.h);
                 if (!pathLogged) {
                     pathLogged = true;
                     log::info("Captura de tela [DXGI Desktop Duplication]: cópia por CPU (staging -> glTexSubImage2D), sem cursor");
@@ -478,8 +462,6 @@ struct ScreenCaptureSource::Impl
         error = "monitor não encontrado nos adaptadores DXGI";
         return false;
     }
-
-    // --------------------------------------------------------------------- quadros
 
     void uploadDup(const void* data, UINT rowPitch, int w, int h)
     {
@@ -572,7 +554,7 @@ struct ScreenCaptureSource::Impl
                 }
             }
             if (cs.Width != poolSize.Width || cs.Height != poolSize.Height) {
-                poolSize = cs; // a janela mudou de tamanho: os proximos quadros vem no tamanho novo
+                poolSize = cs;
                 if (cs.Width > 0 && cs.Height > 0)
                     pool.Recreate(rtDevice, wgd::DirectXPixelFormat::B8G8R8A8UIntNormalized, 3, cs);
             }
@@ -592,11 +574,11 @@ struct ScreenCaptureSource::Impl
         const HRESULT hr = dup.dup->AcquireNextFrame(0, &info, &res);
         if (hr == DXGI_ERROR_WAIT_TIMEOUT)
             return;
-        if (FAILED(hr)) { // DXGI_ERROR_ACCESS_LOST (troca de resolucao, UAC...): recria a duplicacao
+        if (FAILED(hr)) {
             setWaiting("Captura perdida, tentando de novo");
             return;
         }
-        if (info.LastPresentTime.QuadPart != 0) { // 0 = so o ponteiro do mouse mudou
+        if (info.LastPresentTime.QuadPart != 0) {
             ComPtr<ID3D11Texture2D> src;
             if (SUCCEEDED(res.As(&src))) {
                 D3D11_TEXTURE2D_DESC sd{};
@@ -666,8 +648,6 @@ struct ScreenCaptureSource::Impl
     }
 };
 
-// ----------------------------------------------------------------------------- ScreenCaptureSource
-
 ScreenCaptureSource::ScreenCaptureSource() = default;
 
 ScreenCaptureSource::~ScreenCaptureSource()
@@ -721,7 +701,7 @@ std::string ScreenCaptureSource::label(const ParamValues& values)
     return "Captura: monitor " + std::to_string(index);
 }
 
-bool ScreenCaptureSource::open(const std::filesystem::path& /*path*/, std::string* error)
+bool ScreenCaptureSource::open(const std::filesystem::path& , std::string* error)
 {
     close();
     std::string err;
@@ -745,7 +725,7 @@ void ScreenCaptureSource::close()
     if (impl_) {
         impl_->stop();
         impl_->releaseOutput();
-        impl_.reset(); // solta o interop por ultimo (as texturas ja foram liberadas)
+        impl_.reset();
     }
     open_ = false;
 }
@@ -756,7 +736,7 @@ void ScreenCaptureSource::onParamsChanged()
         impl_->paramsDirty = true;
 }
 
-void ScreenCaptureSource::update(double /*dt*/)
+void ScreenCaptureSource::update(double )
 {
     if (impl_)
         impl_->update();
@@ -830,4 +810,4 @@ unsigned long long ScreenCaptureSource::frameCount() const
     return impl_ ? impl_->frames : 0;
 }
 
-} // namespace bsl::media
+}

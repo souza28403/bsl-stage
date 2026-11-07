@@ -18,19 +18,18 @@ out vec2 vUv;
 void main()
 {
     vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
-    vUv = p; // linha 0 da textura (p.y = 0) = topo da imagem
+    vUv = p;
     gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
 }
 )";
 
-// A faixa esta premultiplicada (o filtro linear nao suja a borda do texto de escuro); a saida volta a alpha reta.
 const char* const kFragmentSource = R"(#version 330 core
 in vec2 vUv;
 out vec4 fragColor;
 uniform sampler2D uStrip;
-uniform vec2 uOut;        // tamanho da saida (canvas) em px
-uniform vec2 uStripSize;  // tamanho da faixa em px
-uniform vec2 uOffset;     // deslocamento da rolagem em px
+uniform vec2 uOut;
+uniform vec2 uStripSize;
+uniform vec2 uOffset;
 void main()
 {
     vec2 px = vUv * uOut + uOffset;
@@ -59,7 +58,7 @@ TextMarquee marqueeOf(const std::string& s)
     return s == "horizontal" ? TextMarquee::Horizontal : (s == "vertical" ? TextMarquee::Vertical : TextMarquee::None);
 }
 
-} // namespace
+}
 
 TextSource::TextSource(int width, int height) : width_(width), height_(height) {}
 
@@ -127,7 +126,6 @@ std::string TextSource::label(const ParamValues& values)
     const size_t nl = t.find('\n');
     if (nl != std::string::npos)
         t.resize(nl);
-    // Corta em ate 18 caracteres sem partir um caractere UTF-8
     constexpr size_t kMax = 18;
     size_t count = 0, i = 0;
     while (i < t.size() && count < kMax) {
@@ -143,7 +141,7 @@ std::string TextSource::label(const ParamValues& values)
     return "Texto: " + t + (cut ? "…" : "");
 }
 
-bool TextSource::open(const std::filesystem::path& /*path*/, std::string* error)
+bool TextSource::open(const std::filesystem::path& , std::string* error)
 {
     close();
     try {
@@ -205,7 +203,6 @@ SourceStatus TextSource::status() const
 
 void TextSource::resetScroll()
 {
-    // O texto entra pela borda (comeca no fim do periodo, na parte "vazia" depois do texto)
     const int canvasLen = marquee_ == TextMarquee::Vertical ? height_ : width_;
     scroll_ = 0.0;
     if (period_ > canvasLen)
@@ -213,7 +210,7 @@ void TextSource::resetScroll()
     needsDraw_ = true;
 }
 
-void TextSource::onSeek(double /*seconds*/)
+void TextSource::onSeek(double )
 {
     resetScroll();
 }
@@ -268,7 +265,6 @@ void TextSource::rebuild()
     ++rasterCount_;
     truncated_ = bmp.truncated;
 
-    // Premultiplica (o filtro linear fica correto nas bordas); a saida volta a alpha reta no shader
     for (size_t i = 0; i + 3 < bmp.rgba.size(); i += 4) {
         const unsigned a = bmp.rgba[i + 3];
         if (a == 255)
@@ -380,4 +376,4 @@ void TextSource::render()
         glEnable(GL_DEPTH_TEST);
 }
 
-} // namespace bsl::media
+}

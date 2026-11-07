@@ -34,8 +34,18 @@ item. Uma consulta que comeca com `##` casa com qualquer rotulo que *termine* ne
 | Mapeamento | Lista: `##map_add_tela`, `##map_add_slice`, `##map_duplicar`, `##map_remover`, `##map_identificar`. Barra das vistas Entrada e Saída (janelas `Entrada` e `Saída`): `##map_ima`, `##map_grade`, `##map_grade_tam`, `##map_regua`, `##map_ajustar`, `##map_100`, `##map_desfazer`, `##map_refazer`, `##map_alinhar_{esq,centro_h,dir,topo,meio,base}`, `##map_distribuir_{h,v}`, `##map_encostar_{esq,dir,cima,baixo}`; só na Saída os chips `Transformar` e `Pontos (warp)`; confirmação de remoção em lote `##map_remover_ok`. Propriedades: `##x ##y ##w ##h` (entrada), `##ox ##oy ##ow ##oh ##orot` (saída no modo Transformar), `##cx ##cy` (cantos, modo Pontos), `##resW ##resH ##g ##brilho ##opacidade` |
 | Grade (células) | `celula L<n> C<m>` = a célula inteira (o centro cai na **miniatura**: clicar dispara e seleciona); `celula L<n> C<m> nome` = a faixa do nome (clicar só seleciona e leva para a Prévia, sem disparar) |
 | Prévia | `##previa_fonte` (combo; itens `Clip selecionado` / `Camada selecionada`, janela `Combo`), `##previa_ao_vivo` (desabilitado se o clip já está na saída ou no modo Camada), `##previa_tocar_pausar`, `##previa_posicao`, `##previa_quadriculado`, `##previaEncaixe` (itens `Ajustar` / `Preencher`), `previa:area` (retângulo da imagem). Estado: `state.preview` = `mode`, `checker`, `fit`, `layer`/`column` (o que ela mostra), `hasClip`, `live` (espelha o clip da saída), `own` (instância própria), `playing`, `position`, `duration`; `state.layers[i]` ganhou `clipPlaying`, `clipPosition` e `blend` |
-| Presets de layout | menu Ver > Layout: `##layout_salvar`, itens dos presets pelo nome (`Palco A`), `##layout_gerenciar`. Janela `Salvar layout`: `##layout_nome`, `##layout_incluir_escala`, `##layout_salvar_ok`. Janela `Gerenciar layouts`: `##layout_N_aplicar`, `##layout_N_renomear`, `##layout_N_exportar`, `##layout_N_excluir` (N = 1 é o primeiro da lista), `##layout_importar`, `##layout_fechar`. Estado: `state.layoutPresets` (nomes, na ordem), `state.lastLayoutPreset`; o retângulo de um painel vem do item de janela (`app.window_rect("cmp_grade")`, `rect_of` em `run.py`) |
+| Presets de layout | menu Exibir > Layout: `##layout_salvar`, itens dos presets pelo nome (`Palco A`), `##layout_gerenciar`. Janela `Salvar layout`: `##layout_nome`, `##layout_incluir_escala`, `##layout_salvar_ok`. Janela `Gerenciar layouts`: `##layout_N_aplicar`, `##layout_N_renomear`, `##layout_N_exportar`, `##layout_N_excluir` (N = 1 é o primeiro da lista), `##layout_importar`, `##layout_fechar`. Estado: `state.layoutPresets` (nomes, na ordem), `state.lastLayoutPreset`; o retângulo de um painel vem do item de janela (`app.window_rect("cmp_grade")`, `rect_of` em `run.py`) |
 | Menu Arquivo | `##menu_novo`, `##menu_abrir`, `##menu_recentes`, `##menu_salvar`, `##menu_salvar_como`, `##menu_sair` |
+| Atalhos de teclado | Menu Ver: `##menu_atalhos`. Botão direito numa célula, no nome da camada (`camada N nome`), no cabeçalho de coluna (`coluna N`) ou no olho do efeito: item `##key_atribuir` (e `##key_remover`). Aviso de gravação (janela `Gravar atalho`): `##key_cancelar_gravar`. Conflito (janela `Tecla já usada`): `##key_conflito_substituir`, `##key_conflito_cancelar`. Editor (janela `Atalhos`): `##atalhos_busca`, `##atalhos_novo`, `##atalhos_restaurar` (+ `##atalhos_restaurar_ok`), `##atalhos_exportar`, `##atalhos_importar` (abrem diálogos nativos: fora do fuzz), `##atalhos_fechar`; por linha visível `N` (1 = a primeira depois da busca): `##atalho_N_gravar`, `##atalho_N_escopo`, `##atalho_N_modo` (itens `Pressionar` / `Segurar`), `##atalho_N_global`, `##atalho_N_remover`. Estado: `state.keys` = `project` e `app` (lista `{action, key, mode, global?, args?}`, só o que difere do padrão), `fired`, `lastAction`, `lastKey`, `lastHit`, `held`, `systemRegistered`, `editorOpen`, `capturing`, `conflictOpen`, `rows`; `state.blackout` |
+
+Plugins do usuário (cenário `plugins`): menu Arquivo `##menu_novo_plugin` e `##menu_importar_plugin`; aba Efeitos `##plugin_novo` e `##plugin_importar`.
+Assistente (janela `Novo plugin`): `##plug_nome`, `##plug_tipo_efeito`, `##plug_tipo_gerador`, `##plug_categoria`, `##plug_pasta`, `##plug_autor`, modelos `##plug_modelo_N` (N = 0 a 5), parâmetros
+`##plug_p<i>_nome`/`_remover`/`_min`/`_max`/`_def`, `##plug_novo_tipo`, `##plug_adicionar_param`, `##plug_codigo`, `##plug_abrir_depois`, `##plug_criar`, `##plug_cancelar`; depois de criar: `##plug_abrir_editor`,
+`##plug_mostrar_pasta`, `##plug_ver_efeitos`, `##plug_outro`, `##plug_fechar`. Botão direito num plugin ISF da aba Efeitos: `##isf_ctx_editor`, `##isf_ctx_pasta`, `##isf_ctx_duplicar`, `##isf_ctx_exportar`
+(no cabeçalho do efeito na cadeia: `##C_efeito_N_editar`, `_pasta`, `_duplicar_plugin`). Importar: `##plug_importar_instalar`, `##plug_importar_ver`, `##plug_importar_pasta`, `##plug_importar_fechar`. Exportar: `##plug_exp_nome`, `_autor`, `_versao`,
+`_licenca`, `_descricao`, `_exportar`, `_fechar`. No `--qa` os diálogos de arquivo são trocados pelas variáveis `BSLSTAGE_QA_PLUGIN_FILE` (pacote a importar) e `BSLSTAGE_QA_PLUGIN_EXPORT` (destino), e Abrir no editor e Mostrar na pasta só registram a ação.
+O snapshot traz `state.plugins` (`wizardOpen`, `created`, `createdFile`, `createdId`, `rows`, `importOpen`, `importValid`, `importName`, `importLicense`, `importAuthor`, `importError`, `installedFolder`, `exportOpen`, `exportedFile`, `lastAction`, `lastPath`).
+`tools/uiqa/pluginshots.py` gera `docs/screenshot-novo-plugin.png`.
 
 Pixel Map (modo `Pixel Map###modo_pixelmap`; `ensure_mode(app, "pixelmap")`): janelas `pm_config`, `pm_overview` e `pm_tabela`.
 Configuração: `##pm_cadeado`, `##pm_in_w/h`, `##pm_fis_w/h`, chips `##pm_wm_mono/img/none` e `##pm_modo_px/gab`, rascunho do painel
@@ -82,12 +92,27 @@ encaixe) e `layouts` (layouts prontos + presets do usuário: salvar, aplicar de 
 Gerenciar, renomear e excluir). `py -3 tools/uiqa/docshots.py previa` gera `docs/screenshot-previa.png`.
 Cenário `ndi` (NDI e Spout): fontes **NDI** e **Spout** na aba Fontes, o painel Clip (lista de fontes NDI, mesmo vazia, ou o aviso
 "NDI Runtime não encontrado" com o link, ids `##ndi_fonte`, `##spout_sender`, `ndi:sem_runtime`, `##ndi_link_copiar`), a janela
-Ver > Compatibilidade de vídeo (`##menu_compat`, itens `compat:ndi_status`, `compat:spout_status`, botão `##compat_fechar`) e o
+Exibir > Compatibilidade de vídeo (`##menu_compat`, itens `compat:ndi_status`, `compat:spout_status`, botão `##compat_fechar`) e o
 destino **NDI** da Screen (`##destino`, `##ndi`, `##ndiFormato`). O estado do snapshot ganha `state.ndi` (`available`, `version`,
 `error`, `sources`, `outputs` com `name` e `connections`), `state.spout.senders`, `state.screens[i].kind` e `state.selClip.status`.
 Sem o runtime do NDI confere o aviso; com `--ndi-lib <dll>` (só para testes) faz o loopback: a fonte NDI recebendo a saída NDI do
 próprio app. `py -3 tools/uiqa/run.py --config window --only ndi,fuzz [--ndi-lib <dll>]`. O botão que abre o navegador
 (`##ndi_link_abrir`) fica fora do fuzz. `tools/uiqa/docshots.py ndi` gera `docs/screenshot-ndi.png`.
+
+Slice ligado a camada (cenário `mapeamento`, função `layer_slice_checks`): Propriedades > Fonte tem o combo `##sliceFonte` (itens
+`##fonte_comp` e `##fonte_camada_N`, N = 1 é a camada de baixo) e o checkbox `##sliceMaster` ("Incluir efeitos do master", só com
+camada). Botão direito num slice das vistas Entrada/Saída abre o menu `##map_ctx_vincular` (itens `##map_ctx_comp` e
+`##map_ctx_camada_N`) e `##map_ctx_criar` ("Criar camada para este slice"). O cabeçalho da camada na grade tem o link
+`##camada_N_slice` ("só nos slices vinculados", com o selo SLICE); o Pixel Map tem `##pm_camada_por_painel`. O snapshot ganha
+`state.layers[i].id`/`sliceOnly`, `state.screens[i].slices[j].source`/`layerId`/`includeMaster` e `state.layerViews` (vistas de camada
+que o Compositor renderizou: 0 sem slice ligado a camada). `py -3 tools/uiqa/sliceshots.py` gera `docs/screenshot-slice-camada.png`
+(sem mouse: abre um projeto montado em `build/qa/sliceshots`).
+
+Cenário `atalhos` (teclado real, `driver.key`, `key_down`/`key_up` para o modo segurar): atribuir tecla pelo botão direito numa célula, na
+camada e na coluna e apertá-la; ligar/desligar camada; padrões (1..0 = colunas, Q..P = células da camada selecionada, Espaço, Delete, B
+segurando = blackout); digitar num campo de texto não dispara atalho de show; editor (gravar, Esc, conflito cancelar/substituir, modo
+Segurar, global, remover, restaurar padrões). Grava `docs/screenshot-atalhos.png` (editor aberto, teclas nas células e na camada):
+`py -3 tools/uiqa/run.py --config window --only atalhos,fuzz`.
 
 Os presets também têm teste sem janela: `build\Release\bslstage_uitest.exe` (JSON, preset inválido, troca de trechos do `imgui.ini`, pasta
 de presets, exportar/importar).
@@ -96,3 +121,73 @@ Screenshots em `docs/qa/<config>_<estado>.png`. Codigo de saida 0 = nenhum passo
 Python 3 sem dependencias extras (so `ctypes`). Nao mexa no mouse/teclado enquanto roda.
 
 `--ui-scale <f>` e `--ui-mode window|system|fixed` tambem valem no app normal (para testes).
+
+## Transform de camada (cenário `transform`)
+
+Botão **Transformar** (ícone `move`) na Prévia (`##transformar_previa`, janela `cmp_previa`) e na Saída (`##transformar_saida`, janela
+`cmp_saida`). Ligado, o monitor mostra a composição inteira (o retângulo da imagem é o item `cmp_previa:imagem` / `cmp_saida:imagem`) e
+a barra ganha `##transf_recortar_<p>`, `##transf_ima_<p>`, `##transf_presets_<p>` (menu com os itens `##tr_preset_N`, N = 0 Tela cheia, 1
+Ajustar, 2 Preencher, 3/4 metades, 5-8 quadrantes, 9 Grade 2×2, 10 Grade 3×3), `##transf_desfazer_<p>` e `##transf_refazer_<p>`
+(`<p>` = `previa` ou `saida`). A área clicável é `##transf_area_<p>`. Aba Camada (`cmp_aba_camada`): `##tr_x ##tr_y ##tr_w ##tr_h ##tr_esc
+##tr_rot ##tr_ax ##tr_ay ##tr_cl ##tr_ct ##tr_cr ##tr_cb`, `##tr_proporcao`, `Resetar` e `Presets…`; painel Clip:
+`##clip_transform_proprio`; Mapeamento > Propriedades (slice ligado a camada): `Aplicar transform da camada`. Estado:
+`state.layers[i].transform` (`x y w h rotation anchor crop identity`), `state.layers[i].ownTransform`,
+`state.screens[i].slices[j].applyLayerTransform`, `state.layerViews` (vistas de camada renderizadas: slices e Prévia em modo Camada) e
+`state.transformEditor` = `output`, `preview`, `crop`, `snap`, `undo`, `redo`, `dragging`, `drag`, `guides`. Ctrl+arrastar mexe na camada
+selecionada mesmo coberta por outra; clicar escolhe a camada de cima.
+
+## Salvar sem o diálogo nativo (cenário `projeto`)
+
+A digitação no diálogo nativo "Salvar como" não é confiável com `SendInput`. Com `--qa`, a variável de ambiente
+`BSLSTAGE_QA_SAVE_PATH` (definida por `run.py` para `<pasta qa>\proj\teste.bslstage`) faz o "Salvar como" usar esse caminho e pular o
+diálogo; fora do `--qa` ela é ignorada. O diálogo de verdade fica no cenário opcional `projeto_dialogo` (`--only projeto_dialogo`, sem a
+variável). Nenhum cenário deixa um diálogo nativo aberto quando falha (`close_stray_dialogs`). Cenários que criam camadas (Mapeamento,
+Pixel Map, Transform) deixam a grade rolando: o `Tester` rola a grade ao fim e volta à composição inicial (Ctrl+N) antes de `grade`.
+
+## Menu Exibir (cenários `exibir` e `exibir_reinicio`)
+
+Menu `Exibir` (antigo "Ver"). Ids: caixa de cada painel `##exibir_<chave>` (`saida`, `previa`, `composicao`, `clip`, e no submenu `##exibir_abas`:
+`arquivos`, `fontes`, `efeitos`, `aba-composicao`, `aba-camada`, `aba-saida`; `status` = barra de status; no Mapeamento `map-lista`, `map-entrada`,
+`map-saida`, `map-propriedades`; no Pixel Map `pm-config`, `pm-overview`, `pm-tabela`), `##exibir_mostrar_todos`, submenu `##exibir_soltar` com
+`##exibir_soltar_<chave>`, `##exibir_tela_cheia`, `##exibir_bloquear`; em Layout: `##layout_salvar` (Salvar layout atual como…), `##layout_excluir`
+(submenu com `##layout_excluir_N`; janela `Excluir layout`: `##layout_excluir_ok`, `##layout_excluir_cancelar`) e `##layout_restaurar` (Restaurar
+padrão). Estado: `state.view` = `hidden`, `detached`, `locked`, `fullscreen`, `viewports` (janelas do sistema do ImGui; a principal conta),
+`mainPos` e `panels[]` (`key`, `visible`, `detached`, `docked`, `seen`, `rect` = x, y, w, h da janela do painel em coordenadas da janela principal;
+some `mainPos` para a tela). O snapshot inteiro está em coordenadas da janela principal (o ImGui trabalha em coordenadas da tela por causa dos
+viewports; `app/Qa.cpp` subtrai a origem). `driver.App(..., keep=True)` reabre o app com o appdata da execução anterior (teste de reinício);
+o cenário `exibir_reinicio` abre as próprias instâncias. `py -3 tools/uiqa/docshots.py exibir` gera `docs/screenshot-exibir.png`.
+
+## DMX / Art-Net (cenário `dmx`)
+
+Menu `Saída`: `##menu_dmx` abre a janela `DMX / Art-Net` (Esc fecha). Ids: abas `##dmx_aba_monitor`, `##dmx_aba_patch`, `##dmx_aba_rede`; Monitor:
+`##dmx_monitor_universo` (combo), `##dmx_grade` (os 512 canais), linhas dos universos `N##dmx_univ_N`; Rede: `##dmx_ligar` (Receber DMX), `##dmx_placa`
+(combo; itens `##dmx_placa_<ip>`, o loopback é `##dmx_placa_127.0.0.1`), `##dmx_universos_texto`, `##dmx_artnet`, `##dmx_sacn`, `##dmx_nome`,
+`##dmx_artnet_base`, `##dmx_mistura`, `##dmx_timeout`, `##dmx_perda`, `##dmx_prioridade`; Patch: `##dmx_add_camada`, `##dmx_add_master`, `##dmx_auto`,
+`##dmx_exportar` (abre o diálogo de pasta: fora do fuzz), por linha `##dmx_on`, `##dmx_camada`, `##dmx_modo`, `##dmx_universo`, `##dmx_endereco`, `##dmx_fx_btn`,
+`##dmx_remover`; canais aprendidos `##dmx_m_*`. Barra de status: `##dmx_indicador`. DMX learn: botão direito num campo numérico, numa célula, coluna, camada ou no olho do
+efeito: `##dmx_atribuir` (e `##dmx_remover`, `##dmx_atribuir_acao` nos alvos de ação); janela `DMX learn`: `##dmx_learn_ligar`, `##dmx_learn_cancelar`.
+Estado: `state.dmx` = `state` (0 desligado, 1 aguardando, 2 recebendo, 3 sem sinal, 4 erro), `running`, `enabled`, `status`, `universes[]` (`universe`, `active`,
+`packets`, `pps`), `windowOpen`, `tab`, `learning`, `blocks`, `maps`, `applied`.
+
+O cenário liga o receptor **só no loopback** (nada abre na rede, sem aviso do Firewall), faz o patch automático, manda ArtDmx reais por UDP para `127.0.0.1:6454`
+(opacidade pelo patch) e aprende um canal pelo botão direito. `py -3 tools/uiqa/run.py --config window --only dmx`. Screenshots de documentação (com dados reais por
+loopback; a aba Monitor não usa SendInput): `py -3 tools/uiqa/dmxshot.py` gera `docs/screenshot-dmx.png` (`--aba patch --saida docs/screenshot-dmx-patch.png` para o Patch).
+
+## Atualizações e reportes (cenário `atualizacao`)
+
+Menu Ajuda: `##menu_atualizar`, `##menu_atualizacao_nova` (só com versão nova), `##menu_reportar`, `##menu_sugerir`. Janela Atualizações: `##atualizacao_aviso` (o ponto na
+barra de status), `##atualizacao_baixar`, `##atualizacao_lembrar`, `##atualizacao_pular`, `##atualizacao_auto`, `##atualizacao_beta`, `##atualizacao_procurar`. Janela de reporte:
+`##reportar_titulo`, `##reportar_descricao`, `##reportar_passos`, `##reportar_sistema`, `##reportar_log`, `##reportar_abrir`, `##reportar_copiar`, `##reportar_fechar`; Esc fecha as duas.
+O snapshot traz `state.update` (`phase`, `hasUpdate`, `version`, `notice`, `noticeText`, `windowOpen`, `autoCheck`, `beta`, `skipped`, `lastCheck`...) e `state.report` (`open`, `kind`, `system`,
+`log`, `bodyLength`, `urlLength`, `truncated`, `lastUrl`, `lastClipboard`).
+
+No `--qa` **nunca há rede**: o transporte das atualizações é um `FakeHttp` ("nenhuma versão publicada"), e "Abrir no GitHub" não abre o navegador (grava `state.report.lastUrl`).
+`BSLStage.exe --qa <pasta> --fake-release <pasta com release.json>` simula um release (e os assets que existirem na pasta). `py -3 tools/uiqa/updshots.py` usa isso para gerar
+`docs/screenshot-atualizacao.png` (aviso na barra de status + janela de notas) e `docs/screenshot-reportar.png`.
+
+## Licenças, privacidade e termos (cenários `licencas` e `boas_vindas`)
+
+Menu Ajuda: `##menu_licencas` (Licenças e avisos…) e "Sobre" (`##sobre_codigo`, `##sobre_licencas`). Janela: abas `##legal_aba_{licenca,terceiros,privacidade,termos}`, `##legal_codigo`,
+`##legal_texto_completo`, `##legal_fechar`; na aba Terceiros cada componente é `##tp_<n>` e o texto da licença dele `##tp_<n>_<m>`. O snapshot traz `state.legal` (`windowOpen`, `tab`, `noticeVersion`, `thirdParty`, `licenseFull`, `openedTexts`, `docsFound`, `lastUrl`).
+
+O navegador nunca abre no `--qa` (o link do código-fonte grava `state.legal.lastUrl`). `py -3 tools/uiqa/legalshots.py` gera `docs/screenshot-licencas.png` (aba Terceiros).

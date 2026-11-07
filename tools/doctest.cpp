@@ -1,14 +1,5 @@
-// bslstage_doctest: PDF, Office e Web no processo auxiliar (bslstage_worker.exe), com janela oculta (GL 3.3).
-// Cobre: PDF de 3 paginas (troca de pagina muda o quadro, avanco automatico por tempo e batidas, fade),
-// transporte dos quadros (textura D3D11 compartilhada x memoria compartilhada), worker morto a forca (a fonte
-// reinicia sozinha e mantem o ultimo quadro), falha definitiva depois de 3 reinicios, miniatura da pagina 1,
-// docx e pptx convertidos pelo Microsoft Office (contagem de paginas, cache), Web (file:// vermelho opaco e
-// fundo transparente com alpha 0, clique encaminhado).
-// No fim confere que nao sobrou bslstage_worker.exe nem Office aberto por este teste.
-//
-// Uso: bslstage_doctest [pdf] [crash] [office] [web]        (sem argumentos roda tudo)
-//      bslstage_doctest --make-demo-docs <pasta>             (gera sample.pdf/.pptx/.html para o --demo)
-
+#include "core/Clip.h"
+#include "core/Composition.h"
 #include "media/DocInfo.h"
 #include "media/DocThumb.h"
 #include "media/PdfSource.h"
@@ -120,7 +111,6 @@ std::string pixelText(const unsigned char* px)
     return buf;
 }
 
-// Chama update() ate 'pred' ser verdadeiro ou estourar o prazo
 bool waitUntil(ISource& src, double seconds, const std::function<bool()>& pred, double dt = 0.016)
 {
     const auto t0 = Clock::now();
@@ -144,10 +134,6 @@ fs::path tempDir()
     return dir;
 }
 
-// ----------------------------------------------------------------------------- fixtures
-
-// PDF minimo escrito a mao: uma pagina 16:9 por cor, cobrindo a pagina inteira (com 'labels', escreve um texto
-// branco em Helvetica no canto; os testes usam paginas lisas para conferir o pixel central)
 void writeColorPdf(const fs::path& file, const std::vector<std::string>& colors, const std::vector<std::string>& labels = {})
 {
     std::vector<std::string> objects;
@@ -190,7 +176,7 @@ void writeColorPdf(const fs::path& file, const std::vector<std::string>& colors,
 fs::path makeThreePagePdf()
 {
     const fs::path file = tempDir() / L"tres-paginas.pdf";
-    writeColorPdf(file, {"1 0 0", "0 1 0", "0 0 1"}); // vermelha, verde, azul
+    writeColorPdf(file, {"1 0 0", "0 1 0", "0 0 1"});
     return file;
 }
 
@@ -200,15 +186,12 @@ void writeText(const fs::path& file, const std::string& text)
     f.write(text.data(), static_cast<std::streamsize>(text.size()));
 }
 
-// --------------------------------------------------------------------------- Office via COM
-
 std::set<DWORD> pidsOf(const wchar_t* exe)
 {
     const auto v = worker::processIds(exe);
     return {v.begin(), v.end()};
 }
 
-// Aplicativo do Office iniciado por este teste: so ele e encerrado no fim
 struct OfficeSession
 {
     const wchar_t* exe = nullptr;
@@ -270,7 +253,6 @@ struct OfficeSession
     }
 };
 
-// Cria um .pptx com 'slides' slides (cada um com um retangulo colorido grande) pelo PowerPoint
 bool makePptx(const fs::path& file, int slides, std::string* error)
 {
     const HRESULT initHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -285,19 +267,19 @@ bool makePptx(const fs::path& file, int slides, std::string* error)
             const Var noWindow = Var::mso(false);
             com::Object pres = session.inst.app.getObject(L"Presentations").getObject(L"Add", {&noWindow});
             com::Object slideList = pres.getObject(L"Slides");
-            const long colors[] = {0x8A3A1E, 0x50A030, 0x2060E0, 0xC09020}; // BGR: azul escuro, verde, laranja, azul claro
+            const long colors[] = {0x8A3A1E, 0x50A030, 0x2060E0, 0xC09020};
             for (int i = 0; i < slides; ++i) {
-                const Var index = Var::integer(i + 1), layout = Var::integer(12); // ppLayoutBlank
+                const Var index = Var::integer(i + 1), layout = Var::integer(12);
                 com::Object slide = slideList.getObject(L"Add", {&index, &layout});
                 com::Object shapes = slide.getObject(L"Shapes");
                 const Var type = Var::integer(1), l = Var::integer(0), t = Var::integer(0), w = Var::integer(960),
-                          h = Var::integer(540); // msoShapeRectangle cobrindo o slide 16:9 (960x540 pt)
+                          h = Var::integer(540);
                 com::Object rect = shapes.getObject(L"AddShape", {&type, &l, &t, &w, &h});
                 rect.getObject(L"Fill").getObject(L"ForeColor").put(L"RGB", Var::integer(colors[i % 4]));
                 const Var text = Var::text(L"Slide " + std::to_wstring(i + 1));
                 rect.getObject(L"TextFrame").getObject(L"TextRange").put(L"Text", text);
             }
-            const Var path = Var::text(file.wstring()), fmt = Var::integer(24); // ppSaveAsOpenXMLPresentation
+            const Var path = Var::text(file.wstring()), fmt = Var::integer(24);
             pres.call(L"SaveAs", {&path, &fmt});
             pres.call(L"Close");
             ok = true;
@@ -312,7 +294,6 @@ bool makePptx(const fs::path& file, int slides, std::string* error)
     return ok && fs::is_regular_file(file);
 }
 
-// Cria um .docx de duas paginas (quebra de pagina) pelo Word
 bool makeDocx(const fs::path& file, std::string* error)
 {
     const HRESULT initHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -332,18 +313,17 @@ bool makeDocx(const fs::path& file, std::string* error)
             com::Object doc = session.inst.app.getObject(L"Documents").getObject(L"Add");
             com::Object content = doc.getObject(L"Content");
             content.put(L"Text", Var::text(L"Pagina um do documento de teste do BSL Stage"));
-            // Quebra de pagina no fim e segunda pagina
             const Var collapseEnd = Var::integer(0);
             com::Object range = doc.getObject(L"Content");
             range.call(L"InsertParagraphAfter");
             com::Object r2 = doc.getObject(L"Content");
             r2.call(L"Collapse", {&collapseEnd});
-            const Var breakType = Var::integer(7); // wdPageBreak
+            const Var breakType = Var::integer(7);
             r2.call(L"InsertBreak", {&breakType});
             com::Object r3 = doc.getObject(L"Content");
             const Var tail = Var::text(L"Pagina dois");
             r3.call(L"InsertAfter", {&tail});
-            const Var path = Var::text(file.wstring()), fmt = Var::integer(12); // wdFormatXMLDocument
+            const Var path = Var::text(file.wstring()), fmt = Var::integer(12);
             doc.call(L"SaveAs2", {&path, &fmt});
             const Var noSave = Var::integer(0);
             doc.call(L"Close", {&noSave});
@@ -358,8 +338,6 @@ bool makeDocx(const fs::path& file, std::string* error)
         CoUninitialize();
     return ok && fs::is_regular_file(file);
 }
-
-// --------------------------------------------------------------------------- testes
 
 std::unique_ptr<PdfSource> openPdf(const fs::path& file, int w, int h, const ParamValues& values = {})
 {
@@ -410,10 +388,9 @@ void testPdf(const char* transport)
         std::printf("  pagina 1 centro %s\n", pixelText(p.at(320, 180)).c_str());
         CHECK(isColor(p.at(320, 180), 255, 0, 0));
         CHECK(p.at(320, 180)[3] == 255);
-        CHECK(isColor(p.at(2, 2), 255, 0, 0)); // a pagina ocupa o canvas todo (16:9)
+        CHECK(isColor(p.at(2, 2), 255, 0, 0));
     }
 
-    // Troca de pagina: o quadro muda
     src.goToPage(2);
     CHECK(waitPage(src, 2));
     if (src.shownPage() == 2) {
@@ -428,23 +405,20 @@ void testPdf(const char* transport)
         std::printf("  pagina 3 centro %s\n", pixelText(p.at(320, 180)).c_str());
         CHECK(isColor(p.at(320, 180), 0, 0, 255));
     }
-    src.goToPage(99); // alem do fim: fica na ultima
+    src.goToPage(99);
     CHECK(src.page() == 3);
     src.prevPage();
     CHECK(waitPage(src, 2));
-    // A pagina anterior ja estava pre-renderizada: volta rapido
     const auto t1 = Clock::now();
     src.goToPage(1);
     CHECK(waitPage(src, 1, 5.0));
     std::printf("  voltar para a pagina 1: %.0f ms\n", secondsSince(t1) * 1000.0);
 
-    // Parametro "page" do clip leva para a pagina
     ParamValues v = src.paramValues();
     v.set("page", 3);
     src.setParams(v);
     CHECK(waitPage(src, 3));
 
-    // Cor de fundo: pagina 4:3 mostraria barras; aqui so confere que a mudanca de cor chega ao worker
     v.set("page", 1);
     v.set("bg", param::colorJson({0.0f, 0.0f, 1.0f, 1.0f}));
     src.setParams(v);
@@ -460,7 +434,7 @@ void testPdfBackgroundAndFit()
     const fs::path pdf = makeThreePagePdf();
     ParamValues v;
     v.fillDefaults(PdfSource::describe(v));
-    v.set("bg", param::colorJson({0.0f, 0.0f, 1.0f, 1.0f})); // azul
+    v.set("bg", param::colorJson({0.0f, 0.0f, 1.0f, 1.0f}));
     auto srcPtr = openPdf(pdf, 400, 300, v);
     CHECK(srcPtr != nullptr);
     if (!srcPtr)
@@ -469,7 +443,6 @@ void testPdfBackgroundAndFit()
     CHECK(waitPage(src, 1));
     if (src.shownPage() == 1) {
         const Pixels p = readSource(src);
-        // 400x225 centralizado em 400x300: barras de 37 px em cima e embaixo
         std::printf("  barra %s | pagina %s\n", pixelText(p.at(200, 10)).c_str(), pixelText(p.at(200, 150)).c_str());
         CHECK(isColor(p.at(200, 10), 0, 0, 255));
         CHECK(isColor(p.at(200, 290), 0, 0, 255));
@@ -494,7 +467,6 @@ void testPdfAuto()
         if (srcPtr) {
             PdfSource& src = *srcPtr;
             CHECK(waitPage(src, 1));
-            // O relogio do avanco usa o dt dos updates: 0,05 s por passo
             int seen = 0;
             std::set<int> pages;
             const auto t0 = Clock::now();
@@ -506,7 +478,6 @@ void testPdfAuto()
             (void)seen;
             std::printf("  paginas visitadas: %zu\n", pages.size());
             CHECK(pages.size() == 3);
-            // Loop no fim: depois da ultima volta para a 1
             bool wrapped = false;
             const auto t1 = Clock::now();
             int last = src.page();
@@ -518,7 +489,6 @@ void testPdfAuto()
                 sleepMs(20);
             }
             CHECK(wrapped);
-            // Sem loop, para na ultima
             v = src.paramValues();
             v.set("loopEnd", false);
             src.setParams(v);
@@ -529,7 +499,7 @@ void testPdfAuto()
             }
             CHECK(src.page() == 3);
             for (int i = 0; i < 40; ++i)
-                src.update(0.05); // 2 s simulados: nao passa da ultima
+                src.update(0.05);
             CHECK(src.page() == 3);
             src.close();
         }
@@ -546,9 +516,9 @@ void testPdfAuto()
             CHECK(waitPage(src, 1));
             src.setTempo(0.0, 120.0f);
             CHECK(src.page() == 1);
-            src.setTempo(1.0, 120.0f); // 1 batida: ainda na 1
+            src.setTempo(1.0, 120.0f);
             CHECK(src.page() == 1);
-            src.setTempo(2.1, 120.0f); // 2 batidas: avanca
+            src.setTempo(2.1, 120.0f);
             CHECK(src.page() == 2);
             src.setTempo(3.5, 120.0f);
             CHECK(src.page() == 2);
@@ -569,18 +539,16 @@ void testPdfAuto()
             PdfSource& src = *srcPtr;
             CHECK(waitPage(src, 1));
             src.goToPage(2);
-            // Espera o quadro novo chegar sem avancar o relogio do fade (dt = 0)
             const bool arrived = waitUntil(src, 12.0, [&] { return src.shownPage() == 2; }, 0.0);
             CHECK(arrived);
-            // t = 0: ainda parece a pagina 1
             Pixels p = readSource(src);
             std::printf("  fade t=0: %s\n", pixelText(p.at(160, 90)).c_str());
             CHECK(isColor(p.at(160, 90), 255, 0, 0, 30));
-            src.update(0.2); // metade
+            src.update(0.2);
             p = readSource(src);
             std::printf("  fade t=0,5: %s\n", pixelText(p.at(160, 90)).c_str());
             CHECK(p.at(160, 90)[0] > 70 && p.at(160, 90)[1] > 70);
-            src.update(0.3); // fim
+            src.update(0.3);
             p = readSource(src);
             std::printf("  fade fim: %s\n", pixelText(p.at(160, 90)).c_str());
             CHECK(isColor(p.at(160, 90), 0, 255, 0, 30));
@@ -630,7 +598,6 @@ void testWorkerCrash()
 
     const unsigned long long framesBefore = src.framesShown();
     src.debugKillWorker();
-    // A UI nao bloqueia e o ultimo quadro continua valido durante o reinicio
     bool sawRestarting = false;
     double worstUpdate = 0.0;
     bool keptTexture = true;
@@ -656,16 +623,14 @@ void testWorkerCrash()
     CHECK(worstUpdate < 0.1);
     CHECK(pid2 != 0 && pid2 != pid1);
     CHECK(src.hostSnapshot().restarts >= 1);
-    CHECK(src.shownPage() == 2); // voltou na pagina em que estava
+    CHECK(src.shownPage() == 2);
     CHECK(src.status().text.empty());
     const Pixels p = readSource(src);
     CHECK(isColor(p.at(160, 90), 0, 255, 0));
-    // Continua obedecendo comandos
     src.goToPage(3);
     CHECK(waitPage(src, 3));
     src.close();
 
-    // O processo antigo tem de ter sumido
     CHECK(!WorkerHost::processRunning(pid1));
 }
 
@@ -705,7 +670,7 @@ void testWorkerHang()
         CHECK(src.workerPid() != firstPid);
         CHECK(took > 10.0 && took < 30.0);
         CHECK(worstUpdate < 0.1);
-        CHECK(!WorkerHost::processRunning(firstPid)); // o travado foi encerrado, nao ficou orfao
+        CHECK(!WorkerHost::processRunning(firstPid));
         src.close();
     }
     _wputenv_s(L"BSLSTAGE_WORKER_HANG_ONCE", L"");
@@ -740,7 +705,7 @@ void testWorkerGivesUp()
 {
     section("worker que nunca sobe: 3 reinicios e depois Falhou com o motivo");
     RemoteSource::forceTransport("auto");
-    _putenv_s("BSLSTAGE_WORKER_CRASH", "1"); // o worker sai logo na partida (so para teste)
+    _putenv_s("BSLSTAGE_WORKER_CRASH", "1");
     const fs::path pdf = makeThreePagePdf();
     auto srcPtr = openPdf(pdf, 320, 180);
     CHECK(srcPtr != nullptr);
@@ -787,8 +752,6 @@ void testTransportFallbackLog()
     }
 }
 
-// --------------------------------------------------------------------------- Office
-
 void testOffice()
 {
     section("Office: pptx e docx convertidos pelo Microsoft Office");
@@ -818,7 +781,6 @@ void testOffice()
     std::printf("  docx de teste: %s %s\n", haveDocx ? "criado" : "FALHOU", error.c_str());
     CHECK(haveDocx);
 
-    // Apaga o cache dos dois para medir a conversao de verdade
     if (havePptx)
         fs::remove(worker::docCachePath(pptx), ec);
     if (haveDocx)
@@ -849,7 +811,6 @@ void testOffice()
         if (got) {
             const Pixels p = readSource(src);
             CHECK(p.w == 640 && p.h == 360);
-            // Algo foi desenhado (pagina branca ou colorida), nao so o fundo preto
             long nonBlack = 0;
             for (int y = 0; y < p.h; y += 4)
                 for (int x = 0; x < p.w; x += 4)
@@ -858,7 +819,6 @@ void testOffice()
             std::printf("    pixels claros: %ld\n", nonBlack);
             CHECK(nonBlack > 500);
         }
-        // Navega: a ultima pagina
         src.goToPage(expectedPages);
         CHECK(waitPage(src, expectedPages, 15.0));
         src.close();
@@ -868,7 +828,6 @@ void testOffice()
     if (haveDocx)
         run(docx, 2, "docx");
 
-    // Cache: abrir de novo nao reconverte (rapido)
     if (havePptx) {
         const fs::path cached = worker::docCachePath(pptx);
         CHECK(fs::is_regular_file(cached));
@@ -881,14 +840,12 @@ void testOffice()
             CHECK(secondsSince(t0) < 5.0);
             srcPtr->close();
         }
-        // Arquivo mudou (mtime): o caminho do cache muda e reconverte
         const fs::path before = worker::docCachePath(pptx);
         fs::last_write_time(pptx, fs::file_time_type::clock::now() + std::chrono::seconds(5), ec);
         const fs::path after = worker::docCachePath(pptx);
         CHECK(before != after);
     }
 
-    // Thumbnail de um Office pelo worker
     if (haveDocx) {
         Frame f;
         int pages = 0;
@@ -899,7 +856,6 @@ void testOffice()
         CHECK(pages == 2);
     }
 
-    // O que este teste abriu tem de ter fechado; o que ja existia fica como estava
     const auto t0 = Clock::now();
     for (;;) {
         bool extra = false;
@@ -916,7 +872,7 @@ void testOffice()
         sleepMs(200);
     }
     for (DWORD pid : pptBefore)
-        CHECK(WorkerHost::processRunning(pid)); // a instancia do usuario continua la
+        CHECK(WorkerHost::processRunning(pid));
     for (DWORD pid : wordBefore)
         CHECK(WorkerHost::processRunning(pid));
 }
@@ -932,8 +888,6 @@ void testOfficeMissingMessage()
     CHECK(!error.empty());
     std::printf("  %s\n", error.c_str());
 }
-
-// --------------------------------------------------------------------------- Web
 
 fs::path writeHtml(const char* name, const std::string& html)
 {
@@ -983,7 +937,6 @@ void testWeb(const char* transport)
             CHECK(got);
             CHECK(src.status().level != SourceStatus::Level::Warning);
             if (got) {
-                // O CEF pode mandar um quadro em branco antes do conteudo: espera o vermelho
                 bool red_ok = waitUntil(src, 15.0, [&] {
                     const Pixels p = readSource(src);
                     return isColor(p.at(p.w / 2, p.h / 2), 255, 0, 0);
@@ -998,7 +951,6 @@ void testWeb(const char* transport)
         }
     }
     {
-        // Fundo transparente: sem cor no corpo, so um quadrado vermelho no canto
         const fs::path clear = writeHtml("transparente.html",
                                          "<!doctype html><html style=\"background:transparent\"><body style=\"margin:0;background:transparent\">"
                                          "<div style=\"position:absolute;left:0;top:0;width:100px;height:100px;background:#ff0000\"></div>"
@@ -1025,7 +977,6 @@ void testWeb(const char* transport)
         }
     }
     {
-        // CSS extra injetado: a pagina e vermelha, o CSS a deixa azul
         ParamValues v;
         v.fillDefaults(WebSource::describeFile(v));
         v.set("css", "html, body { background: #0000ff !important; }");
@@ -1041,7 +992,6 @@ void testWeb(const char* transport)
             });
             std::printf("  css injetado: %s\n", blue ? "azul" : "NAO aplicado");
             CHECK(blue);
-            // Troca o CSS com a pagina aberta
             v.set("css", "html, body { background: #00ff00 !important; }");
             src.setParams(v);
             const bool green = waitUntil(src, 15.0, [&] {
@@ -1053,7 +1003,6 @@ void testWeb(const char* transport)
         }
     }
     {
-        // Gerador "Web (URL)": a URL vem do parametro (data: para nao depender de rede)
         auto src = std::make_unique<WebSource>(320, 180);
         ParamValues v;
         v.fillDefaults(WebSource::describe(v));
@@ -1070,7 +1019,6 @@ void testWeb(const char* transport)
         std::printf("  gerador com URL por parametro: %s\n", green ? "verde" : "NAO abriu");
         CHECK(green);
         CHECK(WebSource::label(v) == "Web: " || WebSource::label(v).rfind("Web", 0) == 0);
-        // Troca a URL com a fonte aberta
         v.set("url", "data:text/html,<body style=\"margin:0;background:%23ff00ff\"></body>");
         src->setParams(v);
         const bool magenta = waitUntil(*src, 20.0, [&] {
@@ -1081,7 +1029,6 @@ void testWeb(const char* transport)
         src->close();
     }
     {
-        // Clique encaminhado: a pagina troca de cor ao receber o clique
         const fs::path click = writeHtml("clique.html",
                                          "<!doctype html><html><body style=\"margin:0;background:#ff0000;width:100vw;height:100vh\" "
                                          "onmousedown=\"document.body.style.background='#00ff00'\"></body></html>");
@@ -1150,11 +1097,233 @@ void testWebCrash()
     CHECK(src.workerPid() != 0 && src.workerPid() != pid1);
     CHECK(isRed());
     src.close();
-    // Os processos do navegador do worker morto (GPU, renderer) tambem tem de ter ido embora: a conferencia final
-    // de bslstage_worker.exe pega qualquer sobra
 }
 
-// --------------------------------------------------------------------------- arquivos de demonstracao
+fs::path findTestMediaDir()
+{
+    fs::path dir = fs::path(WorkerHost::workerExePath()).parent_path();
+    for (int i = 0; i < 6 && !dir.empty(); ++i) {
+        if (fs::is_regular_file(dir / L"testmedia" / L"h264_1080p.mp4"))
+            return dir / L"testmedia";
+        dir = dir.parent_path();
+    }
+    return {};
+}
+
+bool pumpComp(Composition& comp, double seconds, const std::function<bool()>& pred = {})
+{
+    const auto t0 = Clock::now();
+    while (secondsSince(t0) < seconds) {
+        comp.update(0.016);
+        if (pred && pred())
+            return true;
+        sleepMs(8);
+    }
+    comp.update(0.016);
+    return pred ? pred() : false;
+}
+
+int pageCounter(const Clip& clip)
+{
+    const auto* web = dynamic_cast<const WebSource*>(clip.liveSource());
+    const std::string t = web ? web->pageTitle() : std::string();
+    return t.rfind("n=", 0) == 0 ? std::atoi(t.c_str() + 2) : -1;
+}
+
+void testBackgroundWeb()
+{
+    section("Web em segundo plano: trocar de clip na camada e voltar nao reinicia a pagina (item 7)");
+    if (!cefAvailable()) {
+        skip("CEF não encontrado");
+        return;
+    }
+    RemoteSource::forceTransport("auto");
+    const fs::path page = writeHtml(
+        "contador.html",
+        "<!doctype html><html><head><title>n=0</title></head><body style=\"margin:0;background:#202020\"><script>"
+        "var n=0;setInterval(function(){n++;document.title='n='+n;},100);</script></body></html>");
+    Composition comp = Composition::createDefault(1, 3);
+    comp.width = 320;
+    comp.height = 180;
+    comp.setClip(0, 0, Clip::fromFile(page));
+    comp.setClip(0, 1, Clip::generator(kSolidColorId));
+    Clip& web = comp.clip(0, 0);
+    CHECK(web.isWeb() && web.replay == ReplayMode::Resume && web.supportsReplayMode());
+    CHECK(comp.clip(0, 1).replay == ReplayMode::Restart && !comp.clip(0, 1).supportsReplayMode());
+
+    const std::set<DWORD> before = pidsOf(L"bslstage_worker.exe");
+    CHECK(comp.trigger(0, 0));
+    CHECK(pumpComp(comp, 60.0, [&] { return pageCounter(web) >= 5; }));
+    const ISource* instance = web.source.get();
+    auto* remote = dynamic_cast<RemoteSource*>(web.source.get());
+    const unsigned long pid = remote ? remote->workerPid() : 0;
+    const int n1 = pageCounter(web);
+    CHECK(instance != nullptr && pid != 0);
+    const std::set<DWORD> withOne = pidsOf(L"bslstage_worker.exe");
+    std::printf("  pagina aberta: contador %d | worker pid %lu\n", n1, pid);
+
+    CHECK(comp.trigger(0, 1));
+    CHECK(web.source == nullptr && web.parked.get() == instance && comp.backgroundCount() == 1);
+    CHECK(comp.activeClip(0) == &comp.clip(0, 1));
+    pumpComp(comp, 2.5);
+    const int nBackground = pageCounter(web);
+    std::printf("  2,5 s em segundo plano: contador %d -> %d\n", n1, nBackground);
+    CHECK(nBackground >= n1 + 10);
+    CHECK(remote && remote->workerPid() == pid);
+
+    CHECK(comp.trigger(0, 0));
+    CHECK(web.source.get() == instance && web.parked == nullptr && comp.backgroundCount() == 0);
+    pumpComp(comp, 0.6);
+    const int n2 = pageCounter(web);
+    std::printf("  ao voltar: contador %d (era %d antes de sair)\n", n2, n1);
+    CHECK(n2 >= nBackground && n2 > n1);
+    CHECK(remote && remote->workerPid() == pid);
+    CHECK(pidsOf(L"bslstage_worker.exe") == withOne);
+    CHECK(waitUntil(*web.source, 20.0, [&] {
+        const Pixels p = readSource(*web.source);
+        return isColor(p.at(p.w / 2, p.h / 2), 32, 32, 32, 12);
+    }));
+
+    web.replay = ReplayMode::Restart;
+    CHECK(comp.trigger(0, 1));
+    CHECK(web.source == nullptr && web.parked == nullptr && comp.backgroundCount() == 0);
+    CHECK(comp.trigger(0, 0));
+    auto* again = dynamic_cast<RemoteSource*>(web.source.get());
+    CHECK(pumpComp(comp, 60.0, [&] { return pageCounter(web) >= 1; }));
+    std::printf("  em Reiniciar: contador %d (era %d), pid %lu -> %lu\n", pageCounter(web), n2, pid, again ? again->workerPid() : 0ul);
+    CHECK(pageCounter(web) < n2 && again && again->workerPid() != pid);
+
+    web.replay = ReplayMode::Resume;
+    CHECK(comp.trigger(0, 1));
+    CHECK(comp.backgroundCount() == 1);
+    comp.stopLayer(0);
+    CHECK(comp.backgroundCount() == 0 && web.parked == nullptr && web.source == nullptr && comp.activeClip(0) == nullptr);
+    CHECK(comp.trigger(0, 0));
+    CHECK(pumpComp(comp, 60.0, [&] { return pageCounter(web) >= 1; }));
+    CHECK(comp.trigger(0, 1) && comp.backgroundCount() == 1);
+    comp.stopAll();
+    CHECK(comp.backgroundCount() == 0 && web.parked == nullptr);
+    CHECK(WorkerHost::waitAllStopped(15000));
+    bool extra = true;
+    const auto t0 = Clock::now();
+    while (extra && secondsSince(t0) < 15.0) {
+        extra = false;
+        for (DWORD pidNow : pidsOf(L"bslstage_worker.exe"))
+            extra = extra || !before.count(pidNow);
+        if (extra)
+            sleepMs(100);
+    }
+    CHECK(!extra);
+}
+
+void testBackgroundDocument()
+{
+    section("Documento em segundo plano: volta na mesma pagina, sem reabrir o worker");
+    RemoteSource::forceTransport("auto");
+    Composition comp = Composition::createDefault(1, 2);
+    comp.width = 320;
+    comp.height = 180;
+    comp.setClip(0, 0, Clip::fromFile(makeThreePagePdf()));
+    comp.setClip(0, 1, Clip::generator(kSolidColorId));
+    Clip& doc = comp.clip(0, 0);
+    CHECK(doc.isPaged() && doc.replay == ReplayMode::Resume);
+    CHECK(comp.trigger(0, 0));
+    auto* pdf = dynamic_cast<PdfSource*>(doc.source.get());
+    CHECK(pdf != nullptr);
+    if (!pdf)
+        return;
+    CHECK(pumpComp(comp, 30.0, [&] { return pdf->shownPage() == 1 && pdf->texture() != 0; }));
+    pdf->goToPage(3);
+    CHECK(pumpComp(comp, 30.0, [&] { return pdf->shownPage() == 3; }));
+    const unsigned long pid = pdf->workerPid();
+    CHECK(comp.trigger(0, 1));
+    CHECK(doc.source == nullptr && doc.parked.get() == pdf);
+    pumpComp(comp, 1.0);
+    CHECK(comp.trigger(0, 0));
+    CHECK(doc.source.get() == pdf && pdf->page() == 3 && pdf->workerPid() == pid);
+    CHECK(pumpComp(comp, 10.0, [&] { return pdf->shownPage() == 3 && pdf->texture() != 0; }));
+    {
+        const Pixels p = readSource(*pdf);
+        CHECK(isColor(p.at(p.w / 2, p.h / 2), 0, 0, 255));
+    }
+    comp.stopAll();
+}
+
+void testBackgroundVideoAndLimit()
+{
+    section("Video em Retomar volta na posicao salva; limite de fontes em segundo plano (LRU)");
+    const fs::path media = findTestMediaDir();
+    if (media.empty()) {
+        skip("testmedia/h264_1080p.mp4 não encontrado");
+    } else {
+        Composition comp = Composition::createDefault(1, 3);
+        comp.width = 640;
+        comp.height = 360;
+        comp.setClip(0, 0, Clip::fromFile(media / L"h264_1080p.mp4"));
+        comp.setClip(0, 1, Clip::generator(kSolidColorId));
+        Clip& video = comp.clip(0, 0);
+        CHECK(video.replay == ReplayMode::Restart && video.supportsReplayMode());
+        video.replay = ReplayMode::Resume;
+        CHECK(comp.trigger(0, 0));
+        CHECK(pumpComp(comp, 30.0, [&] { return video.source && video.source->position() >= 1.0; }));
+        const double pos = video.source ? video.source->position() : 0.0;
+        const double duration = video.source ? video.source->duration() : 0.0;
+        std::printf("  video: posicao %.2f s de %.2f s\n", pos, duration);
+        CHECK(pos >= 1.0);
+        CHECK(comp.trigger(0, 1));
+        CHECK(video.source == nullptr && video.parked == nullptr);
+        CHECK(std::abs(video.resumeSeconds - pos) < 0.2);
+        pumpComp(comp, 0.5);
+        CHECK(comp.trigger(0, 0));
+        const double back = video.source ? video.source->position() : -1.0;
+        std::printf("  voltou em %.2f s (saiu em %.2f s)\n", back, pos);
+        CHECK(std::abs(back - pos) < 0.3);
+        video.replay = ReplayMode::Restart;
+        CHECK(pumpComp(comp, 10.0, [&] { return video.source && video.source->position() >= 0.5; }));
+        CHECK(comp.trigger(0, 1));
+        CHECK(video.resumeSeconds == 0.0);
+        CHECK(comp.trigger(0, 0));
+        CHECK(video.source && video.source->position() < 0.3);
+        comp.stopAll();
+    }
+
+    {
+        Composition comp = Composition::createDefault(1, 6);
+        comp.width = 320;
+        comp.height = 180;
+        comp.maxBackgroundSources = 2;
+        for (int c = 0; c < 5; ++c)
+            comp.setClip(0, c, Clip::generator(kSpoutId));
+        comp.setClip(0, 5, Clip::generator(kSolidColorId));
+        CHECK(comp.clip(0, 0).keepsAliveInBackground() && comp.clip(0, 0).replay == ReplayMode::Resume);
+        for (int c = 0; c < 5; ++c)
+            CHECK(comp.trigger(0, c));
+        CHECK(comp.backgroundCount() == 2);
+        CHECK(comp.clip(0, 0).parked == nullptr && comp.clip(0, 1).parked == nullptr);
+        CHECK(comp.clip(0, 2).parked != nullptr && comp.clip(0, 3).parked != nullptr);
+        CHECK(comp.clip(0, 4).source != nullptr);
+        const ISource* kept = comp.clip(0, 3).parked.get();
+        CHECK(comp.trigger(0, 3));
+        CHECK(comp.clip(0, 3).source.get() == kept);
+        CHECK(comp.backgroundCount() == 2);
+        CHECK(comp.trigger(0, 0));
+        CHECK(comp.clip(0, 2).parked == nullptr && comp.backgroundCount() == 2);
+        comp.maxBackgroundSources = 1;
+        comp.update(0.016);
+        CHECK(comp.backgroundCount() == 1);
+        comp.stopLayer(0);
+        CHECK(comp.backgroundCount() == 0 && comp.activeClip(0) == nullptr);
+        comp.maxBackgroundSources = 8;
+        CHECK(comp.trigger(0, 1) && comp.trigger(0, 2) && comp.trigger(0, 5) && comp.backgroundCount() == 2);
+        comp.stopAll();
+        CHECK(comp.backgroundCount() == 0);
+        CHECK(comp.trigger(0, 1) && comp.trigger(0, 2) && comp.backgroundCount() == 1);
+        const ISource* parkedOne = comp.clip(0, 1).parked.get();
+        comp.swapClips(0, 1, 0, 4);
+        CHECK(comp.clip(0, 4).parked.get() == parkedOne && comp.clip(0, 1).parked == nullptr);
+        comp.stopAll();
+    }
+}
 
 int makeDemoDocs(const fs::path& dir)
 {
@@ -1180,11 +1349,10 @@ int makeDemoDocs(const fs::path& dir)
     return 0;
 }
 
-} // namespace
+}
 
 int main(int argc, char** argv)
 {
-    // O worker precisa do COM do chamador? Nao: so este teste cria Office via COM
     if (argc >= 3 && std::string(argv[1]) == "--make-demo-docs") {
         CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
         return makeDemoDocs(fs::absolute(fs::path(argv[2])).lexically_normal());
@@ -1243,8 +1411,12 @@ int main(int argc, char** argv)
         testWeb("shm");
         testWebCrash();
     }
+    if (want("background")) {
+        testBackgroundWeb();
+        testBackgroundDocument();
+        testBackgroundVideoAndLimit();
+    }
 
-    // Nada de worker sobrando
     section("processos auxiliares encerrados");
     const bool allStopped = WorkerHost::waitAllStopped(15000);
     CHECK(allStopped);

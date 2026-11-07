@@ -8,14 +8,13 @@
 
 namespace bsl::media {
 
-// Resultado da decodificacao de uma imagem: 1 frame (estatica) ou varios (GIF/WEBP animado).
 struct DecodedImage {
     int width = 0;
     int height = 0;
-    std::vector<Frame> frames;   // todos RGBA8 do mesmo tamanho (alpha reta)
-    std::vector<double> delays;  // segundos de exibicao de cada frame (mesmo tamanho de frames)
-    bool hasAlpha = false;       // algum pixel com alpha < 255
-    std::string decoder;         // "stb" ou "ffmpeg"
+    std::vector<Frame> frames;
+    std::vector<double> delays;
+    bool hasAlpha = false;
+    std::string decoder;
 
     bool animated() const { return frames.size() > 1; }
     double totalDuration() const
@@ -27,8 +26,6 @@ struct DecodedImage {
     }
 };
 
-// Decodifica PNG/JPG/BMP/TGA/PSD/HDR/GIF via stb; WEBP/TIFF e o que o stb falhar via FFmpeg.
-// Animacoes sao limitadas a ~768 MB de RGBA; excedente e truncado.
 bool decodeImage(const std::filesystem::path& path, DecodedImage& out, std::string* error = nullptr);
 
-} // namespace bsl::media
+}

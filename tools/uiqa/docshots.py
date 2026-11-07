@@ -1,4 +1,4 @@
-"""Screenshots de documentacao do visual "Adobe" (docs/screenshot-adobe-*.png), 1920x1080.
+"""Screenshots de documentacao (docs/screenshot-composicao.png, screenshot-clip-texto.png, screenshot-mapeamento.png), 1920x1080.
 
 Uso:  py -3 tools/uiqa/docshots.py
 
@@ -10,8 +10,8 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import driver  # noqa: E402
-from run import (cell, clear_field_and_type, ensure_mode, expect, menu, pick_combo, pick_tab,  # noqa: E402
+import driver
+from run import (cell, clear_field_and_type, ensure_mode, expect, menu, pick_combo, pick_tab,
                  scroll_into_view)
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
@@ -36,10 +36,10 @@ def shot(name, extra, tab, top=True, settle=8.0):
     qa_dir = os.path.join(ROOT, "build", "qa", "docshots")
     app = driver.App(EXE, qa_dir, ["--demo", MEDIA] + extra, size=(1920, 1080))
     try:
-        time.sleep(settle)  # fontes ao vivo, PDF, Office e Web precisam de alguns segundos
+        time.sleep(settle)
         app.wait_frames(10)
         focus_tab(app, tab, top)
-        app.hover(960, 1075)  # mouse fora dos controles
+        app.hover(960, 1075)
         app.wait_frames(6)
         path = os.path.join(DOCS, name)
         app.screenshot(path)
@@ -54,12 +54,12 @@ def previa(name="screenshot-previa.png"):
     qa_dir = os.path.join(ROOT, "build", "qa", "docshots")
     app = driver.App(EXE, qa_dir, ["--demo", MEDIA], size=(1920, 1080))
     try:
-        time.sleep(8.0)  # fontes ao vivo, PDF, Office e Web precisam de alguns segundos
+        time.sleep(8.0)
         app.wait_frames(10)
         app.click("celula L3 C3 nome")
         app.wait_state(lambda s: s["preview"]["own"] and not s["preview"]["live"], "Prévia com instância própria", timeout=10)
-        time.sleep(1.5)  # o gradiente anima: deixa andar um pouco
-        app.hover(960, 1075)  # mouse fora dos controles
+        time.sleep(1.5)
+        app.hover(960, 1075)
         app.wait_frames(6)
         path = os.path.join(DOCS, name)
         app.screenshot(path)
@@ -68,13 +68,48 @@ def previa(name="screenshot-previa.png"):
         app.quit()
 
 
-NDI_DLL = r"C:\Program Files\Resolume Arena\Processing.NDI.Lib.x64.dll"
+def exibir(name="screenshot-exibir.png"):
+    """Menu Exibir aberto: painel Clip oculto (caixa desmarcada) e o submenu "Soltar em janela" aberto."""
+    qa_dir = os.path.join(ROOT, "build", "qa", "docshots")
+    app = driver.App(EXE, qa_dir, ["--demo", MEDIA], size=(1920, 1080))
+    try:
+        time.sleep(8.0)
+        app.wait_frames(10)
+        menu(app, "Exibir", "##exibir_clip")
+        app.wait_state(lambda s: s["view"]["hidden"] == ["clip"], "painel Clip oculto")
+        app.wait_frames(8)
+        app.click("Exibir", "MainMenuBar")
+        app.wait_frames(6)
+        it = app.find("##exibir_soltar", "Menu_")
+        app.hover(it.rect.cx, it.rect.cy)
+        app.wait_frames(10)
+        path = os.path.join(DOCS, name)
+        app.screenshot(path)
+        print("ok", path)
+    finally:
+        app.quit()
+
+
+def default_ndi_dll():
+    for var in ("NDI_RUNTIME_DIR_V6", "NDI_RUNTIME_DIR_V5"):
+        folder = os.environ.get(var)
+        if folder:
+            candidate = os.path.join(folder, "Processing.NDI.Lib.x64.dll")
+            if os.path.isfile(candidate):
+                return candidate
+    return None
+
+
+NDI_DLL = default_ndi_dll()
 
 
 def ndi(name="screenshot-ndi.png", dll=NDI_DLL):
     """Fonte NDI recebendo a propria saida NDI do app (loopback) + janela Compatibilidade de video.
     O runtime do NDI e so carregado de 'dll' (--ndi-lib): nada e copiado para o projeto. A fonte NDI fica na camada de baixo
     e o padrao de teste na de cima (opaco): sem realimentacao, a Previa mostra o que chegou pela rede."""
+    if not dll:
+        print("pulado: sem runtime do NDI (defina NDI_RUNTIME_DIR_V6 ou passe o caminho da DLL)")
+        return
     qa_dir = os.path.join(ROOT, "build", "qa", "docshots")
     app = driver.App(EXE, qa_dir, ["--ndi-lib", dll], size=(1920, 1080))
     try:
@@ -83,17 +118,14 @@ def ndi(name="screenshot-ndi.png", dll=NDI_DLL):
         expect(app.read()["state"]["ndi"]["available"], "runtime do NDI carregado de " + dll)
         ensure_mode(app, "composition")
         pick_tab(app, "Fontes")
-        # padrao de teste na camada 2 (disparado) -> saida
         app.drag_items(scroll_into_view(app, "Padrão de teste", "cmp_geradores"), cell(app, 2, 1), steps=18)
         app.wait_state(lambda s: any(x[0] == 1 and x[1] == 0 for x in s["cells"]), "padrao de teste na grade")
         app.click("celula L2 C1")
         app.wait_state(lambda s: s["layers"][1]["activeColumn"] == 0, "padrao de teste na saida")
-        # a Screen 1 sai por NDI (nome padrao "BSL Stage - Tela 1")
         ensure_mode(app, "mapping")
         pick_combo(app, "##destino", "Propriedades", "NDI")
         app.wait_state(lambda s: s["screens"][s["mapping"]["screen"]]["kind"] == "NDI", "destino NDI")
         ensure_mode(app, "composition")
-        # fonte NDI na camada 1
         pick_tab(app, "Fontes")
         app.drag_items(scroll_into_view(app, "NDI", "cmp_geradores"), cell(app, 1, 1), steps=18)
         app.wait_state(lambda s: any(x[0] == 0 and x[1] == 0 and x[2].startswith("NDI") for x in s["cells"]), "fonte NDI na grade")
@@ -110,13 +142,13 @@ def ndi(name="screenshot-ndi.png", dll=NDI_DLL):
         app.wait_state(lambda s: s["layers"][0]["activeColumn"] == 0, "dispara a fonte NDI")
         app.wait_state(lambda s: s["selClip"]["status"].startswith("NDI:"), "fonte NDI recebendo a propria saida", timeout=25)
         app.wait_state(lambda s: any(o["connections"] >= 1 for o in s["ndi"]["outputs"]), "saida NDI com receptor", timeout=10)
-        app.click("celula L1 C1 nome")  # seleciona sem disparar de novo: a Previa espelha a fonte ao vivo
+        app.click("celula L1 C1 nome")
         app.wait_frames(30)
-        menu(app, "Ver", "##menu_compat")
+        menu(app, "Exibir", "##menu_compat")
         app.wait_frames(10)
         expect(app.has("compat:ndi_status", "janela_compat"), "janela de compatibilidade aberta")
         time.sleep(1.0)
-        app.hover(960, 1075)  # mouse fora dos controles
+        app.hover(960, 1075)
         app.wait_frames(8)
         path = os.path.join(DOCS, name)
         app.screenshot(path)
@@ -130,12 +162,15 @@ def main():
     if only == ["previa"]:
         previa()
         return
+    if only == ["exibir"]:
+        exibir()
+        return
     if only and only[0] == "ndi":
         ndi(dll=only[1] if len(only) > 1 else NDI_DLL)
         return
-    shot("screenshot-adobe-composicao.png", [], "Composição", top=True)
-    shot("screenshot-adobe-clip-texto.png", ["--trigger", "3", "1"], "Clip")
-    shot("screenshot-adobe-mapeamento.png", ["--mode", "mapping", "--output-window"], "Propriedades")
+    shot("screenshot-composicao.png", [], "Composição", top=True)
+    shot("screenshot-clip-texto.png", ["--trigger", "3", "1"], "Clip")
+    shot("screenshot-mapeamento.png", ["--mode", "mapping", "--output-window"], "Propriedades")
     previa()
 
 

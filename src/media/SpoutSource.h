@@ -8,8 +8,6 @@
 
 namespace bsl::media {
 
-// Fonte Spout: recebe a imagem de outro programa (DirectX 9/11/12 ou OpenGL) que envie Spout. Reconecta sozinha
-// quando o sender fecha e abre de novo. Sem sender mostra preto + "Sem sinal".
 class SpoutSource final : public ISource
 {
 public:
@@ -34,10 +32,8 @@ public:
     static std::vector<ParamDesc> describe(const ParamValues& values);
     static std::string label(const ParamValues& values);
 
-    // Senders ativos, com atualização automática (no máximo uma leitura por segundo; chamar da thread da UI)
     static std::vector<std::string> activeSenders();
 
-    // Diagnóstico / testes
     bool connected() const { return input_.connected(); }
     unsigned long long frameCount() const { return input_.frames(); }
 
@@ -57,4 +53,4 @@ private:
     int height_ = 720;
 };
 
-} // namespace bsl::media
+}

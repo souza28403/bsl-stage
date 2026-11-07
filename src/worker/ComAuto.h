@@ -1,8 +1,5 @@
 #pragma once
 
-// Automacao COM por IDispatch (late binding) para falar com PowerPoint, Word e Excel sem importar
-// type libraries. Cabecalho unico, usado pelo worker e pelo doctest.
-
 #include <windows.h>
 #include <oleauto.h>
 
@@ -37,7 +34,6 @@ inline std::string toUtf8(const std::wstring& w)
     return s;
 }
 
-// VARIANT com dono
 class Var
 {
 public:
@@ -50,7 +46,6 @@ public:
     static Var integer(long n) { Var x; x.v_.vt = VT_I4; x.v_.lVal = n; return x; }
     static Var boolean(bool b) { Var x; x.v_.vt = VT_BOOL; x.v_.boolVal = b ? VARIANT_TRUE : VARIANT_FALSE; return x; }
     static Var text(const std::wstring& s) { Var x; x.v_.vt = VT_BSTR; x.v_.bstrVal = SysAllocStringLen(s.data(), static_cast<UINT>(s.size())); return x; }
-    // msoTrue / msoFalse (-1 / 0) como inteiro
     static Var mso(bool b) { return integer(b ? -1 : 0); }
 
     VARIANT* get() { return &v_; }
@@ -62,7 +57,6 @@ private:
     VARIANT v_;
 };
 
-// IDispatch com contagem de referencias
 class Object
 {
 public:
@@ -77,14 +71,13 @@ public:
     explicit operator bool() const { return p_ != nullptr; }
     IDispatch* get() const { return p_; }
 
-    // Chama um metodo (argumentos na ordem natural)
     Var call(const wchar_t* name, std::initializer_list<const Var*> args = {}) const
     {
         return invoke(DISPATCH_METHOD, name, args);
     }
     Var get(const wchar_t* name, std::initializer_list<const Var*> args = {}) const
     {
-        return invoke(static_cast<WORD>(DISPATCH_PROPERTYGET | DISPATCH_METHOD), name, args); // propriedade ou metodo que devolve valor
+        return invoke(static_cast<WORD>(DISPATCH_PROPERTYGET | DISPATCH_METHOD), name, args);
     }
     Object getObject(const wchar_t* name, std::initializer_list<const Var*> args = {}) const
     {
@@ -96,7 +89,7 @@ public:
         DISPID dispid = lookup(name);
         DISPID named = DISPID_PROPERTYPUT;
         DISPPARAMS dp{};
-        VARIANT arg = *value.get(); // copia rasa: nao e liberada
+        VARIANT arg = *value.get();
         dp.cArgs = 1;
         dp.rgvarg = &arg;
         dp.cNamedArgs = 1;
@@ -138,7 +131,7 @@ private:
         if (n > 12)
             throw ComError("argumentos demais", E_INVALIDARG);
         size_t i = 0;
-        for (const Var* a : args) // o IDispatch quer os argumentos em ordem inversa
+        for (const Var* a : args)
             stackArgs[n - 1 - i++] = *a->get();
         DISPPARAMS dp{};
         dp.cArgs = static_cast<UINT>(n);
@@ -155,14 +148,12 @@ private:
     IDispatch* p_ = nullptr;
 };
 
-// Instancia de aplicativo do Office: usa a que o usuario ja tem aberta ou cria uma nova
 struct AppInstance
 {
     Object app;
-    bool createdByUs = false; // true: fomos nos que iniciamos; so entao podemos chamar Quit
+    bool createdByUs = false;
 };
 
-// GetActiveObject (instancia em execucao) ou CoCreateInstance. Devolve app nulo se o Office nao esta instalado.
 inline AppInstance attachOrCreate(const wchar_t* progId, std::string* error)
 {
     AppInstance out;
@@ -196,4 +187,4 @@ inline AppInstance attachOrCreate(const wchar_t* progId, std::string* error)
     return out;
 }
 
-} // namespace bsl::com
+}

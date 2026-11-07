@@ -1,13 +1,3 @@
-// BSL Z-Slice LED Mapper: fatia um único conteúdo 2D em 3 ou 4 zonas de profundidade (Frente, Meio, Fundo, Zona 4) a partir
-// da profundidade estimada pela IA local (Depth Anything V2 Small, ver src/ai). As zonas vêm de limiares com suavização
-// (feather) entre elas; o efeito pode deixar a imagem como está, mostrar uma zona só ou pintar as zonas em cores.
-//
-// O principal: a cada quadro o efeito publica a máscara de zonas da camada (ou do master) em render/ZoneMasks. O
-// OutputRenderer multiplica cada slice pela zona escolhida em Slice::zFilter, então Frente vai para os totens da frente e
-// Fundo para a parede principal, tudo a partir de um único conteúdo.
-//
-// Zonas em ordem de proximidade: Frente (mais perto), Meio, Fundo e, com 4 zonas, Zona 4 (a mais distante).
-
 #include "fx/bsl/BslCommon.h"
 #include "fx/bsl/BslEffects.h"
 #include "output/OutputSetup.h"
@@ -25,10 +15,9 @@ namespace {
 using media::ParamSet;
 using namespace media::param;
 
-// Pesos das zonas para uma profundidade (maior = mais perto). Soma 1; limiares uZT.xyz em ordem decrescente.
 const char* const kZoneGlsl = R"(
-uniform vec4 uZT;      // x = limiar Frente/Meio, y = Meio/Fundo, z = Fundo/Zona 4, w = meia largura da suavizacao
-uniform int uZones;    // 3 ou 4
+uniform vec4 uZT;
+uniform int uZones;
 vec4 zoneWeights(float d)
 {
     float f = max(uZT.w, 1.0e-4);
@@ -40,10 +29,10 @@ vec4 zoneWeights(float d)
 )";
 
 const char* const kZSliceBody = R"(
-uniform sampler2D uDepth;   // R16F 0..1 (maior = mais perto), linha 0 = topo
-uniform int uView;          // 1 = so uma zona, 2 = zonas coloridas
-uniform int uSolo;          // zona mostrada (0..3)
-uniform float uTint;        // opacidade das cores
+uniform sampler2D uDepth;
+uniform int uView;
+uniform int uSolo;
+uniform float uTint;
 
 void main()
 {
@@ -63,7 +52,6 @@ void main()
 }
 )";
 
-// Máscara de zonas: RGBA8 no espaço do canvas (linha 0 = base), sem prelude (só precisa de vUv)
 const char* const kMaskHeader = R"(#version 330 core
 in vec2 vUv;
 out vec4 fragColor;
@@ -100,7 +88,6 @@ protected:
         const ParamSet& p = params();
         depthTex_ = frame.depth;
         zones_ = enumIndex(p, "zones") == 1 ? 4 : 3;
-        // Limiares em ordem decrescente (Frente/Meio >= Meio/Fundo >= Fundo/Zona 4)
         t1_ = p.f("t1") * 0.01f;
         t2_ = std::min(p.f("t2") * 0.01f, t1_);
         t3_ = std::min(p.f("t3") * 0.01f, t2_);
@@ -121,7 +108,7 @@ protected:
             }
         }
         if (view_ == 0)
-            passThroughThisFrame(); // so publica a mascara; a imagem segue como esta
+            passThroughThisFrame();
     }
 
     void render(const EffectContext&, int, int) override
@@ -178,7 +165,7 @@ private:
     ScreenVao maskVao_;
 };
 
-} // namespace
+}
 
 std::vector<media::ParamDesc> describeZSlice()
 {
@@ -207,4 +194,4 @@ std::unique_ptr<IEffect> makeZSlice()
     return std::make_unique<ZSliceEffect>();
 }
 
-} // namespace bsl::fx::bsllight
+}

@@ -23,28 +23,6 @@ using Clock = std::chrono::steady_clock;
 
 namespace {
 
-fs::path moduleDir()
-{
-    wchar_t buf[MAX_PATH];
-    const DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
-    return fs::path(std::wstring(buf, n)).parent_path();
-}
-
-fs::path cefRuntimeDir()
-{
-    return moduleDir() / L"cef";
-}
-
-// libcef.dll fica em <exe>/cef: tem de ser achada antes do primeiro uso (carga atrasada)
-void addCefDllDirectory()
-{
-    static bool done = false;
-    if (done)
-        return;
-    done = true;
-    SetDllDirectoryW(cefRuntimeDir().c_str());
-}
-
 int modifiersFrom(int mods)
 {
     int m = 0;
@@ -57,7 +35,28 @@ int modifiersFrom(int mods)
     return m;
 }
 
-} // namespace
+}
+
+fs::path moduleDir()
+{
+    wchar_t buf[MAX_PATH];
+    const DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
+    return fs::path(std::wstring(buf, n)).parent_path();
+}
+
+fs::path cefRuntimeDir()
+{
+    return moduleDir() / L"cef";
+}
+
+void addCefDllDirectory()
+{
+    static bool done = false;
+    if (done)
+        return;
+    done = true;
+    SetDllDirectoryW(cefRuntimeDir().c_str());
+}
 
 int cefSubprocessMain(HINSTANCE instance)
 {
@@ -66,8 +65,6 @@ int cefSubprocessMain(HINSTANCE instance)
     const int code = CefExecuteProcess(args, nullptr, nullptr);
     return code >= 0 ? code : 0;
 }
-
-// ----------------------------------------------------------------------------- Impl
 
 struct WebSession::Impl
 {
@@ -87,7 +84,6 @@ struct WebSession::Impl
     bool cefStarted = false;
     HANDLE slotMutex = nullptr;
 
-    // Estado pedido pelo app
     std::string url = "about:blank";
     int width = 1920, height = 1080;
     double zoom = 1.0;
@@ -96,18 +92,15 @@ struct WebSession::Impl
     int reloadMinutes = 0;
     bool muted = true;
     std::string css;
-    // Scripts "persistentes" (chave -> JS) que o app manda para as fontes BSL (estado da pagina): rodam de novo a cada
-    // carga da pagina principal, na ordem em que a chave apareceu pela primeira vez
     std::vector<std::pair<std::string, std::string>> sticky;
     bool pageLoaded = false;
 
-    // Estado interno
-    bool useGpu = false;       // shared_texture_enabled
+    bool useGpu = false;
     bool gpuEverWorked = false;
     int gpuFailures = 0;
-    bool closing = false;      // fechando o navegador para recriar (transparencia / troca de caminho)
+    bool closing = false;
     bool closedFlag = false;
-    bool browserGpu = false;          // com que opcoes o navegador atual foi criado
+    bool browserGpu = false;
     bool browserTransparent = false;
     bool invalidatePending = false;
     Clock::time_point lastInvalidate{};
@@ -116,7 +109,7 @@ struct WebSession::Impl
     Clock::time_point createdAt = Clock::now();
     bool fatalReported = false;
     unsigned long long frames = 0;
-    std::vector<std::uint8_t> pending; // quadro de CPU que o sink recusou (app ainda segurava os buffers)
+    std::vector<std::uint8_t> pending;
     int pendingW = 0, pendingH = 0;
 
     void send(const Json& j) { ch.send(j); }
@@ -152,17 +145,16 @@ class WebSession::Impl::App final : public CefApp
 public:
     explicit App(Impl* owner) : owner_(owner) {}
 
-    void OnBeforeCommandLineProcessing(const CefString& /*process_type*/, CefRefPtr<CefCommandLine> command_line) override
+    void OnBeforeCommandLineProcessing(const CefString& , CefRefPtr<CefCommandLine> command_line) override
     {
         command_line->AppendSwitchWithValue("autoplay-policy", "no-user-gesture-required");
         command_line->AppendSwitch("disable-background-networking");
         if (owner_ && owner_->request.haveLuid) {
-            // Mantem a GPU do navegador no adaptador do app (Optimus): textura compartilhada abre no mesmo device
             char buf[64];
             std::snprintf(buf, sizeof(buf), "%ld,%lu", static_cast<long>(owner_->request.luidHigh),
                           static_cast<unsigned long>(owner_->request.luidLow));
             wchar_t over[64];
-            if (GetEnvironmentVariableW(L"BSLSTAGE_CEF_LUID", over, 64) > 0) // diagnostico: LUID alto,baixo forcado
+            if (GetEnvironmentVariableW(L"BSLSTAGE_CEF_LUID", over, 64) > 0)
                 command_line->AppendSwitchWithValue("use-adapter-luid", toUtf8(over));
             else if (GetEnvironmentVariableW(L"BSLSTAGE_CEF_NO_LUID", over, 64) == 0)
                 command_line->AppendSwitchWithValue("use-adapter-luid", buf);
@@ -188,7 +180,6 @@ public:
     CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
     CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
 
-    // --- CefRenderHandler ---
     void GetViewRect(CefRefPtr<CefBrowser>, CefRect& rect) override
     {
         rect = CefRect(0, 0, owner_->width, owner_->height);
@@ -219,7 +210,6 @@ public:
             owner_->onAccelerated(info.shared_texture_handle);
     }
 
-    // --- CefLifeSpanHandler ---
     void OnAfterCreated(CefRefPtr<CefBrowser> browser) override
     {
         owner_->browser = browser;
@@ -231,7 +221,6 @@ public:
                        const CefString&, WindowOpenDisposition, bool, const CefPopupFeatures&, CefWindowInfo&,
                        CefRefPtr<CefClient>&, CefBrowserSettings&, CefRefPtr<CefDictionaryValue>&, bool*) override
     {
-        // Sem janelas extras: o link abre na propria pagina
         if (browser && !target_url.empty())
             browser->GetMainFrame()->LoadURL(target_url);
         return true;
@@ -243,7 +232,6 @@ public:
         owner_->closedFlag = true;
     }
 
-    // --- CefLoadHandler ---
     void OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, int) override
     {
         if (frame && frame->IsMain()) {
@@ -273,7 +261,6 @@ public:
         fileLog("web: " + text + " - " + failedUrl.ToString());
     }
 
-    // --- CefDisplayHandler ---
     void OnTitleChange(CefRefPtr<CefBrowser>, const CefString& title) override
     {
         owner_->send(Json{{"t", "doc"}, {"pages", 0}, {"title", title.ToString()}});
@@ -293,7 +280,6 @@ bool WebSession::Impl::startCef()
         return false;
     }
 
-    // Perfil persistente por "vaga": instancias simultaneas nao podem dividir o mesmo diretorio do Chromium
     const fs::path root = localDataDir() / L"cef";
     fs::path slotDir;
     for (int i = 0; i < 8 && slotDir.empty(); ++i) {
@@ -452,24 +438,23 @@ void WebSession::Impl::onAccelerated(HANDLE handle)
         }
         return;
     }
-    if (error.empty()) { // buffers do app ocupados: pede outro quadro para nao ficar com imagem velha
+    if (error.empty()) {
         invalidatePending = true;
         return;
     }
     ++gpuFailures;
     if (gpuFailures == 1)
         ch.log("warn", "textura do navegador: " + error);
-    if (!gpuEverWorked) // a primeira textura nao abriu: outra GPU/adaptador; nao adianta insistir
+    if (!gpuEverWorked)
         fallbackToCpu("textura compartilhada do navegador indisponivel neste adaptador");
 }
 
-// O CEF volta a entregar quadros por OnPaint (CPU); o app continua recebendo pelo mesmo canal
 void WebSession::Impl::fallbackToCpu(const std::string& why)
 {
     if (!useGpu)
         return;
     ch.log("warn", "Web: " + why + "; usando copia por CPU (OnPaint)");
-    useGpu = false; // pump() recria o navegador sem shared_texture_enabled
+    useGpu = false;
 }
 
 void WebSession::Impl::shutdown()
@@ -496,8 +481,6 @@ void WebSession::Impl::shutdown()
         slotMutex = nullptr;
     }
 }
-
-// ----------------------------------------------------------------------------- WebSession
 
 WebSession::WebSession(PipeChannel& channel, const SinkRequest& request, HANDLE wake)
     : impl_(std::make_unique<Impl>(channel, request, wake))
@@ -527,7 +510,7 @@ void WebSession::setParams(const Json& p)
     d.css = css;
     d.transparent = transparent;
     if (transparentChanged)
-        return; // a cor de fundo e definida na criacao: pump() recria o navegador
+        return;
     d.applyBrowserSettings();
     if (cssChanged)
         d.injectCss();
@@ -572,7 +555,6 @@ void WebSession::resize(int w, int h)
     d.width = w;
     d.height = h;
     if (d.sink && std::string(d.sink->kind()) == "texture" && d.useGpu) {
-        // a textura nova e criada quando o primeiro quadro do tamanho novo chegar
     }
     if (d.browser) {
         d.browser->GetHost()->NotifyScreenInfoChanged();
@@ -590,7 +572,7 @@ void WebSession::useShm()
     if (d.sink)
         d.sink->resize(d.width, d.height);
     d.ch.send(Json{{"t", "transport"}, {"kind", "shm"}, {"why", "o app não conseguiu abrir a textura compartilhada"}});
-    d.useGpu = false; // pump() recria o navegador sem shared_texture_enabled
+    d.useGpu = false;
 }
 
 void WebSession::handle(const Json& m)
@@ -610,7 +592,6 @@ void WebSession::handle(const Json& m)
         return;
     }
     if (t == "eval") {
-        // {js, key?}: com 'key' o script e guardado (e repetido a cada carga da pagina); sem ela roda uma vez
         const std::string js = m.value("js", std::string());
         const std::string key = m.value("key", std::string());
         if (!key.empty())
@@ -680,7 +661,6 @@ void WebSession::pump()
         return;
     CefDoMessageLoopWork();
 
-    // Opcoes que so valem na criacao (textura compartilhada, fundo transparente): fecha e recria
     if (d.browser && !d.closing && (d.browserGpu != d.useGpu || d.browserTransparent != d.transparent)) {
         d.closing = true;
         d.browser->GetHost()->CloseBrowser(true);
@@ -710,4 +690,4 @@ void WebSession::pump()
     }
 }
 
-} // namespace bsl::worker
+}

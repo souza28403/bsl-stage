@@ -16,7 +16,7 @@ std::string utf8Path(const std::filesystem::path& p)
     return std::string(s.begin(), s.end());
 }
 
-} // namespace
+}
 
 PdfSource::PdfSource(int canvasWidth, int canvasHeight) : RemoteSource(canvasWidth, canvasHeight) {}
 
@@ -30,6 +30,10 @@ std::vector<ParamDesc> PdfSource::describe(const ParamValues&, int pages)
     page.tooltip = pages > 0 ? "Página mostrada (1 a " + std::to_string(pages) + ")"
                              : "Página mostrada (o total é lido do arquivo quando o clip é disparado)";
     d.push_back(std::move(page));
+    ParamDesc start = makeInt("startPage", "Slide inicial", 0, 0, pages > 0 ? pages : 9999, "%d", "Documento");
+    start.tooltip = "Slide em que o clip abre quando disparado do início e para onde \"Voltar ao início\" leva. "
+                    "0 = o campo Página.";
+    d.push_back(std::move(start));
     d.push_back(makeColor("bg", "Cor de fundo", {0.0f, 0.0f, 0.0f, 1.0f}, "Documento"));
 
     d.push_back(makeEnum("autoMode", "Avanço automático",
@@ -76,8 +80,12 @@ void PdfSource::onOpened()
 {
     pages_ = 0;
     const ParamSet p = currentParams();
-    requestedPage_ = std::max(1, p.i("page"));
-    lastParamPage_ = requestedPage_;
+    requestedPage_ = std::max(1, p.i("startPage") > 0 ? p.i("startPage") : p.i("page"));
+    lastParamPage_ = std::max(1, p.i("page"));
+    if (reopenPage_ > 0) {
+        requestedPage_ = reopenPage_;
+        reopenPage_ = 0;
+    }
     lastBg_ = bgJson();
     timer_ = 0.0;
     lastBeatIndex_ = -1;
@@ -129,25 +137,45 @@ void PdfSource::onParamsChanged()
     }
 }
 
-// Disparar de novo o clip ativo (Reiniciar) volta para a página do clip e zera o avanço automático
+int PdfSource::homePage() const
+{
+    const int start = currentParams().i("startPage");
+    return std::max(1, start);
+}
+
+void PdfSource::reloadDocument()
+{
+    if (!isOpen())
+        return;
+    const std::filesystem::path file = path();
+    reopenPage_ = requestedPage_;
+    std::string error;
+    close();
+    if (!open(file, &error)) {
+        reopenPage_ = 0;
+        log::warn("Não foi possível recarregar o documento: " + error);
+    }
+}
+
 void PdfSource::onSeek(double)
 {
     if (!isOpen())
         return;
     timer_ = 0.0;
     lastBeatIndex_ = -1;
-    goToPage(std::max(1, currentParams().i("page")));
+    const ParamSet p = currentParams();
+    goToPage(std::max(1, p.i("startPage") > 0 ? p.i("startPage") : p.i("page")));
 }
 
 void PdfSource::onCanvasResized(int w, int h)
 {
     if (!isOpen())
         return;
-    pushOpen(); // o worker relancado ja abre no tamanho novo
+    pushOpen();
     sendToWorker(WorkerJson{{"t", "resize"}, {"w", w}, {"h", h}});
 }
 
-void PdfSource::onTempo(double beat, float /*bpm*/)
+void PdfSource::onTempo(double beat, float )
 {
     if (!isOpen() || !isPlaying() || pageCount() <= 0)
         return;
@@ -232,4 +260,4 @@ void PdfSource::update(double dt)
     }
 }
 
-} // namespace bsl::media
+}

@@ -1,9 +1,7 @@
 #pragma once
 
-// Gerador ISF: shader sem entrada de imagem, desenhado no tamanho do canvas. Uma ISource como as outras geradoras;
-// o id do clip e "isf:<caminho relativo a pasta ISF>".
-
 #include "core/Generators.h"
+#include "fx/IsfReload.h"
 #include "fx/IsfRenderer.h"
 #include "media/ISource.h"
 #include "render/Fbo.h"
@@ -33,7 +31,6 @@ public:
     std::vector<media::ParamDesc> paramDescs() const override { return descs_; }
     media::SourceStatus status() const override;
 
-    // Registro de geradores (ver core/Generators): informacao do gerador "isf:..." (criada sob demanda, nunca liberada)
     static const GeneratorInfo* generatorInfo(const std::string& id);
 
 protected:
@@ -45,7 +42,7 @@ protected:
     }
 
 private:
-    void refreshDoc(); // "Recarregar": o arquivo mudou no disco, o shader recompila sem fechar o clip
+    void refreshDoc();
 
     std::string id_;
     int width_;
@@ -54,10 +51,11 @@ private:
     std::unique_ptr<IsfRenderer> renderer_;
     std::unique_ptr<Fbo> fbo_;
     std::string loadError_;
+    IsfReloadState reload_;
     std::uint64_t seenVersion_ = 0;
     double beat_ = 0.0;
     float bpm_ = 120.0f;
     std::uint64_t frame_ = 0;
 };
 
-} // namespace bsl::fx
+}

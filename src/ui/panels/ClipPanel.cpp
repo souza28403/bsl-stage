@@ -1,19 +1,25 @@
 #include "ui/panels/ClipPanel.h"
 
+#include "app/Log.h"
 #include "app/Paths.h"
+#include "app/Qa.h"
 #include "media/CaptureTargets.h"
+#include "media/ControlPanel.h"
 #include "media/DeviceCatalog.h"
 #include "media/DocInfo.h"
 #include "media/ImageSource.h"
 #include "media/PdfSource.h"
 #include "media/RemoteSource.h"
 #include "media/VideoSource.h"
+#include "media/WebSource.h"
 #include "ui/Theme.h"
 #include "ui/Ui.h"
 #include "ui/Widgets.h"
 #include "ui/panels/CaptureTargetChooser.h"
+#include "ui/panels/DmxWindow.h"
 #include "ui/panels/EffectChainWidget.h"
 #include "ui/panels/ParamWidgets.h"
+#include "ui/panels/TransformEditor.h"
 #include "ui/panels/VideoCompat.h"
 
 #include <imgui.h>
@@ -27,7 +33,6 @@ namespace bsl::ui {
 
 namespace {
 
-// Informacoes tecnicas do clip (precisam da fonte aberta)
 void clipInfo(const Clip& clip)
 {
     if (clip.isGenerator()) {
@@ -78,14 +83,13 @@ void clipInfo(const Clip& clip)
     }
 }
 
-// Rótulo cinza à esquerda; o controle vem logo depois, alinhado numa coluna fixa
 void rowLabel(const char* text)
 {
     const float x = ImGui::GetCursorPosX();
     ImGui::AlignTextToFramePadding();
     dimLabel(text);
     ImGui::SameLine();
-    ImGui::SetCursorPosX(x + dp(84.0f)); // SameLine(offset) soma o deslocamento da tabela duas vezes
+    ImGui::SetCursorPosX(x + dp(84.0f));
 }
 
 void fitCombo(Clip& clip)
@@ -118,21 +122,46 @@ void statusLine(const Clip& clip)
     ImGui::PopTextWrapPos();
 }
 
-// PDF / Office: navegação por página (◀ ▶ e "página X de N"), numa linha só, acima das colunas do painel
+void replayCombo(Clip& clip)
+{
+    if (!clip.supportsReplayMode())
+        return;
+    rowLabel("Ao disparar");
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    if (beginCombo("##ao_disparar_de_novo", replayModeName(clip.replay))) {
+        for (const ReplayMode m : {ReplayMode::Resume, ReplayMode::Restart}) {
+            if (ImGui::Selectable(replayModeName(m), m == clip.replay))
+                clip.replay = m;
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(clip.type == Clip::Type::File && clip.kind == media::MediaKind::Video
+                              ? "Ao disparar de novo: Retomar volta para o ponto em que o vídeo parou; Reiniciar começa do início."
+                              : "Ao disparar de novo: Retomar mantém a fonte viva em segundo plano enquanto outro clip toca na camada "
+                                "(a página não recarrega, a conexão não cai); Reiniciar fecha e abre do início.");
+    }
+}
+
 void pagedHeader(Clip& clip)
 {
-    auto* pdf = dynamic_cast<media::PdfSource*>(clip.source.get());
+    auto* pdf = dynamic_cast<media::PdfSource*>(clip.liveSource());
     const media::ParamSet params(clip.paramDescs(), clip.params);
     const int total = pdf ? pdf->pageCount() : media::docPageCount(clip.path);
     const int page = std::max(1, pdf ? pdf->page() : params.i("page"));
 
     auto go = [&](int n) {
         n = std::max(1, total > 0 ? std::min(n, total) : n);
-        clip.setParam("page", n); // grava no clip (e no projeto) e avisa a fonte aberta
+        clip.setParam("page", n);
         if (pdf)
-            pdf->goToPage(n); // vale mesmo se o avanço automático já tinha mudado de página
+            pdf->goToPage(n);
     };
 
+    ImGui::BeginDisabled(!pdf);
+    if (iconButton(ICON_SKIP_BACK, "##paginaInicio", "Voltar ao início (slide inicial)") && pdf)
+        go(pdf->homePage());
+    ImGui::EndDisabled();
+    ImGui::SameLine();
     ImGui::BeginDisabled(page <= 1);
     if (iconButton(ICON_CHEVRON_LEFT, "##paginaAnterior", "Página anterior"))
         go(page - 1);
@@ -143,6 +172,12 @@ void pagedHeader(Clip& clip)
         go(page + 1);
     ImGui::EndDisabled();
     ImGui::SameLine();
+    ImGui::BeginDisabled(!pdf);
+    if (iconButton(ICON_REFRESH, "##documentoRecarregar",
+                   "Recarregar o documento (use depois de salvar a apresentação; fica no slide atual)") && pdf)
+        pdf->reloadDocument();
+    ImGui::EndDisabled();
+    ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
     if (total > 0)
         monoText("página %d de %d", page, total);
@@ -150,24 +185,72 @@ void pagedHeader(Clip& clip)
         monoText("página %d de ?", page);
 }
 
-// Web: Interagir (clique, rolagem e teclado na Prévia vão para a página) e Recarregar
 void webHeader(Clip& clip)
 {
     ImGui::Checkbox("Interagir", &clip.interact);
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Com Interagir ligado, clique, rolagem e teclado na Prévia são enviados à página");
     ImGui::SameLine();
-    ImGui::BeginDisabled(!clip.isOpen());
+    ImGui::BeginDisabled(!clip.liveSource());
     if (ImGui::Button("Recarregar"))
-        if (auto* web = dynamic_cast<media::RemoteSource*>(clip.source.get()))
+        if (auto* web = dynamic_cast<media::RemoteSource*>(clip.liveSource()))
             web->requestReload();
     ImGui::EndDisabled();
 }
 
-// Coluna de controles de PDF/Office: encaixe, situação e a dica da apresentação
+void controlPanelUi(PanelContext& ctx, Clip& clip)
+{
+    auto* panel = dynamic_cast<media::IControlPanel*>(clip.liveSource());
+    ImGui::Spacing();
+    dimLabel("Painel de controle");
+    bool window = ctx.settings.controlPanelMode == "window";
+    bool changed = false;
+    if (ImGui::RadioButton("Navegador##cp_navegador", !window)) {
+        window = false;
+        changed = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Janela própria##cp_janela", window)) {
+        window = true;
+        changed = true;
+    }
+    if (changed) {
+        ctx.settings.controlPanelMode = window ? "window" : "browser";
+        ctx.settings.save();
+    }
+    ImGui::BeginDisabled(!panel);
+    if (ImGui::Button("Abrir painel de controle##cp_abrir", ImVec2(-FLT_MIN, 0.0f)) && panel) {
+        std::string url, error;
+        if (!panel->openControlServer(url, &error)) {
+            log::warn("Painel de controle: " + error);
+        } else if (qa::enabled()) {
+            log::info("Painel de controle (modo de teste, não abre janela nem navegador): " + url);
+        } else if (window && media::WebSource::available()) {
+            if (!media::openUrlInOwnWindow(url, "BSL WebBackgrounds - " + clip.name, &error)) {
+                log::warn("Painel de controle: " + error + "; abrindo no navegador.");
+                media::openUrlInBrowser(url, &error);
+            }
+        } else if (!media::openUrlInBrowser(url, &error)) {
+            log::warn("Painel de controle: " + error);
+        }
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip(panel ? "Liga o servidor local (só neste computador) e abre o painel de controle. Ele controla esta "
+                                  "mesma instância, sem reiniciar a página."
+                                : "Dispare o clip primeiro: o painel controla a instância que está tocando.");
+    if (panel && !panel->controlUrl().empty()) {
+        pushMono();
+        ImGui::TextColored(theme::kTextDim, "%s%s", panel->controlUrl().c_str(),
+                           panel->controlExposedToNetwork() ? "  (aberto na rede)" : "  (só neste computador)");
+        popMono();
+    }
+}
+
 void pagedControls(Clip& clip)
 {
     fitCombo(clip);
+    replayCombo(clip);
     statusLine(clip);
 
     const std::string ext = media::lowerExtension(clip.path);
@@ -180,7 +263,7 @@ void pagedControls(Clip& clip)
     }
 }
 
-void clipControls(Clip& clip)
+void clipControls(Clip& clip, int layerIndex)
 {
     const bool open = clip.isOpen();
     const double duration = open ? clip.source->duration() : 0.0;
@@ -190,15 +273,16 @@ void clipControls(Clip& clip)
         return;
     }
 
-    // Fonte ao vivo: sem transporte (sempre tocando), so o encaixe
     if (clip.isLive()) {
-        ImGui::TextColored(theme::kTextDim, open ? "Fonte ao vivo" : "Fonte ao vivo (parada)");
+        ImGui::TextColored(theme::kTextDim, open ? "Fonte ao vivo"
+                                             : clip.isParked() ? "Fonte ao vivo (em segundo plano)"
+                                                               : "Fonte ao vivo (parada)");
         fitCombo(clip);
+        replayCombo(clip);
         statusLine(clip);
         return;
     }
 
-    // --- Transporte ---
     ImGui::BeginDisabled(!open);
     const ImVec2 transportBtn(dp(36.0f), ImGui::GetFrameHeight());
     if (iconButton(clip.playing ? ICON_PAUSE : ICON_PLAY, "##clip_tocar_pausar", clip.playing ? "Pausar" : "Tocar",
@@ -209,7 +293,6 @@ void clipControls(Clip& clip)
         clip.restart();
     ImGui::EndDisabled();
 
-    // Posicao: arrastar faz seek
     ImGui::BeginDisabled(!open || duration <= 0.0);
     float pos = open ? static_cast<float>(clip.source->position()) : 0.0f;
     const std::string posLabel = formatTime(pos) + " / " + formatTime(duration);
@@ -221,19 +304,18 @@ void clipControls(Clip& clip)
     popMono();
     ImGui::EndDisabled();
 
-    // Velocidade 0-4 (reset em 1.0)
     rowLabel("Velocidade");
     float speed = clip.speed;
     const float speedRoom = ImGui::GetContentRegionAvail().x;
+    hotDmx({dmx::ParamKind::LayerSpeed, dmxLayerIdOf(layerIndex)});
     if (hotNumber("##velocidade", speed, 0.0f, 4.0f, 0.01f, "%.2f", "x", 1.0f, 64.0f))
         clip.setSpeed(speed);
-    if (speedRoom >= dp(64.0f + 52.0f) + ImGui::GetStyle().ItemSpacing.x) { // coluna estreita: só o botão direito (restaurar)
+    if (speedRoom >= dp(64.0f + 52.0f) + ImGui::GetStyle().ItemSpacing.x) {
         ImGui::SameLine();
         if (ImGui::Button("1.0x", ImVec2(dp(52.0f), 0.0f)))
             clip.setSpeed(1.0f);
     }
 
-    // Loop: três botões de ícone (rótulo "Loop" só quando a coluna é larga o bastante)
     {
         const float spacing = ImGui::GetStyle().ItemSpacing.x;
         const bool withLabel = ImGui::GetContentRegionAvail().x >= dp(84.0f + 3.0f * 36.0f) + 2.0f * spacing;
@@ -266,10 +348,10 @@ void clipControls(Clip& clip)
     }
 
     fitCombo(clip);
+    replayCombo(clip);
     statusLine(clip);
 }
 
-// Parametros genericos do clip (gerador) + editores especiais (alvo da captura, dispositivo)
 void clipParams(PanelContext& ctx, Clip& clip)
 {
     const std::vector<media::ParamDesc> descs = clip.paramDescs();
@@ -348,7 +430,7 @@ void clipParams(PanelContext& ctx, Clip& clip)
         clip.setParam(e.id, std::move(e.value));
 }
 
-} // namespace
+}
 
 void drawClipPanel(PanelContext& ctx)
 {
@@ -367,15 +449,32 @@ void drawClipPanel(PanelContext& ctx)
         ImGui::TextWrapped("%s", clip.name.c_str());
         ImGui::PopFont();
 
+        if (clip.missingPlugin) {
+            ImGui::Spacing();
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(theme::kWarning,
+                               "Plugin ausente: \"%s\" não existe nesta versão do BSL Stage. A célula não toca, mas o "
+                               "projeto guarda o plugin e os parâmetros.",
+                               clip.generatorId.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::Spacing();
+            ImGui::SeparatorText("Efeitos");
+            drawEffectChain(clip.effects, "clip", nullptr, kNoZoneSource, EffectOwner{0, comp.currentDeck, sel.layer, sel.column});
+            ImGui::PopStyleVar(2);
+            endPanel();
+            return;
+        }
+
         if (clip.hasPageNav())
             pagedHeader(clip);
         else if (clip.isWeb())
             webHeader(clip);
+        if (clip.generatorId == kBslWebBackgroundsId)
+            controlPanelUi(ctx, clip);
 
         if (clip.isRemote()) {
-            // PDF/Office/Web: coluna única (os controles e a lista de parâmetros precisam da largura toda)
             ImGui::Spacing();
-            clipControls(clip);
+            clipControls(clip, sel.layer);
             ImGui::Spacing();
             if (clip.type == Clip::Type::File) {
                 pushMono();
@@ -388,7 +487,7 @@ void drawClipPanel(PanelContext& ctx)
             clipInfo(clip);
             clipParams(ctx, clip);
         } else {
-        const bool wide = !clip.paramDescs().empty(); // parametros precisam de mais largura
+        const bool wide = !clip.paramDescs().empty();
         if (ImGui::BeginTable("##clipCols", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings)) {
             ImGui::TableSetupColumn("info", ImGuiTableColumnFlags_WidthStretch, wide ? 1.7f : 1.0f);
             ImGui::TableSetupColumn("transporte", ImGuiTableColumnFlags_WidthStretch, 1.0f);
@@ -406,14 +505,17 @@ void drawClipPanel(PanelContext& ctx)
             clipParams(ctx, clip);
 
             ImGui::TableSetColumnIndex(1);
-            clipControls(clip);
+            clipControls(clip, sel.layer);
             ImGui::EndTable();
         }
         }
 
         ImGui::Spacing();
+        drawClipTransformToggle(ctx, clip, sel.layer);
+
+        ImGui::Spacing();
         ImGui::SeparatorText("Efeitos");
-        drawEffectChain(clip.effects, "clip");
+        drawEffectChain(clip.effects, "clip", nullptr, kNoZoneSource, EffectOwner{0, comp.currentDeck, sel.layer, sel.column});
     } else if (sel.kind == Selection::Kind::Clip && comp.validCell(sel.layer, sel.column)) {
         ImGui::TextColored(theme::kTextDim, "Célula vazia (camada %d, coluna %d)", sel.layer + 1, sel.column + 1);
     } else {
@@ -426,4 +528,4 @@ void drawClipPanel(PanelContext& ctx)
     endPanel();
 }
 
-} // namespace bsl::ui
+}

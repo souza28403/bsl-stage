@@ -1,16 +1,3 @@
-// bslstage_ndittest: NDI (entrada e saida) com o runtime oficial, tudo no mesmo processo.
-// Uso:  bslstage_ndittest --ndi-lib <Processing.NDI.Lib.x64.dll>
-//   (o runtime e so carregado dali: nao e copiado para o projeto nem para o build)
-//
-// Cobre:
-//   * carga do runtime, versao, e a tabela de funcoes do cabecalho minimo conferida contra os simbolos exportados;
-//   * sender "BSL Stage Test" com quadro conhecido (BGRA e UYVY) -> Finder o acha -> receptor recebe e confere pixels;
-//   * a fonte NDI do app (NdiSource) recebendo esses quadros (orientacao e cores);
-//   * NdiOutput (GL -> PBO -> NDI, UYVY e BGRA) conferido por um receptor do proprio NDI;
-//   * saida NDI de uma Screen pelo OutputRenderer, vista por uma NdiSource (mesmo conteudo do readScreen);
-//   * sem runtime (caminho invalido): falha graciosa em todas as pecas, sem crash.
-// Codigo de saida 0 = passou.
-
 #include "core/Composition.h"
 #include "media/ISource.h"
 #include "media/NdiSource.h"
@@ -72,7 +59,6 @@ struct Rgb
     int r = 0, g = 0, b = 0;
 };
 
-// Imagem de teste (linhas de cima para baixo): vermelho em cima-esq, verde em cima-dir, azul embaixo-esq, amarelo embaixo-dir
 Rgb quad(int x, int y, int w, int h)
 {
     const bool right = x >= w / 2;
@@ -92,17 +78,15 @@ std::string str(Rgb p)
     return "(" + std::to_string(p.r) + "," + std::to_string(p.g) + "," + std::to_string(p.b) + ")";
 }
 
-// Pontos de amostra no meio de cada quadrante (longe das bordas, onde a crominancia do 4:2:2 mistura)
 std::vector<std::pair<int, int>> samplePoints(int w, int h)
 {
     return {{w / 4, h / 4}, {3 * w / 4, h / 4}, {w / 4, 3 * h / 4}, {3 * w / 4, 3 * h / 4}};
 }
 
-// ---- Codificacao/decodificacao UYVY (faixa limitada; BT.601 abaixo de 720 linhas, como o NDI) ----
 bool defaultBt709(int h)
 {
     (void)h;
-    return true; // o runtime do NDI decodifica UYVY como BT.709 em qualquer altura (ver testUyvyMatrix)
+    return true;
 }
 
 void rgbToYcc(Rgb p, bool bt709, int& y, int& cb, int& cr)
@@ -140,11 +124,10 @@ struct Image
 {
     int w = 0, h = 0;
     uint32_t fourcc = 0;
-    bool bt709 = false; // matriz do UYVY
+    bool bt709 = false;
     int stride = 0;
     std::vector<uint8_t> data;
 
-    // Pixel (x, y) com y de cima para baixo
     Rgb at(int x, int y) const
     {
         const uint8_t* row = data.data() + static_cast<size_t>(y) * static_cast<size_t>(stride);
@@ -155,7 +138,7 @@ struct Image
         const uint8_t* p = row + x * 4;
         if (fourcc == NDIlib_FourCC_video_type_RGBA || fourcc == NDIlib_FourCC_video_type_RGBX)
             return {p[0], p[1], p[2]};
-        return {p[2], p[1], p[0]}; // BGRA / BGRX
+        return {p[2], p[1], p[0]};
     }
 };
 
@@ -202,7 +185,6 @@ Image makeUyvy(int w, int h, bool bt709)
     return im;
 }
 
-// ---- Emissor/receptor "cru" pela API do NDI (nao usa o codigo do app: serve de referencia) ----
 struct RawSender
 {
     const NDIlib_v5_t* api = nullptr;
@@ -234,7 +216,7 @@ struct RawSender
         f.timecode = NDIlib_send_timecode_synthesize;
         f.p_data = const_cast<uint8_t*>(im.data.data());
         f.line_stride_in_bytes = im.stride;
-        api->send_send_video_v2(inst, &f); // sincrono: copia antes de voltar
+        api->send_send_video_v2(inst, &f);
     }
 };
 
@@ -287,7 +269,6 @@ const char* fourccName(uint32_t f)
     }
 }
 
-// Espera o Finder listar "<MAQUINA> (name)" e devolve o nome completo
 std::string waitForSource(ndi::Finder& finder, const std::string& name, int timeoutMs = 15000,
                           const std::function<void()>& pump = {})
 {
@@ -304,7 +285,6 @@ std::string waitForSource(ndi::Finder& finder, const std::string& name, int time
     return {};
 }
 
-// Confere os 4 quadrantes de 'im' (ja de cima para baixo)
 void checkQuadrants(const Image& im, int tol, const std::string& tag)
 {
     for (auto [x, y] : samplePoints(im.w, im.h)) {
@@ -314,7 +294,6 @@ void checkQuadrants(const Image& im, int tol, const std::string& tag)
     }
 }
 
-// Pixels de uma textura (linha 0 = primeira linha)
 Image readTexture(GLuint tex, int w, int h)
 {
     Image im;
@@ -330,7 +309,6 @@ Image readTexture(GLuint tex, int w, int h)
     return im;
 }
 
-// Roda 'source.update()' ate ficar Live e ter recebido pelo menos 'frames' quadros
 bool pumpSource(media::NdiSource& src, int frames, int timeoutMs, const std::function<void()>& pump)
 {
     const auto t0 = Clock::now();
@@ -346,7 +324,6 @@ bool pumpSource(media::NdiSource& src, int frames, int timeoutMs, const std::fun
     return false;
 }
 
-// ---------------------------------------------------------------------------------------------------------------
 fs::path g_lib;
 
 void testRuntime()
@@ -362,7 +339,6 @@ void testRuntime()
     CHECK(!rt.version().empty());
     CHECK(rt.libraryPath() == g_lib);
 
-    // Cada ponteiro da tabela tem de ser o mesmo simbolo que a DLL exporta com aquele nome (a ordem do cabecalho minimo)
     HMODULE mod = GetModuleHandleW(g_lib.filename().c_str());
     CHECK(mod != nullptr);
     const NDIlib_v5_t* api = rt.api();
@@ -399,7 +375,6 @@ void testRuntime()
         report(exported != nullptr && exported == s.ptr, std::string("tabela == exportacao: ") + s.symbol);
     }
 
-    // Busca pela variavel de ambiente (NDI_RUNTIME_DIR_V6 / V5), sem caminho explicito
     SetEnvironmentVariableW(L"NDI_RUNTIME_DIR_V6", nullptr);
     SetEnvironmentVariableW(L"NDI_RUNTIME_DIR_V5", g_lib.parent_path().c_str());
     const auto cands = ndi::Runtime::candidates({});
@@ -413,7 +388,6 @@ void testRuntime()
         CHECK(viaEnv.available());
     }
     SetEnvironmentVariableW(L"NDI_RUNTIME_DIR_V5", nullptr);
-    // Caminho explicito e exclusivo
     CHECK(ndi::Runtime::candidates(g_lib).size() == 1);
 }
 
@@ -469,7 +443,6 @@ void testRawLoopback()
     finder.stop();
 }
 
-// Qual matriz o decodificador do SDK usa para UYVY -> BGRA em cada altura? (define a regra do app)
 void testUyvyMatrix()
 {
     section("matriz do UYVY no SDK por altura (BT.601 x BT.709)");
@@ -509,7 +482,7 @@ void testUyvyMatrix()
             const bool same = closeTo(px, want, 6);
             std::printf("  %dx%d codificado em BT.%s -> SDK devolveu %s (esperado %s) %s\n", sz.w, sz.h, enc709 ? "709" : "601",
                         str(px).c_str(), str(want).c_str(), same ? "= mesma matriz" : "matriz diferente");
-            if (enc709) // a regra do app: BT.709 em qualquer altura
+            if (enc709)
                 report(same, "o SDK decodifica UYVY como BT.709 em " + std::to_string(sz.h) + " linhas");
         }
     }
@@ -536,7 +509,7 @@ void testNdiSource()
     Case cases[] = {
         {"BSL Stage Test SrcUYVY", makeUyvy(64, 32, defaultBt709(32)), 14, false, false},
         {"BSL Stage Test SrcBGRA", makeBgra(64, 32), 2, true, false},
-        {"BSL Stage Test SrcUYVYhd", makeUyvy(1280, 720, true), 40, false, true}, // proxy de baixa banda: menor e com perdas
+        {"BSL Stage Test SrcUYVYhd", makeUyvy(1280, 720, true), 40, false, true},
     };
     for (Case& c : cases) {
         RawSender sender(rt, c.name);
@@ -569,7 +542,6 @@ void testNdiSource()
 
 GLuint makeQuadrantTexture(int w, int h)
 {
-    // Textura GL no formato do app para saidas: linha 0 = BAIXO da imagem
     std::vector<uint8_t> px(static_cast<size_t>(w) * static_cast<size_t>(h) * 4);
     for (int row = 0; row < h; ++row)
         for (int x = 0; x < w; ++x) {
@@ -609,7 +581,7 @@ void testNdiOutput()
         out.setBgra(bgra);
         out.setFrameRate(30.0f);
         CHECK(out.runtimeAvailable());
-        CHECK(out.send(tex, W, H)); // abre o sender (ainda sem receptor: nao envia nada)
+        CHECK(out.send(tex, W, H));
         const std::string full = waitForSource(finder, name, 15000, [&] { out.send(tex, W, H); });
         report(!full.empty(), "o Finder achou " + name);
         if (full.empty())
@@ -631,14 +603,11 @@ void testNdiOutput()
                         out.connections(), out.framesSent());
             CHECK(got.w == W && got.h == H);
             CHECK(out.connections() >= 1);
-            // o SDK converte o UYVY para BGRX com a matriz dele: tolerancia maior que no BGRA
             checkQuadrants(got, bgra ? 2 : 16, name);
         }
-        // Sem receptores nao ha trabalho: o contador para de subir
         out.release();
     }
 
-    // Ritmo: a 10 fps, mandar 60 vezes em ~1 s entrega perto de 10 quadros
     {
         NdiOutput out;
         out.setName("BSL Stage Test Ritmo");
@@ -648,7 +617,7 @@ void testNdiOutput()
         if (!full.empty()) {
             RawReceiver rx(rt, full, NDIlib_recv_color_format_UYVY_BGRA);
             Image got;
-            for (int i = 0; i < 40; ++i) { // aquece (conexao)
+            for (int i = 0; i < 40; ++i) {
                 out.send(tex, W, H);
                 rx.capture(got, 10);
                 sleepMs(8);
@@ -672,7 +641,6 @@ void testNdiOutput()
     finder.stop();
 }
 
-// Fonte de teste com a linha 0 = topo (convencao das fontes)
 class QuadrantSource final : public media::ISource
 {
 public:
@@ -773,7 +741,7 @@ void testScreenOutput(GLFWwindow* window)
             CHECK(src.width() == W && src.height() == H);
             std::vector<unsigned char> truth;
             int tw = 0, th = 0;
-            CHECK(renderer.readScreen(screenId, truth, tw, th)); // RGBA, linhas de cima para baixo
+            CHECK(renderer.readScreen(screenId, truth, tw, th));
             const Image got = readTexture(src.texture(), src.width(), src.height());
             checkQuadrants(got, 14, "Screen -> NDI -> NdiSource");
             if (tw == W && th == H) {
@@ -789,7 +757,6 @@ void testScreenOutput(GLFWwindow* window)
         src.close();
     }
 
-    // Trocar o destino fecha o sender: a fonte some da rede
     screen.kind = OutputKind::Disabled;
     frame();
     CHECK(renderer.status(screenId) == ScreenStatus::Idle);
@@ -807,20 +774,19 @@ void testNoRuntime()
     std::printf("  erro: %s\n", bad.error().c_str());
     CHECK(bad.error().find(ndi::kMissingText) != std::string::npos);
 
-    // Um arquivo que existe mas nao e a DLL do NDI
     ndi::Runtime notNdi;
     CHECK(!notNdi.load(fs::path(L"C:\\Windows\\System32\\kernel32.dll")));
     CHECK(!notNdi.available());
 
     ndi::Finder finder(bad);
-    finder.start(); // nao faz nada
+    finder.start();
     CHECK(!finder.running());
     CHECK(finder.sources().empty());
 
     NdiOutput out(&bad);
     out.setName("nao deve existir");
     CHECK(!out.runtimeAvailable());
-    CHECK(!out.send(1, 64, 32)); // false, sem crash
+    CHECK(!out.send(1, 64, 32));
     out.release();
 
     media::NdiSource src(&bad);
@@ -833,15 +799,15 @@ void testNoRuntime()
     CHECK(src.state() == media::NdiSource::State::NoRuntime);
     CHECK(src.status().text == ndi::kMissingText);
     CHECK(src.status().level == media::SourceStatus::Level::Warning);
-    CHECK(src.texture() != 0); // mostra preto
+    CHECK(src.texture() != 0);
     src.close();
 }
 
-} // namespace
+}
 
 int main(int argc, char** argv)
 {
-    std::setvbuf(stdout, nullptr, _IONBF, 0); // o NDI pode encerrar o processo antes do flush normal
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     for (int i = 1; i < argc; ++i)
         if (std::strcmp(argv[i], "--ndi-lib") == 0 && i + 1 < argc)
             g_lib = fs::absolute(fs::path(argv[++i]));
@@ -865,7 +831,7 @@ int main(int argc, char** argv)
         return 2;
     }
 
-    testNoRuntime(); // nao depende do runtime
+    testNoRuntime();
     if (g_lib.empty()) {
         std::printf("\nSem --ndi-lib: testes com o runtime ignorados.\n");
     } else {

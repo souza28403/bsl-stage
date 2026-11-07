@@ -42,7 +42,6 @@ ImU32 levelColor(float v)
     return ImGui::GetColorU32(theme::kAccent);
 }
 
-// Barra horizontal de 0..1 com rótulo à esquerda
 void bandBar(const char* label, float value, float full)
 {
     ImGui::AlignTextToFramePadding();
@@ -76,7 +75,7 @@ void spectrumView(const audio::AudioSnapshot& snap)
     ImGui::Dummy(ImVec2(w, h));
 }
 
-} // namespace
+}
 
 void openAudioWindow()
 {
@@ -92,7 +91,6 @@ bool audioMeter(const char* id, ImVec2 size)
     const ImVec2 b = ImGui::GetItemRectMax();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(a, b, ImGui::GetColorU32(theme::kPanelRaised), dp(2.0f));
-    // O pico em escala de raiz: sinais fracos ainda se enxergam
     const float v = std::clamp(std::sqrt(snap.peak), 0.0f, 1.0f);
     const float r = std::clamp(std::sqrt(snap.rms), 0.0f, 1.0f);
     if (v > 0.0f)
@@ -124,8 +122,8 @@ void drawAudioWindow(PanelContext& ctx)
 
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextColored(theme::kTextDim,
-                       "Análise de áudio compartilhada por todo o app: os efeitos BSL Light (Alpha Reactor, Datamosh, "
-                       "AudioReactive Typo) leem as bandas daqui. Sem dispositivo, tudo fica em zero.");
+                       "Análise de áudio compartilhada por todo o app: os efeitos reativos ao áudio (como o Performer "
+                       "Aura & Fluid) leem as bandas daqui. Sem dispositivo, tudo fica em zero.");
     ImGui::PopTextWrapPos();
     ImGui::Spacing();
 
@@ -225,4 +223,4 @@ void drawAudioWindow(PanelContext& ctx)
     }
 }
 
-} // namespace bsl::ui
+}

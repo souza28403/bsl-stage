@@ -4,8 +4,6 @@
 
 namespace bsl {
 
-// Framebuffer com uma textura RGBA8 (ou RGBA32F com 'floatFormat', para os buffers FLOAT do ISF).
-// Lanca std::runtime_error se incompleto.
 class Fbo
 {
 public:
@@ -35,4 +33,4 @@ private:
     bool float_ = false;
 };
 
-} // namespace bsl
+}

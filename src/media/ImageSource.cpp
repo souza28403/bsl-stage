@@ -90,4 +90,4 @@ void ImageSource::update(double dt)
     showFrame(frameIndexAt(clock_.position));
 }
 
-} // namespace bsl::media
+}

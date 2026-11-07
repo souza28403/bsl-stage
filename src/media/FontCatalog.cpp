@@ -66,7 +66,6 @@ void appendUtf8(std::string& out, std::uint32_t cp)
     }
 }
 
-// Texto de um registro da tabela 'name': UTF-16BE (plataforma 3/0) ou Mac Roman simplificado (plataforma 1)
 std::string decodeName(const unsigned char* p, int len, int platform)
 {
     std::string out;
@@ -88,7 +87,6 @@ std::string decodeName(const unsigned char* p, int len, int platform)
     return out;
 }
 
-// Escolhe o melhor registro de um nameID: Windows/Unicode em ingles, depois qualquer Windows, depois Mac
 std::string findName(const std::vector<unsigned char>& table, int wantedId)
 {
     if (table.size() < 6)
@@ -144,7 +142,7 @@ bool isFontFile(const fs::path& p)
     return ext == ".ttf" || ext == ".otf" || ext == ".ttc";
 }
 
-} // namespace
+}
 
 bool readFontLabel(const fs::path& file, std::string& label)
 {
@@ -158,7 +156,7 @@ bool readFontLabel(const fs::path& file, std::string& label)
 
     std::uint32_t base = 0;
     if (head[0] == 't' && head[1] == 't' && head[2] == 'c' && head[3] == 'f') {
-        in.seekg(12); // cabecalho TTC: numFonts em +8, offset da 1a fonte em +12
+        in.seekg(12);
         unsigned char off[4] = {};
         in.read(reinterpret_cast<char*>(off), 4);
         if (in.gcount() < 4)
@@ -170,7 +168,7 @@ bool readFontLabel(const fs::path& file, std::string& label)
             return false;
     }
     const std::uint32_t tag = be32(head);
-    if (tag != 0x00010000 && tag != 0x4F54544F /*OTTO*/ && tag != 0x74727565 /*true*/)
+    if (tag != 0x00010000 && tag != 0x4F54544F && tag != 0x74727565 )
         return false;
     const int numTables = be16(head + 4);
     if (numTables <= 0 || numTables > 128)
@@ -260,7 +258,6 @@ struct FontCatalog::Impl
             }
             ec.clear();
         }
-        // Nome repetido entre arquivos diferentes: acrescenta o arquivo para diferenciar
         std::sort(found.begin(), found.end(), [](const FontEntry& a, const FontEntry& b) {
             const std::string la = lower(a.label), lb = lower(b.label);
             return la != lb ? la < lb : a.file < b.file;
@@ -317,7 +314,7 @@ fs::path FontCatalog::resolve(const std::string& file) const
         return {};
     const fs::path name(std::u8string(file.begin(), file.end()));
     if (name.has_parent_path())
-        return {}; // so nomes de arquivo: caminhos nao entram no projeto
+        return {};
     std::error_code ec;
     for (const fs::path& dir : impl_->searchDirs()) {
         const fs::path candidate = dir / name;
@@ -345,4 +342,4 @@ std::string FontCatalog::labelFor(const std::string& file) const
     return file;
 }
 
-} // namespace bsl::media
+}

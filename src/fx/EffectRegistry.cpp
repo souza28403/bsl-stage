@@ -65,4 +65,4 @@ std::uint64_t EffectRegistry::version() const
     return v;
 }
 
-} // namespace bsl::fx
+}

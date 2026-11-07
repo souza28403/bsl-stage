@@ -1,8 +1,5 @@
 #pragma once
 
-// Uma DLL de plugin FFGL carregada no processo: LoadLibraryEx + plugMain, com toda chamada protegida por SEH.
-// Nao inclui o cabecalho do FFGL (so os .cpp incluem): os codigos de funcao ficam em ffgl::fn.
-
 #include "ffgl/FfglInfo.h"
 
 #include <cstdint>
@@ -12,31 +9,28 @@
 
 namespace bsl::ffgl {
 
-using Word = std::uintptr_t; // a union FFMixed (valor de 32 bits ou ponteiro)
+using Word = std::uintptr_t;
 
 struct CallResult
 {
-    bool ok = false;               // false = o plugin lancou excecao estruturada (access violation etc.)
+    bool ok = false;
     Word value = 0;
-    unsigned long exception = 0;   // GetExceptionCode() quando !ok
+    unsigned long exception = 0;
     std::uint32_t u32() const { return static_cast<std::uint32_t>(value); }
     float f32() const;
 };
 
-std::string exceptionText(unsigned long code); // "0xC0000005 (violação de acesso)"
-Word floatWord(float v);                        // bits de um float na parte baixa do FFMixed
+std::string exceptionText(unsigned long code);
+Word floatWord(float v);
 
 class Plugin
 {
 public:
-    // LoadLibraryEx(LOAD_WITH_ALTERED_SEARCH_PATH): as DLLs ao lado do plugin sao achadas. nullptr + erro se a DLL nao
-    // carrega ou nao exporta plugMain. So chame depois do filtro de PE (ffgl/FfglPe.h).
-    // Mensagens que o plugin manda pelo SetLogCallback do FFGL (de qualquer thread). Vale para os plugins abertos depois.
     using LogSink = void (*)(const std::string& message);
     static void setLogSink(LogSink sink);
 
     static std::shared_ptr<Plugin> open(const std::filesystem::path& file, std::string* error);
-    ~Plugin(); // nao descarrega a DLL (plugins com threads/CEF podem travar no FreeLibrary): so o fim do processo
+    ~Plugin();
 
     const std::filesystem::path& path() const { return path_; }
 
@@ -46,13 +40,11 @@ public:
         return call(code, reinterpret_cast<Word>(in), instance);
     }
 
-    // FF_INITIALISE_V2 uma vez por DLL; false (com motivo) se o plugin recusa ou lanca excecao
     bool initialise(std::string* error);
     bool initialised() const { return initialised_; }
-    void deinitialise(); // FF_DEINITIALISE (no fim do processo ou da varredura)
-    void unload();       // FreeLibrary (so a varredura em processo proprio usa; o app nunca descarrega)
+    void deinitialise();
+    void unload();
 
-    // Leituras seguras de memoria devolvida pelo plugin (ponteiro invalido ou FF_FAIL resultam em falso/vazio)
     bool readMemory(Word ptr, void* dst, std::size_t n);
     std::string readString(Word ptr, std::size_t maxLen = 512);
 
@@ -60,12 +52,11 @@ private:
     Plugin() = default;
 
     std::filesystem::path path_;
-    void* module_ = nullptr;   // HMODULE
+    void* module_ = nullptr;
     void* plugMain_ = nullptr;
     bool initialised_ = false;
 };
 
-// Codigos de funcao do FFGL usados pelo host (iguais aos de FFGL.h; os .cpp conferem com static_assert)
 namespace fn {
 inline constexpr std::uint32_t GetInfo = 0;
 inline constexpr std::uint32_t InitialiseV2 = 34;
@@ -97,12 +88,8 @@ inline constexpr std::uint32_t GetNumFileExtensions = 43;
 inline constexpr std::uint32_t GetFileExtension = 44;
 inline constexpr std::uint32_t GetParamVisibility = 45;
 inline constexpr std::uint32_t GetParamEvents = 46;
-} // namespace fn
+}
 
-// Varre uma DLL: carrega, le informacoes e parametros, descarrega (o que o worker faz em --scan-ffgl).
-// Nunca lanca; erro e excecao do plugin viram ScanResult::error.
-// Se 'loaded' nao for nulo, devolve ai o plugin (ainda inicializado) para o chamador gravar o resultado antes de
-// chamar deinitialise()/unload().
 ScanResult scanPluginFile(const std::filesystem::path& file, std::shared_ptr<Plugin>* loaded = nullptr);
 
-} // namespace bsl::ffgl
+}

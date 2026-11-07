@@ -7,23 +7,21 @@
 namespace bsl::media {
 
 enum class PixelFormat {
-    RGBA8,    // 1 plano, 4 bytes/pixel, alpha reta (nao premultiplicada)
-    YUV420P,  // 3 planos: Y (w x h), U e V ((w+1)/2 x (h+1)/2)
-    YUVA420P  // 4 planos: como YUV420P + A (w x h)
+    RGBA8,
+    YUV420P,
+    YUVA420P
 };
 
 enum class ColorSpace { BT601, BT709 };
 enum class ColorRange { Limited, Full };
 
-// Frame decodificado em CPU (independe de GL e de FFmpeg).
-// strides[i] e a distancia em bytes entre linhas do plano i.
 struct Frame {
     int width = 0;
     int height = 0;
     PixelFormat format = PixelFormat::RGBA8;
     std::array<std::vector<std::uint8_t>, 4> planes;
     std::array<int, 4> strides = {0, 0, 0, 0};
-    double pts = 0.0; // segundos desde o inicio do clip
+    double pts = 0.0;
     ColorSpace colorSpace = ColorSpace::BT709;
     ColorRange range = ColorRange::Limited;
 
@@ -35,11 +33,9 @@ struct Frame {
     bool hasAlphaPlane() const { return format == PixelFormat::YUVA420P; }
     bool empty() const { return width <= 0 || height <= 0 || planes[0].empty(); }
 
-    // Largura/altura em pixels do plano i.
     int planeWidth(int i) const { return (isYuv() && (i == 1 || i == 2)) ? (width + 1) / 2 : width; }
     int planeHeight(int i) const { return (isYuv() && (i == 1 || i == 2)) ? (height + 1) / 2 : height; }
 
-    // Aloca os planos com stride compacto.
     void allocate(int w, int h, PixelFormat f)
     {
         width = w;
@@ -59,4 +55,4 @@ struct Frame {
     }
 };
 
-} // namespace bsl::media
+}

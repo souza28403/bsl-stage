@@ -41,6 +41,7 @@ Cada fase termina com algo que roda e pode ser testado.
 
 ## Fase 5 — Controle
 - MIDI learn, OSC in/out, atalhos de teclado
+- **DMX de entrada ✅** (Art-Net e sACN, patch por camada, DMX learn, perfis GDTF/CSV/HTML; sem teste com mesa de luz real): ver `docs/DMX.md`. Pendente: saída Art-Net/sACN (Pixel Map)
 - BPM (tap, sync), automação de parâmetros
 
 ## Fase 6 — Otimização
@@ -51,6 +52,11 @@ Cada fase termina com algo que roda e pode ser testado.
 - Teste em PC antigo (GPU integrada, 4 GB RAM)
 
 ## Fase 7 — Extras
+- **Atualizações e reportes pelo GitHub ✅** (sem teste contra o GitHub de verdade: nada foi publicado): verificação discreta uma vez por dia (WinHTTP), aviso na barra de status, notas da
+  versão, download com SHA-256, `bslstage_updater.exe` com backup e retorno ao estado anterior, "Receber versões beta", "Pular esta versão"; Ajuda > Reportar problema / Sugerir melhoria
+  abrem o novo issue do GitHub já preenchido. Workflow de release em `.github/workflows/release.yml`; passos manuais em `docs/RELEASE.md`. Pendente: assinatura de código,
+  FFmpeg sem H.264/HEVC e CEF no pacote do CI, atualização diferencial (hoje o pacote é completo)
+- **Plugins do cliente ✅** (item 11 de `docs/Melhorias.md`; sem teste manual com editores externos além do Bloco de Notas/VS Code): assistente "Novo plugin…", recarga automática dos `.fs` com erro mantendo o efeito antigo, Abrir no editor / Mostrar na pasta / Duplicar, exportar e importar `.bslplugin` com validação e licença à vista, `bslstage_isfcheck`, áudio (`audioFFT`) no ISF, `sdk/ffgl-template`, `docs/plugins/`, `AGENTS.md` e a skill `skills/bsl-stage-plugin`. Pendente: assinatura/verificação de autoria dos pacotes, loja de plugins
 - NDI in/out (feito: fonte NDI, destino NDI da Screen e fonte Spout; ver ARQUITETURA.md)
 - Mapa de LED / Art-Net
-- Import do XML de Advanced Output do Resolume
+- Importação de XML de slices

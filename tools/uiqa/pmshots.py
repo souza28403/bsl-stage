@@ -13,7 +13,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import driver  # noqa: E402
+import driver
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 EXE = os.path.join(ROOT, "build", "Release", "BSLStage.exe")
@@ -55,7 +55,6 @@ def main():
         add_panel(app, "Testeira Palco", 2048, 128, 0, 0)
         add_panel(app, "Lateral Esquerda", 512, 512, 0, 128)
         add_panel(app, "Lateral Direita", 512, 512, 1536, 128)
-        # seleciona a Lateral Esquerda no overview (clique de verdade) e tira o mouse de cima dos controles
         r = app.find("pixelmap:painel:1").rect
         app.click_at(r.cx, r.cy)
         app.wait_state(lambda s: s["pixelmap"]["selected"] == 1, "painel selecionado")

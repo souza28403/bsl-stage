@@ -22,7 +22,7 @@ std::string forcedTransport()
     return g_forcedTransport;
 }
 
-} // namespace
+}
 
 void RemoteSource::forceTransport(const std::string& transport)
 {
@@ -58,7 +58,7 @@ bool RemoteSource::open(const std::filesystem::path& file, std::string* error)
 {
     close();
     std::error_code ec;
-    path_ = file.empty() ? file : std::filesystem::absolute(file, ec); // o worker roda em outra pasta de trabalho
+    path_ = file.empty() ? file : std::filesystem::absolute(file, ec);
     if (!path_.empty() && !std::filesystem::is_regular_file(path_, ec)) {
         if (error)
             *error = "arquivo não encontrado";
@@ -69,7 +69,7 @@ bool RemoteSource::open(const std::filesystem::path& file, std::string* error)
     std::string interopError;
     const std::string transport = forcedTransport();
     if (transport != "shm") {
-        interop_ = render::D3D11Interop::shared(&interopError); // precisa do contexto GL corrente
+        interop_ = render::D3D11Interop::shared(&interopError);
         if (!interop_)
             log::info("Fonte remota: sem D3D11 (" + interopError + "); usando memória compartilhada");
     }
@@ -81,7 +81,7 @@ bool RemoteSource::open(const std::filesystem::path& file, std::string* error)
 
 void RemoteSource::close()
 {
-    host_.stop(); // nao espera: o worker e encerrado em segundo plano
+    host_.stop();
     interopTex_.reset();
     interop_.reset();
     if (glTex_) {
@@ -97,7 +97,7 @@ void RemoteSource::close()
     lastError_.clear();
 }
 
-void RemoteSource::update(double /*dt*/)
+void RemoteSource::update(double )
 {
     if (!open_)
         return;
@@ -137,7 +137,7 @@ void RemoteSource::applyFrame(const FrameAccess& fa)
             return;
         const int idx = static_cast<int>(latest);
         const LONG64 s1 = ReadAcquire64(&hdr->seq[idx]);
-        if (s1 & 1) { // o worker esta escrevendo: tenta no proximo update
+        if (s1 & 1) {
             lastSeq_ = fa.seq - 1;
             return;
         }
@@ -172,7 +172,7 @@ void RemoteSource::applyFrame(const FrameAccess& fa)
         glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prevTex));
         const LONG64 s2 = ReadAcquire64(&hdr->seq[idx]);
         if (s1 != s2)
-            lastSeq_ = fa.seq - 1; // quadro rasgado durante a copia: sobe de novo no proximo update
+            lastSeq_ = fa.seq - 1;
         activeTex_ = glTex_;
     }
     width_ = fa.width;
@@ -243,4 +243,4 @@ void RemoteSource::sendKey(const char* type, int code, unsigned ch, int mods)
     sendToWorker(WorkerJson{{"t", "key"}, {"type", type}, {"code", code}, {"ch", ch}, {"mods", mods}});
 }
 
-} // namespace bsl::media
+}

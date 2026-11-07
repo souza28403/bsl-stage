@@ -26,7 +26,7 @@ struct WindowState
 {
     bool open = false;
     ffgl::ImportJob job;
-    std::string message;    // resultado da última importação
+    std::string message;
     bool messageError = false;
 };
 WindowState g_window;
@@ -38,7 +38,6 @@ void openInExplorer(const std::filesystem::path& dir)
     ShellExecuteW(nullptr, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
-// Uma pasta fixa (somente leitura na lista): rótulo, caminho e "Abrir no Explorer"
 void fixedFolder(const char* label, const std::filesystem::path& dir, const char* id)
 {
     dimLabel(label);
@@ -49,7 +48,7 @@ void fixedFolder(const char* label, const std::filesystem::path& dir, const char
         openInExplorer(dir);
 }
 
-} // namespace
+}
 
 void openPluginsWindow()
 {
@@ -63,7 +62,6 @@ void drawPluginsWindow(PanelContext& ctx)
     Settings& st = ctx.settings;
     ffgl::Catalog& catalog = ffgl::Catalog::instance();
 
-    // Resultado de uma importação que acabou
     ffgl::ImportResult imported;
     if (g_window.job.takeResult(imported)) {
         g_window.message = imported.message;
@@ -88,12 +86,11 @@ void drawPluginsWindow(PanelContext& ctx)
     ImGui::PopTextWrapPos();
     ImGui::Spacing();
 
-    // --- Pastas ---
     ImGui::SeparatorText("Pastas");
     fixedFolder("Meus plugins", paths::pluginsDir(), "plugins_abrir_meus");
 
     ImGui::Spacing();
-    dimLabel("Pastas extras");
+    dimLabel("Pastas extras de plugins FFGL");
     int remove = -1;
     for (size_t i = 0; i < st.ffglFolders.size(); ++i) {
         ImGui::PushID(static_cast<int>(i));
@@ -124,29 +121,6 @@ void drawPluginsWindow(PanelContext& ctx)
         }
     }
 
-    ImGui::Spacing();
-    bool useResolume = st.ffglUseResolume;
-    if (ImGui::Checkbox("Usar plugins do Resolume (Extra Effects)##plugins_resolume", &useResolume)) {
-        st.ffglUseResolume = useResolume;
-        st.save();
-        configureFfglCatalog(st);
-    }
-    {
-        const std::vector<std::filesystem::path> dirs = paths::resolumeEffectDirs();
-        ImGui::PushTextWrapPos(0.0f);
-        if (dirs.empty()) {
-            ImGui::TextColored(theme::kTextDim, "Resolume não encontrado neste computador (opcional).");
-        } else {
-            for (const std::filesystem::path& dir : dirs) {
-                pushMono();
-                ImGui::TextColored(theme::kTextDim, "%s", paths::toUtf8(dir).c_str());
-                popMono();
-            }
-        }
-        ImGui::PopTextWrapPos();
-    }
-
-    // --- Importar / reescanear ---
     ImGui::Spacing();
     ImGui::SeparatorText("Importar e reescanear");
     const bool importing = g_window.job.running();
@@ -184,7 +158,6 @@ void drawPluginsWindow(PanelContext& ctx)
         ImGui::PopTextWrapPos();
     }
 
-    // --- Estado ---
     ImGui::Spacing();
     ImGui::SeparatorText("Plugins encontrados");
     const std::vector<ffgl::EntryPtr> entries = catalog.entries();
@@ -237,4 +210,4 @@ void drawPluginsWindow(PanelContext& ctx)
     ImGui::End();
 }
 
-} // namespace bsl::ui
+}

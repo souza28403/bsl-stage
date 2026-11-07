@@ -7,7 +7,6 @@
 
 namespace bsl {
 
-// Gerador "Cor solida": o canvas inteiro numa cor RGBA (alpha reta). So redesenha quando a cor muda.
 class SolidColorSource final : public media::ISource
 {
 public:
@@ -40,4 +39,4 @@ private:
     std::unique_ptr<Fbo> fbo_;
 };
 
-} // namespace bsl
+}

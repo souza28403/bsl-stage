@@ -1,14 +1,3 @@
-// bslstage_ffgltest: host FFGL da Fase 4B com janela oculta (GL 3.3 core).
-// Uso: bslstage_ffgltest                    testes automaticos (precisa das DLLs de teste ao lado do exe)
-//      bslstage_ffgltest --resolume [pasta] [--only arquivo.dll] opcional: varre o Extra Effects do Resolume (SO LEITURA), instancia cada plugin,
-//                                            processa 60 quadros e imprime a tabela nome / tipo / parametros / ok
-//
-// Cobre: filtro de PE (DLL sem plugMain nunca e carregada), varredura em processo separado com cache, bloqueio por
-// travamento, mapeamento de parametros, processamento dos exemplos do SDK (efeito e fonte) com pixels conferidos, com e
-// sem inversao vertical, alpha, mudanca de parametro, informacao de batida, leitura de volta do que o plugin muda,
-// plugin que da violacao de acesso (o host sobrevive, a instancia vira passagem direta e o plugin fica bloqueado),
-// procura por id/nome do arquivo, o registro de efeitos e geradores, e a importacao de plugins.
-
 #include "core/Generators.h"
 #include "ffgl/FfglCatalog.h"
 #include "ffgl/FfglImport.h"
@@ -120,7 +109,6 @@ GLuint makeTexture(int w, int h, const std::function<Px(int, int)>& f)
     return tex;
 }
 
-// Linha 0 da textura primeiro
 Img readFbo(const Fbo& fbo)
 {
     Img img(static_cast<size_t>(fbo.width()) * static_cast<size_t>(fbo.height()));
@@ -167,7 +155,6 @@ fx::EffectContext makeCtx(FboPool& pool, bool topOrigin, double time = 0.0)
     return ctx;
 }
 
-// Valores a entregar ao plugin: {id, json}
 void applyParams(ffgl::FfglInstance& inst, const std::vector<std::pair<std::string, Json>>& values)
 {
     media::ParamValues v;
@@ -183,8 +170,6 @@ ffgl::EntryPtr need(const std::string& typeId)
     return e;
 }
 
-// ---------------------------------------------------------------------------------------------------- filtro de PE
-
 void testPeFilter()
 {
     section("filtro de PE");
@@ -192,7 +177,7 @@ void testPeFilter()
     CHECK(ffgl::inspectPe(dir / L"TestAddSubtract.dll") == ffgl::PeVerdict::Candidate);
     CHECK(ffgl::inspectPe(dir / L"TestGradients.dll") == ffgl::PeVerdict::Candidate);
     CHECK(ffgl::inspectPe(dir / L"TestNoMain.dll") == ffgl::PeVerdict::NoPlugMain);
-    CHECK(ffgl::inspectPe(exeDir() / L"pdfium.dll") == ffgl::PeVerdict::NoPlugMain); // DLL x64 qualquer
+    CHECK(ffgl::inspectPe(exeDir() / L"pdfium.dll") == ffgl::PeVerdict::NoPlugMain);
     CHECK(ffgl::inspectPe(dir / L"nao-existe.dll") == ffgl::PeVerdict::Unreadable);
     const fs::path fake = fs::temp_directory_path() / L"bsl-ffgltest-fake.dll";
     {
@@ -202,8 +187,6 @@ void testPeFilter()
     std::error_code ec;
     fs::remove(fake, ec);
 }
-
-// ---------------------------------------------------------------------------------------------------- varredura
 
 void testScan()
 {
@@ -220,13 +203,12 @@ void testScan()
     const auto t0 = std::chrono::steady_clock::now();
     cat.rescan();
     const double callMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-    CHECK(callMs < 250.0); // a UI nunca espera a varredura
+    CHECK(callMs < 250.0);
     CHECK(cat.scanning());
     CHECK(cat.waitIdle(90000));
     std::printf("  primeira varredura: %zu plugin(s), %zu bloqueado(s), %d ignorada(s)\n", cat.entries().size(),
                 cat.blocked().size(), cat.ignoredCount());
 
-    // Efeito do SDK
     const ffgl::EntryPtr add = need(id("RE01", "TestAddSubtract.dll"));
     if (add) {
         CHECK(add->info.type == ffgl::kTypeEffect);
@@ -235,32 +217,28 @@ void testScan()
         CHECK(contains(add->info.description, "Add and Subtract"));
         CHECK(add->info.params.size() == 3);
         CHECK(add->info.params.size() == 3 && add->info.params[0].type == ffgl::kPRed && add->info.params[2].type == ffgl::kPBlue);
-        CHECK(add->map.descs.size() == 1 && add->map.descs[0].type == media::ParamType::Color); // RGB consecutivos = uma cor
+        CHECK(add->map.descs.size() == 1 && add->map.descs[0].type == media::ParamType::Color);
         CHECK(add->origin == "Teste");
         CHECK(add->info.minInputs == 1 && add->info.maxInputs == 1);
     }
-    // Fonte do SDK
     const ffgl::EntryPtr grad = need(id("RS01", "TestGradients.dll"));
     if (grad) {
         CHECK(grad->info.type == ffgl::kTypeSource);
         CHECK(grad->info.params.size() == 8);
-        CHECK(grad->map.descs.size() == 2); // RGBA + HSBA = duas cores
+        CHECK(grad->map.descs.size() == 2);
         CHECK(grad->map.descs.size() == 2 && grad->map.descs[0].type == media::ParamType::Color
               && grad->map.descs[1].type == media::ParamType::Color);
         CHECK(grad->map.bindings.size() == 2 && grad->map.bindings[0].kind == ffgl::BindKind::Rgb
               && grad->map.bindings[1].kind == ffgl::BindKind::Hsb && grad->map.bindings[1].count == 4);
     }
-    // Sonda: parametros float com faixa
     const ffgl::EntryPtr probe = need(id("TPEF", "TestProbeFx.dll"));
     if (probe) {
         CHECK(probe->map.descs.size() == 3);
         CHECK(probe->map.descs.size() == 3 && probe->map.descs[0].id == "level" && probe->map.descs[0].type == media::ParamType::Float);
     }
     need(id("TPSR", "TestProbeSrc.dll"));
-    // Plugin que so cai em FF_PROCESS_OPENGL passa pela varredura
     need(id("FAIL", "TestCrash.dll"));
 
-    // Travou no FF_GET_INFO: bloqueado por tempo, com o motivo
     bool hangBlocked = false;
     for (const ffgl::BlockedPlugin& b : cat.blocked())
         if (b.fileName == "TestHang.dll") {
@@ -271,17 +249,14 @@ void testScan()
         }
     CHECK(hangBlocked);
     for (const ffgl::EntryPtr& e : cat.entries())
-        CHECK(e->info.fileName != "TestHang.dll"); // o que travou nunca vira plugin utilizavel
+        CHECK(e->info.fileName != "TestHang.dll");
 
-    // DLL sem plugMain: ignorada pelo filtro, nunca carregada (nem aqui, nem listada como bloqueada)
     CHECK(cat.ignoredCount() >= 1);
     CHECK(GetModuleHandleW(L"TestNoMain.dll") == nullptr);
     for (const ffgl::BlockedPlugin& b : cat.blocked())
         CHECK(b.fileName != "TestNoMain.dll");
-    // A varredura carrega no worker, nunca neste processo
     CHECK(GetModuleHandleW(L"TestAddSubtract.dll") == nullptr);
 
-    // Cache em disco: a segunda varredura nao roda o worker (nem espera os 4 s do que travou)
     CHECK(fs::exists(cache, ec));
     {
         std::ifstream in(cache);
@@ -298,15 +273,12 @@ void testScan()
     CHECK(cat.entries().size() == before);
     CHECK(cat.blocked().size() >= 1);
 
-    // Procura: id + arquivo; so o id (arquivo renomeado); so o arquivo (id mudou)
     CHECK(cat.find(id("RE01", "TestAddSubtract.dll")) != nullptr);
     CHECK(cat.find(id("RE01", "Renomeado.dll")) != nullptr);
     CHECK(cat.find(id("XXXX", "TestAddSubtract.dll")) != nullptr);
     CHECK(cat.find(id("XXXX", "outro.dll")) == nullptr);
     CHECK(cat.find("native:blur") == nullptr);
 }
-
-// ---------------------------------------------------------------------------------------------------- processamento
 
 void testProcessEffects(FboPool& pool)
 {
@@ -322,27 +294,23 @@ void testProcessEffects(FboPool& pool)
     CHECK(inst.id() == add->typeId);
 
     for (const bool top : {false, true}) {
-        // Brilho padrao 0,5 = soma zero: a imagem passa igual
         applyParams(inst, {});
         inst.process(makeCtx(pool, top), src, w, h, out);
         CHECK(!inst.faulted());
         CHECK(inst.status().text.empty());
         Img img = readFbo(out);
         expectPx(top ? "AddSubtract sem soma (topo)" : "AddSubtract sem soma", img, w, 10, 10, {100, 100, 100, 255});
-        // Soma +1 no vermelho: satura
         applyParams(inst, {{"brightness", media::param::colorJson({1.0f, 0.5f, 0.5f, 1.0f})}});
         inst.process(makeCtx(pool, top), src, w, h, out);
         img = readFbo(out);
         expectPx(top ? "mudar o parametro altera a saida (topo)" : "mudar o parametro altera a saida", img, w, 10, 10,
                  {255, 100, 100, 255});
         expectPx("a outra metade", img, w, 50, 50, {255, 100, 100, 255});
-        // Brilho minimo no verde: zera
         applyParams(inst, {{"brightness", media::param::colorJson({0.5f, 0.0f, 0.5f, 1.0f})}});
         inst.process(makeCtx(pool, top), src, w, h, out);
         expectPx("verde cai a zero", readFbo(out), w, 5, 5, {100, 0, 100, 255});
     }
 
-    // Alpha reto -> premultiplicado -> de volta: um pixel meio transparente volta igual
     {
         const GLuint half = makeTexture(w, h, [](int, int) { return Px{200, 100, 40, 128}; });
         applyParams(inst, {});
@@ -351,6 +319,46 @@ void testProcessEffects(FboPool& pool)
         glDeleteTextures(1, &half);
     }
     glDeleteTextures(1, &src);
+}
+
+void testSdkTemplate(FboPool& pool)
+{
+    section("modelo de plugin FFGL do SDK (sdk/ffgl-template): BSL Exemplo");
+    const ffgl::EntryPtr ex = ffgl::Catalog::instance().find(id("BSEX", "BSLExample.dll"));
+    CHECK(ex != nullptr);
+    if (!ex)
+        return;
+    CHECK(ex->info.type == ffgl::kTypeEffect);
+    CHECK(ex->info.apiMajor == 2);
+    CHECK(ex->info.name == "BSL Exemplo");
+    CHECK(ex->info.params.size() == 2);
+    CHECK(ex->map.descs.size() == 2 && ex->map.descs[0].type == media::ParamType::Float
+          && ex->map.descs[1].type == media::ParamType::Float);
+    if (ex->map.descs.size() != 2)
+        return;
+    const std::string brightness = ex->map.descs[0].id, saturation = ex->map.descs[1].id;
+
+    const int w = 64, h = 64;
+    const GLuint gray = makeTexture(w, h, [](int, int) { return Px{100, 100, 100, 255}; });
+    const GLuint color = makeTexture(w, h, [](int, int) { return Px{200, 100, 50, 255}; });
+    Fbo out(w, h);
+    ffgl::FfglInstance inst(ex);
+    for (const bool top : {false, true}) {
+        applyParams(inst, {});
+        inst.process(makeCtx(pool, top), color, w, h, out);
+        CHECK(!inst.faulted());
+        CHECK(inst.status().text.empty());
+        expectPx("modelo: valores padrao nao mudam a imagem", readFbo(out), w, 10, 10, {200, 100, 50, 255});
+        applyParams(inst, {{brightness, 1.0}});
+        inst.process(makeCtx(pool, top), gray, w, h, out);
+        expectPx("modelo: brilho 1,0 deixa branco", readFbo(out), w, 20, 20, {255, 255, 255, 255});
+        applyParams(inst, {{brightness, 0.0}});
+        inst.process(makeCtx(pool, top), gray, w, h, out);
+        expectPx("modelo: brilho 0,0 deixa preto", readFbo(out), w, 20, 20, {0, 0, 0, 255});
+        applyParams(inst, {{brightness, 0.5}, {saturation, 0.0}});
+        inst.process(makeCtx(pool, top), color, w, h, out);
+        expectPx("modelo: saturacao 0 vira cinza", readFbo(out), w, 30, 30, {118, 118, 118, 255}, 3);
+    }
 }
 
 void testOrientation(FboPool& pool)
@@ -365,18 +373,15 @@ void testOrientation(FboPool& pool)
     Fbo out(w, h);
     {
         ffgl::FfglInstance inst(fxe);
-        // Textura com a linha 0 na base (canvas): a metade de baixo da imagem e a das linhas 0..31
         inst.process(makeCtx(pool, false), src, w, h, out);
         CHECK(!inst.faulted());
         Img img = readFbo(out);
         expectPx("sem inversao: baixo = linhas 0..31", img, w, 10, 5, {40, 20, 50, 255});
         expectPx("sem inversao: cima = azul do nivel", img, w, 10, 50, {0, 0, 128, 255});
-        // Textura com a linha 0 no topo (clip): a metade de baixo da imagem e a das linhas 32..63
         inst.process(makeCtx(pool, true), src, w, h, out);
         img = readFbo(out);
         expectPx("com inversao: baixo = linhas 32..63", img, w, 10, 50, {40, 200, 50, 255});
         expectPx("com inversao: cima = azul do nivel", img, w, 10, 5, {0, 0, 128, 255});
-        // Parametro "Level" = 1
         applyParams(inst, {{"level", 1.0}});
         inst.process(makeCtx(pool, true), src, w, h, out);
         expectPx("nivel 1 -> azul 255", readFbo(out), w, 10, 5, {0, 0, 255, 255});
@@ -415,18 +420,15 @@ void testBeatAndReadback(FboPool& pool)
     ctx.barPhase = 0.25f;
     inst.process(ctx, src, w, h, out);
     CHECK(inst.lastBpm() == 140.0f && inst.lastBarPhase() == 0.25f);
-    // O plugin guarda o BPM/fase que recebeu em dois parametros; o host le de volta
     media::ParamValues changed;
     CHECK(inst.pollParamChanges(changed));
     const Json* bpm = changed.find("bpm");
     const Json* bar = changed.find("barphase");
     CHECK(bpm && bpm->is_number() && std::fabs(bpm->get<double>() - 0.140) < 1e-4);
     CHECK(bar && bar->is_number() && std::fabs(bar->get<double>() - 0.25) < 1e-4);
-    CHECK(changed.find("level") == nullptr); // o que o usuario mandou nao volta como "mudanca do plugin"
-    // Sem mudanca nova e dentro dos 100 ms: nada
+    CHECK(changed.find("level") == nullptr);
     media::ParamValues again;
     CHECK(!inst.pollParamChanges(again));
-    // Muda o BPM: depois de 100 ms o host ve o novo valor
     ctx.bpm = 90.0f;
     inst.process(ctx, src, w, h, out);
     Sleep(130);
@@ -459,7 +461,6 @@ void testGradientSource(FboPool& pool)
     CHECK(src->isOpen() && src->texture() != 0 && src->width() == 64 && src->height() == 32);
     src->update(0.016);
     CHECK(src->status().text.empty());
-    // Padrao: amarelo (1,1,0) a esquerda; HSB (0,5; 1; 1) = ciano a direita
     Fbo copy(64, 32);
     {
         fx::TexBlitter blit;
@@ -468,7 +469,6 @@ void testGradientSource(FboPool& pool)
     Img img = readFbo(copy);
     expectPx("gradiente a esquerda", img, 64, 0, 16, {255, 255, 0, 255}, 10);
     expectPx("gradiente a direita", img, 64, 63, 16, {0, 255, 255, 255}, 10);
-    // Edita as cores pelo ISource::setParams (como o ClipPanel): esquerda vermelho, direita (HSB) azul
     values.set("cor_1", media::param::colorJson({1.0f, 0.0f, 0.0f, 1.0f}));
     values.set("cor_2", media::param::colorJson({0.0f, 0.0f, 1.0f, 1.0f}));
     src->setParams(values);
@@ -483,8 +483,6 @@ void testGradientSource(FboPool& pool)
     src->close();
     (void)pool;
 }
-
-// ---------------------------------------------------------------------------------------------------- falhas
 
 void testFaults(FboPool& pool)
 {
@@ -511,39 +509,33 @@ void testFaults(FboPool& pool)
         for (const ffgl::BlockedPlugin& b : cat.blocked())
             listed = listed || (b.session && b.fileName == "TestCrash.dll" && contains(b.reason, "0xC0000005"));
         CHECK(listed);
-        // Mais quadros: segue passando, sem chamar o plugin de novo
         a.process(makeCtx(pool, true), src, w, h, out);
         CHECK(a.faulted());
         expectPx("segue em passagem direta", readFbo(out), w, 3, 3, {10, 20, 30, 255});
 
-        // Outra instancia do mesmo plugin: ja nasce bloqueada
         ffgl::FfglInstance b(crash);
         b.process(makeCtx(pool, true), src, w, h, out);
         CHECK(b.faulted());
         expectPx("segunda instancia tambem passa direto", readFbo(out), w, 3, 3, {10, 20, 30, 255});
     }
-    // Reativar ("Tentar de novo"): o bloqueio da sessao sai
     cat.retry(crash->info.path);
     CHECK(cat.waitIdle(30000));
     CHECK(!cat.sessionBlocked(crash->info.path));
-    // Na cadeia: o ChainRunner segue em frente
     {
         fx::EffectChain chain;
         chain.add(crash->typeId);
         fx::EffectContext ctx = makeCtx(pool, true);
         FboPool::Lease res = fx::ChainRunner::run(chain, ctx, src, w, h);
-        CHECK(res.get() != nullptr); // o efeito rodou (passagem direta) e devolveu uma textura
+        CHECK(res.get() != nullptr);
         expectPx("cadeia com plugin que cai", readFbo(*res), w, 3, 3, {10, 20, 30, 255});
         CHECK(cat.sessionBlocked(crash->info.path));
-        CHECK(chain.items[0].known()); // o tipo continua conhecido (so esta bloqueado)
+        CHECK(chain.items[0].known());
         CHECK(chain.items[0].status().level == media::SourceStatus::Level::Error);
     }
     cat.retry(crash->info.path);
     CHECK(cat.waitIdle(30000));
     glDeleteTextures(1, &src);
 }
-
-// ---------------------------------------------------------------------------------------------------- registro
 
 void testRegistry(FboPool& pool)
 {
@@ -557,30 +549,23 @@ void testRegistry(FboPool& pool)
         CHECK(info->name == "AddSub Example" && info->category == "Teste" && !info->generator);
         CHECK(contains(info->description, "Autor: ") && contains(info->description, "TestAddSubtract.dll"));
     }
-    CHECK(reg.describe(typeId).size() == 1); // do cache, sem GL
-    // Fonte nao aparece como efeito da lista de "efeitos" (generator = true)
+    CHECK(reg.describe(typeId).size() == 1);
     const auto g = reg.find(id("RS01", "TestGradients.dll"));
     CHECK(g && g->generator);
-    // Projeto antigo: id certo e arquivo renomeado, ou arquivo certo e id mudado
     CHECK(reg.find(id("RE01", "AddSubtractAntigo.dll")).has_value());
     CHECK(reg.find(id("ZZZZ", "TestAddSubtract.dll")).has_value());
-    // Plugin ausente: tipo desconhecido, mas a instancia guarda os params
     fx::EffectInstance missing(id("MISS", "Sumiu.dll"));
     missing.setParam("brilho", 0.7);
     CHECK(!missing.known());
     CHECK(missing.status().level == media::SourceStatus::Level::Warning);
     const Json j = missing.toJson();
     CHECK(j["type"] == id("MISS", "Sumiu.dll") && j["params"]["brilho"] == 0.7);
-    // Serializacao: o typeId completo vai para o projeto e volta
     fx::EffectInstance real(typeId);
     real.setParam("brightness", media::param::colorJson({1.0f, 0.5f, 0.5f, 1.0f}));
     const fx::EffectInstance back = fx::EffectInstance::fromJson(real.toJson());
     CHECK(back.typeId == typeId && back.known());
-    // Mixer: ainda nao suportado (nao ha mixer de teste; so confere que a regra existe no tipo)
     (void)pool;
 }
-
-// ---------------------------------------------------------------------------------------------------- importacao
 
 void testImport()
 {
@@ -599,7 +584,6 @@ void testImport()
     std::ofstream(source / L"WebBrowser.dll") << "nao importa";
     std::ofstream(source / L"leia-me.txt") << "x";
 
-    // Uma DLL: vai junto com a subpasta de dependencias, mas nao com a pasta que tem outros plugins
     ffgl::ImportResult r = ffgl::importPlugins(source / L"MeuPlugin.dll", dest);
     std::printf("  %s\n", r.message.c_str());
     CHECK(r.ok() && r.dlls == 1 && r.folders == 1);
@@ -607,10 +591,8 @@ void testImport()
     CHECK(fs::exists(dest / L"web_app" / L"sub" / L"dado.txt", ec));
     CHECK(!fs::exists(dest / L"OutrosPlugins", ec));
     CHECK(!fs::exists(dest / L"WebBrowser.dll", ec));
-    // A origem nao muda
     CHECK(fs::exists(source / L"MeuPlugin.dll", ec) && fs::exists(source / L"web_app" / L"index.html", ec));
 
-    // Uma pasta inteira
     fs::remove_all(dest, ec);
     r = ffgl::importPlugins(source, dest);
     std::printf("  %s\n", r.message.c_str());
@@ -618,14 +600,11 @@ void testImport()
     CHECK(fs::exists(dest / L"origem" / L"OutrosPlugins" / L"Gradiente.dll", ec));
     CHECK(!fs::exists(dest / L"origem" / L"WebBrowser.dll", ec));
 
-    // WebBrowser.dll sozinho: recusado com a dica da fonte Web nativa
     r = ffgl::importPlugins(source / L"WebBrowser.dll", dest);
     CHECK(!r.ok() && contains(r.message, "fonte Web nativa"));
-    // Uma DLL que nao e plugin
     r = ffgl::importPlugins(testPluginDir() / L"TestNoMain.dll", dest);
     CHECK(!r.ok());
 
-    // Em segundo plano + o reescaneio acha o plugin importado
     ffgl::Catalog& cat = ffgl::Catalog::instance();
     ffgl::ImportJob job;
     job.start(source / L"MeuPlugin.dll", dest / L"job");
@@ -638,31 +617,23 @@ void testImport()
     CHECK(cat.waitIdle(60000));
     CHECK(cat.find(id("RE01", "MeuPlugin.dll")) != nullptr);
     fs::remove_all(base, ec);
-    // volta para a pasta de teste
     cat.configure({{testPluginDir(), "Teste"}});
     cat.rescan();
     cat.waitIdle(60000);
 }
 
-// ---------------------------------------------------------------------------------------------------- Resolume
-
-// Varre uma pasta (so leitura), instancia cada plugin, processa 60 quadros, destroi e imprime a tabela
-int runResolume(const fs::path& dirArg, const std::string& only, FboPool& pool)
+int runScan(const fs::path& dir, const std::string& only, FboPool& pool)
 {
-    fs::path dir = dirArg;
     if (dir.empty()) {
-        char* home = nullptr;
-        size_t homeLen = 0;
-        _dupenv_s(&home, &homeLen, "USERPROFILE");
-        dir = fs::path(home ? home : "") / L"Documents" / L"Resolume Arena" / L"Extra Effects";
-        std::free(home);
+        std::printf("Informe a pasta: --scan <pasta>\n");
+        return 0;
     }
-    std::printf("Extra Effects (somente leitura): %s\n", dir.string().c_str());
+    std::printf("Pasta de plugins (somente leitura): %s\n", dir.string().c_str());
     ffgl::Catalog& cat = ffgl::Catalog::instance();
-    cat.setCachePath(fs::temp_directory_path() / L"bsl-ffgltest-resolume-cache.json");
+    cat.setCachePath(fs::temp_directory_path() / L"bsl-ffgltest-scan-cache.json");
     cat.clearCache();
     cat.setScanTimeoutMs(10000);
-    cat.configure({{dir, "Resolume Extra Effects"}});
+    cat.configure({{dir, "Pasta externa"}});
     cat.rescan();
     cat.waitIdle(600000);
 
@@ -676,7 +647,7 @@ int runResolume(const fs::path& dirArg, const std::string& only, FboPool& pool)
     const char* typeNames[] = {"efeito", "fonte", "mixer"};
     for (const ffgl::EntryPtr& e : cat.entries()) {
         if (!only.empty() && only != e->info.fileName)
-            continue; // so este (isola plugins que nao convivem no mesmo processo)
+            continue;
         Row row;
         row.name = ffgl::pluginDisplayName(e->info) + " [" + e->info.fileName + "]";
         row.type = typeNames[std::min<unsigned>(e->info.type, 2)];
@@ -691,7 +662,6 @@ int runResolume(const fs::path& dirArg, const std::string& only, FboPool& pool)
         Fbo out(w, h);
         {
             ffgl::FfglInstance inst(e);
-            // Os valores padrao chegam ao plugin no primeiro quadro; depois mexe num parametro por quadro
             applyParams(inst, {});
             for (int f = 0; f < 60; ++f) {
                 fx::EffectContext ctx = makeCtx(pool, f % 2 == 0, f / 60.0);
@@ -733,18 +703,18 @@ int runResolume(const fs::path& dirArg, const std::string& only, FboPool& pool)
     return bad == 0 ? 0 : 1;
 }
 
-} // namespace
+}
 
 int main(int argc, char** argv)
 {
-    bool resolume = false;
-    fs::path resolumeDir;
+    bool scan = false;
+    fs::path scanDir;
     std::string only;
     for (int i = 1; i < argc; ++i) {
-        if (std::string(argv[i]) == "--resolume") {
-            resolume = true;
+        if (std::string(argv[i]) == "--scan") {
+            scan = true;
             if (i + 1 < argc && argv[i + 1][0] != '-')
-                resolumeDir = fs::path(std::u8string(argv[i + 1], argv[i + 1] + std::strlen(argv[i + 1])));
+                scanDir = fs::path(std::u8string(argv[i + 1], argv[i + 1] + std::strlen(argv[i + 1])));
         } else if (std::string(argv[i]) == "--only" && i + 1 < argc) {
             only = argv[++i];
         }
@@ -774,12 +744,13 @@ int main(int argc, char** argv)
 
     FboPool pool;
     int rc = 0;
-    if (resolume) {
-        rc = runResolume(resolumeDir, only, pool);
+    if (scan) {
+        rc = runScan(scanDir, only, pool);
     } else {
         testPeFilter();
         testScan();
         testProcessEffects(pool);
+        testSdkTemplate(pool);
         testOrientation(pool);
         testBeatAndReadback(pool);
         testGradientSource(pool);
@@ -803,6 +774,6 @@ int main(int argc, char** argv)
     glfwDestroyWindow(win);
     glfwTerminate();
     std::fflush(stdout);
-    TerminateProcess(GetCurrentProcess(), static_cast<UINT>(rc)); // plugins com threads proprias nao seguram o encerramento
+    TerminateProcess(GetCurrentProcess(), static_cast<UINT>(rc));
     return rc;
 }

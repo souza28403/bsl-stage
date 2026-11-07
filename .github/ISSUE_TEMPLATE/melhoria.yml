@@ -1,0 +1,28 @@
+name: Sugerir melhoria
+description: Uma ideia para deixar o BSL Stage melhor
+title: "[Melhoria] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado pela ideia! No BSL Stage, **Ajuda > Sugerir melhoria…** monta este texto para você e abre esta página já preenchida.
+        Este formulário tem os mesmos campos da janela do programa. **Não coloque dados pessoais ou de clientes:** o texto fica público.
+  - type: textarea
+    id: descricao
+    attributes:
+      label: Descrição da ideia
+      description: O que você gostaria que o programa fizesse e por quê (que situação de show isso resolve).
+    validations:
+      required: true
+  - type: textarea
+    id: passos
+    attributes:
+      label: Exemplo de uso
+      description: Como você imagina usando, passo a passo. Pode ser uma comparação com outro programa (só o comportamento, nada de código).
+  - type: textarea
+    id: sistema
+    attributes:
+      label: Informações do sistema
+      description: Opcional. Versão do BSL Stage, Windows, placa de vídeo e memória, se ajudarem a entender a ideia.
+      render: markdown

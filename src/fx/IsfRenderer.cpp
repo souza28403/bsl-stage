@@ -32,7 +32,7 @@ GLuint linkProgram(GLuint vs, GLuint fs, std::string& error)
     return prog;
 }
 
-} // namespace
+}
 
 GLint IsfRenderer::Program::loc(const char* name)
 {
@@ -63,6 +63,9 @@ void IsfRenderer::releaseGl()
     if (blank_)
         glDeleteTextures(1, &blank_);
     blank_ = 0;
+    if (audioTex_)
+        glDeleteTextures(1, &audioTex_);
+    audioTex_ = 0;
     buffers_.clear();
     imported_.clear();
     scratch_.reset();
@@ -168,7 +171,6 @@ bool IsfRenderer::compileImpl()
     if (!program_.id)
         return false;
 
-    // Imagens importadas (relativas ao shader); linha 0 = topo, entao o flip e ligado
     for (const IsfImported& im : doc_->imported) {
         Texture t = loadTexture(baseDir_ / std::filesystem::path(std::u8string(im.path.begin(), im.path.end())));
         if (!t) {
@@ -196,6 +198,31 @@ GLuint IsfRenderer::blank()
     return blank_;
 }
 
+GLuint IsfRenderer::audioTexture(const EffectContext& ctx)
+{
+    constexpr int kBands = audio::kSpectrumBands;
+    if (!audioTex_) {
+        glGenTextures(1, &audioTex_);
+        glBindTexture(GL_TEXTURE_2D, audioTex_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, kBands, 1, 0, GL_RGBA, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    float px[kBands * 4];
+    for (int i = 0; i < kBands; ++i) {
+        const float v = std::clamp(ctx.audio.spectrum[static_cast<size_t>(i)], 0.0f, 1.0f);
+        px[i * 4 + 0] = px[i * 4 + 1] = px[i * 4 + 2] = v;
+        px[i * 4 + 3] = 1.0f;
+    }
+    glBindTexture(GL_TEXTURE_2D, audioTex_);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kBands, 1, GL_RGBA, GL_FLOAT, px);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    return audioTex_;
+}
+
 IsfRenderer::Buffer* IsfRenderer::findBuffer(const std::string& name)
 {
     for (Buffer& b : buffers_)
@@ -221,7 +248,7 @@ IsfRenderer::Buffer& IsfRenderer::ensureBuffer(const IsfPass& pass, int w, int h
         b->front = 0;
         b->fbo[0] = std::make_unique<Fbo>(w, h, pass.isFloat);
         b->fbo[1] = b->dual ? std::make_unique<Fbo>(w, h, pass.isFloat) : nullptr;
-        for (auto& f : b->fbo) // comeca transparente
+        for (auto& f : b->fbo)
             if (f) {
                 f->bind();
                 glDisable(GL_SCISSOR_TEST);
@@ -281,7 +308,6 @@ bool IsfRenderer::render(const EffectContext& ctx, GLuint inputTex, int inW, int
     if (frames_ > 0)
         time_ += ctx.dt;
 
-    // Perfil Eco: ISF pesado roda em meia resolucao e sobe com filtro bilinear
     const bool lowRes = ctx.eco && w >= 640 && h >= 360;
     const int rw = lowRes ? std::max(1, w / 2) : w;
     const int rh = lowRes ? std::max(1, h / 2) : h;
@@ -298,14 +324,20 @@ bool IsfRenderer::render(const EffectContext& ctx, GLuint inputTex, int inW, int
         pw[static_cast<size_t>(p)] = ww;
         ph[static_cast<size_t>(p)] = hh;
         if (pass && !pass->target.empty())
-            ensureBuffer(*pass, ww, hh); // todos os buffers existem antes do primeiro passe (leituras adiantadas)
+            ensureBuffer(*pass, ww, hh);
     }
 
-    // Data
     const std::time_t now = std::time(nullptr);
     std::tm lt{};
     localtime_s(&lt, &now);
     const float dateSeconds = static_cast<float>(lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec);
+
+    GLuint fftTex = 0;
+    for (const IsfInput& in : doc_->inputs)
+        if (in.type == IsfInputType::AudioFft) {
+            fftTex = audioTexture(ctx);
+            break;
+        }
 
     GLint maxUnits = 16;
     glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &maxUnits);
@@ -372,7 +404,6 @@ bool IsfRenderer::render(const EffectContext& ctx, GLuint inputTex, int inW, int
             }
         }
 
-        // Samplers: uma unidade por imagem
         int unit = 0;
         for (const std::string& nm : sources_.imageNames) {
             if (unit >= maxUnits)
@@ -380,7 +411,14 @@ bool IsfRenderer::render(const EffectContext& ctx, GLuint inputTex, int inW, int
             GLuint tex = 0;
             float sx = 1.0f, sy = 1.0f;
             bool flip = false;
-            if (nm == "inputImage" && inputTex != 0) {
+            const auto audioIn = std::find_if(doc_->inputs.begin(), doc_->inputs.end(), [&](const IsfInput& in) {
+                return in.name == nm && in.type == IsfInputType::AudioFft;
+            });
+            if (audioIn != doc_->inputs.end() && fftTex) {
+                tex = fftTex;
+                sx = static_cast<float>(audio::kSpectrumBands);
+                sy = 1.0f;
+            } else if (nm == "inputImage" && inputTex != 0) {
                 tex = inputTex;
                 sx = static_cast<float>(inW);
                 sy = static_cast<float>(inH);
@@ -409,7 +447,7 @@ bool IsfRenderer::render(const EffectContext& ctx, GLuint inputTex, int inW, int
 
         vao_.draw();
         if (buf && buf->dual)
-            buf->front ^= 1; // o que acabou de ser escrito passa a ser o mais recente
+            buf->front ^= 1;
     }
 
     glActiveTexture(GL_TEXTURE0);
@@ -420,7 +458,6 @@ bool IsfRenderer::render(const EffectContext& ctx, GLuint inputTex, int inW, int
     glActiveTexture(GL_TEXTURE0);
     glUseProgram(0);
 
-    // Saida: ultimo passe num buffer (copia, com flip se a orientacao pede) ou em meia resolucao (sobe com filtro)
     if (lastToBuffer && lastBuffer) {
         const Fbo& src = *lastBuffer->fbo[lastBuffer->dual ? lastBuffer->front : 0];
         blit_.copy(src.texture(), src.width(), src.height(), output, true, ctx.topOrigin);
@@ -434,4 +471,4 @@ bool IsfRenderer::render(const EffectContext& ctx, GLuint inputTex, int inW, int
     return true;
 }
 
-} // namespace bsl::fx
+}

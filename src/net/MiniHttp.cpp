@@ -2,7 +2,6 @@
 
 #include "app/Log.h"
 
-// Winsock antes de windows.h
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
@@ -95,9 +94,7 @@ void respond(SOCKET s, const HttpResponse& r)
         sendAll(s, r.body.data(), r.body.size());
 }
 
-} // namespace
-
-// ----------------------------------------------------------------------------------------------- servidor
+}
 
 bool HttpServer::start(int port, HttpHandler handler, std::string* error, bool loopbackOnly)
 {
@@ -119,7 +116,6 @@ bool HttpServer::start(int port, HttpHandler handler, std::string* error, bool l
             *error = "não foi possível criar o socket";
         return false;
     }
-    // Sem SO_REUSEADDR: no Windows isso deixaria dois programas dividirem a porta em silencio
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(loopbackOnly ? INADDR_LOOPBACK : INADDR_ANY);
@@ -276,8 +272,6 @@ void HttpServer::serve(unsigned long long socketValue)
     finish();
 }
 
-// ----------------------------------------------------------------------------------------------- utilidades
-
 std::string urlDecode(const std::string& s)
 {
     std::string out;
@@ -380,4 +374,4 @@ const char* mimeForExtension(const std::string& ext)
     return "application/octet-stream";
 }
 
-} // namespace bsl::net
+}

@@ -111,7 +111,6 @@ bool PipeChannel::send(const Json& msg)
     DWORD written = 0;
     bool ok = WriteFile(pipe_, line.data(), static_cast<DWORD>(line.size()), &written, &ov) != FALSE;
     if (!ok && GetLastError() == ERROR_IO_PENDING) {
-        // O app drena o pipe sempre; se nao andar em 10 s ele travou
         if (WaitForSingleObject(ev, 10000) == WAIT_OBJECT_0) {
             ok = GetOverlappedResult(pipe_, &ov, &written, FALSE) != FALSE;
         } else {
@@ -145,4 +144,4 @@ bool PipeChannel::poll(Json& out)
     return true;
 }
 
-} // namespace bsl::worker
+}

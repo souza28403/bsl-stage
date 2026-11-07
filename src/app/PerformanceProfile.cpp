@@ -7,12 +7,12 @@ namespace bsl {
 namespace {
 
 const ProfileSettings kProfiles[kProfileCount] = {
-    {30, 0.50f, "Eco", "eco", 0},
-    {60, 0.75f, "Balanceado", "balanced", 15},
-    {0, 1.00f, "Máximo", "maximum", 30},
+    {30, 0.50f, "Eco", "eco", 0, 2},
+    {60, 0.75f, "Balanceado", "balanced", 15, 8},
+    {0, 1.00f, "Máximo", "maximum", 30, 8},
 };
 
-} // namespace
+}
 
 const ProfileSettings& settingsFor(PerformanceProfile profile)
 {
@@ -27,4 +27,4 @@ PerformanceProfile profileFromKey(const char* key, PerformanceProfile fallback)
     return fallback;
 }
 
-} // namespace bsl
+}

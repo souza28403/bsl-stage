@@ -26,8 +26,8 @@ bool g_open = false;
 struct Row
 {
     const char* api;
-    const char* how;    // resumo
-    const char* detail; // explicação
+    const char* how;
+    const char* detail;
 };
 
 const Row kRows[] = {
@@ -49,7 +49,7 @@ void statusLine(bool ok, const char* qaName, const char* text)
     qa::note(qaName);
 }
 
-} // namespace
+}
 
 void openCompatWindow()
 {
@@ -70,7 +70,7 @@ void drawNdiRuntimeNotice()
     popMono();
     qa::note("ndi:link");
     if (ImGui::Button("Abrir a página##ndi_link_abrir")) {
-        if (!qa::enabled()) // o teste de interface não abre navegador
+        if (!qa::enabled())
             ShellExecuteA(nullptr, "open", ndi::kDownloadUrl, nullptr, nullptr, SW_SHOWNORMAL);
     }
     ImGui::SameLine();
@@ -144,7 +144,7 @@ bool drawSpoutSenderPicker(const std::string& current, std::string& out)
     return changed;
 }
 
-void drawCompatWindow(PanelContext& /*ctx*/)
+void drawCompatWindow(PanelContext& )
 {
     if (!g_open)
         return;
@@ -221,4 +221,4 @@ void drawCompatWindow(PanelContext& /*ctx*/)
     ImGui::End();
 }
 
-} // namespace bsl::ui
+}

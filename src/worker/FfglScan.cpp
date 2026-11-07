@@ -26,7 +26,7 @@ bool writeAll(HANDLE h, const std::string& data)
     return true;
 }
 
-} // namespace
+}
 
 void runFfglScan(const std::wstring& dll, const std::wstring& outFile)
 {
@@ -35,7 +35,6 @@ void runFfglScan(const std::wstring& dll, const std::wstring& outFile)
 
     std::string detail;
     ffgl::PeVerdict verdict = ffgl::inspectPe(dll, &detail);
-    // Uma DLL recem-criada pode estar presa um instante pelo antivirus: tenta ler de novo antes de desistir
     for (int attempt = 0; attempt < 6 && verdict == ffgl::PeVerdict::Unreadable; ++attempt) {
         Sleep(250);
         verdict = ffgl::inspectPe(dll, &detail);
@@ -62,8 +61,6 @@ void runFfglScan(const std::wstring& dll, const std::wstring& outFile)
         written = h && h != INVALID_HANDLE_VALUE && writeAll(h, json + "\n");
     }
 
-    // Descarregar o plugin pode travar (threads, servidor HTTP, CEF): um vigia derruba o processo em 3 s. O resultado ja
-    // foi gravado, entao nada se perde.
     std::thread([] {
         Sleep(3000);
         TerminateProcess(GetCurrentProcess(), 0);
@@ -77,4 +74,4 @@ void runFfglScan(const std::wstring& dll, const std::wstring& outFile)
         Sleep(1000);
 }
 
-} // namespace bsl::worker
+}

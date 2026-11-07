@@ -17,10 +17,6 @@ namespace bsl::ffgl {
 
 namespace {
 
-// ---------------------------------------------------------------------------------------------- DLLs carregadas
-
-// Uma DLL de plugin e aberta e inicializada uma vez (FF_INITIALISE_V2); varias instancias a dividem. Quando a ultima
-// instancia vai embora, FF_DEINITIALISE. A DLL nunca e descarregada (threads e servidores dos plugins).
 struct Slot
 {
     std::shared_ptr<Plugin> plugin;
@@ -84,9 +80,6 @@ void releasePlugin(const std::string& pathUtf8, bool skipDeinit)
         it->second.plugin->deinitialise();
 }
 
-// ---------------------------------------------------------------------------------------------- estado do GL
-
-// Guarda o estado do GL que o plugin pode mexer e o restaura no fim (o plugin recebe o estado "padrao" do FFGL)
 class GlGuard
 {
 public:
@@ -117,8 +110,6 @@ public:
         glGetIntegerv(GL_DEPTH_FUNC, &depthFunc_);
     }
 
-    // Estado padrao do FFGL: FBO de saida ligado e viewport do tamanho dele, blend/depth/scissor/cull desligados,
-    // programa 0, VAO 0, unidade 0 ativa e sem texturas ligadas nas primeiras unidades
     static void setDefaults(GLuint fbo, int w, int h)
     {
         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
@@ -146,7 +137,6 @@ public:
     ~GlGuard()
     {
         while (glGetError() != GL_NO_ERROR) {
-            // o plugin pode deixar erros pendentes: nao vazam para o resto do app
         }
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(drawFbo_));
         glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(readFbo_));
@@ -190,13 +180,11 @@ private:
     GLint depthFunc_ = GL_LESS;
 };
 
-// Conversao entre o alpha reto do BSL Stage e o premultiplicado do FFGL, com a inversao vertical opcional.
-// texelFetch: origem e destino tem o mesmo tamanho, entao nao ha filtragem.
 const char* const kConvertFragment = R"(#version 330 core
 in vec2 vUv;
 out vec4 fragColor;
 uniform sampler2D uSrc;
-uniform int uMode;   // 0 = reto -> premultiplicado, 1 = premultiplicado -> reto
+uniform int uMode;
 uniform int uFlip;
 void main()
 {
@@ -230,9 +218,7 @@ void clearOutput(const Fbo& output)
     glClear(GL_COLOR_BUFFER_BIT);
 }
 
-} // namespace
-
-// ----------------------------------------------------------------------------------------------- FfglInstance
+}
 
 FfglInstance::FfglInstance(EntryPtr entry) : entry_(std::move(entry))
 {
@@ -255,7 +241,7 @@ FfglInstance::~FfglInstance()
 
 void FfglInstance::teardown(bool callPlugin)
 {
-    if (instance_ && plugin_ && callPlugin && wglGetCurrentContext()) { // sem contexto GL (fim do programa): so solta
+    if (instance_ && plugin_ && callPlugin && wglGetCurrentContext()) {
         GlGuard guard;
         GlGuard::setDefaults(0, std::max(width_, 1), std::max(height_, 1));
         const CallResult r = plugin_->call(fn::DeinstantiateGL, 0, instance_);
@@ -280,7 +266,6 @@ void FfglInstance::fault(const std::string& what, unsigned long code)
     log::warn("Plugin FFGL \"" + name() + "\" (" + entry_->info.fileName + ") " + text);
     Catalog::instance().markSessionFault(entry_->info.path, faultReason_);
     seenEpoch_ = Catalog::instance().faultEpoch();
-    // O estado interno do plugin nao e confiavel: solta a instancia sem chamar o plugin
     instance_ = nullptr;
     if (pluginHeld_) {
         releasePlugin(entry_->info.path, true);
@@ -319,7 +304,6 @@ void FfglInstance::setParams(const media::ParamSet& params)
 bool FfglInstance::ensureReady(int w, int h)
 {
     Catalog& catalog = Catalog::instance();
-    // Plugin bloqueado na sessao (por esta ou outra instancia): passagem direta ate o usuario reativar
     if (catalog.faultEpoch() != seenEpoch_ || faulted_) {
         seenEpoch_ = catalog.faultEpoch();
         std::string reason;
@@ -331,16 +315,16 @@ bool FfglInstance::ensureReady(int w, int h)
             }
             return false;
         }
-        if (faulted_) { // reativado pelo usuario: recomeca do zero
+        if (faulted_) {
             faulted_ = false;
             faultReason_.clear();
             teardown(false);
         }
         if (!instance_)
-            failMessage_.clear(); // "Tentar de novo" tambem vale para quem so falhou ao iniciar
+            failMessage_.clear();
     }
     if (!failMessage_.empty() && !instance_)
-        return false; // ja falhou ao iniciar: so tenta de novo quando o usuario reativar ou o catalogo mudar
+        return false;
 
     if (!pluginHeld_) {
         std::string error;
@@ -383,7 +367,7 @@ bool FfglInstance::ensureReady(int w, int h)
             fault("exceção em FF_SET_HOSTINFO", hi.exception);
             return false;
         }
-        std::fill(sentKnown_.begin(), sentKnown_.end(), 0); // plugin novo: reenvia tudo
+        std::fill(sentKnown_.begin(), sentKnown_.end(), 0);
     } else if (w != width_ || h != height_) {
         GlGuard guard;
         GlGuard::setDefaults(0, w, h);
@@ -418,7 +402,7 @@ void FfglInstance::flushParams()
         return true;
     };
 
-    for (const int i : pulseOff_) { // eventos disparados no quadro anterior voltam a zero
+    for (const int i : pulseOff_) {
         PluginValue off;
         off.f = 0.0f;
         if (!send(static_cast<size_t>(i), off, false))
@@ -500,8 +484,6 @@ void FfglInstance::process(const fx::EffectContext& ctx, GLuint inputTex, int w,
     FboPool::Lease mid = pool->acquire(w, h);
     {
         GlGuard guard;
-        // Entrada: do alpha reto para o premultiplicado do FFGL (e linha 0 na base), escrita no proprio destino, que so
-        // volta a ser escrito depois que o plugin termina de ler
         if (wantsInput)
             convert(inputTex, w, h, output, false, ctx.topOrigin);
 
@@ -539,7 +521,7 @@ void FfglInstance::process(const fx::EffectContext& ctx, GLuint inputTex, int w,
             const CallResult r = plugin_->callPtr(fn::ProcessOpenGL, &pogl, instance_);
             if (!r.ok) {
                 fault("exceção em FF_PROCESS_OPENGL", r.exception);
-            } else if (r.u32() == FF_FAIL) { // so os 32 bits baixos valem (resultado FFResult)
+            } else if (r.u32() == FF_FAIL) {
                 fail("o plugin recusou o quadro (FF_PROCESS_OPENGL)");
             } else {
                 failMessage_.clear();
@@ -550,7 +532,7 @@ void FfglInstance::process(const fx::EffectContext& ctx, GLuint inputTex, int w,
     }
 
     if (ok)
-        convert(mid->texture(), w, h, output, true, ctx.topOrigin); // premultiplicado -> reto, linha 0 de volta
+        convert(mid->texture(), w, h, output, true, ctx.topOrigin);
     else
         pass(inputTex, w, h, output);
 }
@@ -565,7 +547,6 @@ bool FfglInstance::pollParamChanges(media::ParamValues& values)
         return false;
     lastPoll_ = now;
 
-    // Le o que o plugin tem agora (um plugin com interface propria pode ter mudado por conta propria)
     std::vector<PluginValue> current = sent_;
     std::vector<char> changed(sent_.size(), 0);
     for (size_t i = 0; i < sent_.size(); ++i) {
@@ -612,4 +593,4 @@ bool FfglInstance::pollParamChanges(media::ParamValues& values)
     return any;
 }
 
-} // namespace bsl::ffgl
+}

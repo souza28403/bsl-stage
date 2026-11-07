@@ -22,7 +22,6 @@ void main()
     float a = radians(angle);
     vec2 dir = vec2(cos(a), sin(a));
     float t = dot(uv, dir) * scale;
-    // ondulação perpendicular à direção do gradiente
     float side = dot(uv, vec2(-dir.y, dir.x));
     t += swirl * 0.5 * sin(side * 5.0 * scale + TIME * speed * 2.0);
     t += TIME * speed * 0.5;

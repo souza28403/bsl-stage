@@ -26,9 +26,9 @@ namespace {
 
 constexpr int kMaxRestarts = 3;
 constexpr unsigned kRestartDelaysMs[kMaxRestarts] = {1000, 2000, 4000};
-constexpr unsigned kHangTimeoutMs = 12000;     // sem nenhuma mensagem do worker
-constexpr unsigned kStartTimeoutMs = 20000;    // do CreateProcess ate o "hello"
-constexpr unsigned kStableMs = 20000;          // rodou isto sem cair: zera a contagem de reinicios
+constexpr unsigned kHangTimeoutMs = 12000;
+constexpr unsigned kStartTimeoutMs = 20000;
+constexpr unsigned kStableMs = 20000;
 
 std::atomic<int> g_hostCounter{0};
 
@@ -42,9 +42,7 @@ std::mutex g_liveMutex;
 std::condition_variable g_liveCv;
 int g_liveSupervisors = 0;
 
-} // namespace
-
-// ----------------------------------------------------------------------------- Core
+}
 
 struct WorkerHost::Core : std::enable_shared_from_this<WorkerHost::Core>
 {
@@ -55,18 +53,15 @@ struct WorkerHost::Core : std::enable_shared_from_this<WorkerHost::Core>
         unsigned long pid = 0;
         bool gotHello = false;
         bool gotFrame = false;
-        std::string fatal; // motivo de erro fatal enviado pelo worker
+        std::string fatal;
         Clock::time_point started;
     };
 
-    // Recebimento de quadros (protegido por frameMutex)
     struct Receiver
     {
         FrameAccess::Kind kind = FrameAccess::Kind::Shm;
-        // shm
         void* view = nullptr;
         int shmW = 0, shmH = 0;
-        // textura
         ComPtr<ID3D11Texture2D> shared[2];
         ComPtr<IDXGIKeyedMutex> keyed[2];
         ComPtr<ID3D11Texture2D> mailbox;
@@ -100,13 +95,12 @@ struct WorkerHost::Core : std::enable_shared_from_this<WorkerHost::Core>
             CloseHandle(wakeEvent);
     }
 
-    // --- estado ---
     int hostId = 0;
     std::atomic<bool> stop{false};
     HANDLE stopEvent = nullptr;
     HANDLE wakeEvent = nullptr;
 
-    mutable std::mutex mutex; // snap, open, events, outbox
+    mutable std::mutex mutex;
     HostSnapshot snap;
     WorkerJson open;
     std::deque<WorkerJson> events;
@@ -114,13 +108,12 @@ struct WorkerHost::Core : std::enable_shared_from_this<WorkerHost::Core>
     std::string transportRequest = "auto";
     std::string workerStatusText;
 
-    // D3D do app (so ponteiros COM: este objeto pode sobreviver ao WorkerHost)
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11Device1> device1;
     ComPtr<ID3D11DeviceContext> context;
     bool haveLuid = false;
     LUID luid{};
-    bool forceShm = false; // a textura compartilhada nao abriu: nas proximas vezes so shm
+    bool forceShm = false;
 
     std::mutex frameMutex;
     Receiver rx;
@@ -129,7 +122,6 @@ struct WorkerHost::Core : std::enable_shared_from_this<WorkerHost::Core>
 
     std::thread thread;
 
-    // --- API usada pelo supervisor ---
     void setState(HostState s, const std::string& text, bool warning = false)
     {
         std::lock_guard lk(mutex);
@@ -154,8 +146,6 @@ struct WorkerHost::Core : std::enable_shared_from_this<WorkerHost::Core>
     void onFrame(const WorkerJson& m, Run& run);
     bool flushOutbox(Run& run);
 };
-
-// ----------------------------------------------------------------------------- mensagens
 
 void WorkerHost::Core::onMessage(const WorkerJson& m, Run& run)
 {
@@ -331,8 +321,6 @@ void WorkerHost::Core::onFrame(const WorkerJson& m, Run& run)
     rx.seq = frameCounter.fetch_add(1) + 1;
 }
 
-// ----------------------------------------------------------------------------- supervisor
-
 bool WorkerHost::Core::flushOutbox(Run& run)
 {
     std::deque<WorkerJson> pending;
@@ -422,7 +410,6 @@ std::string WorkerHost::Core::runOnce(int attempt, bool& fatal, Clock::duration&
     bool quitSent = false;
 
     auto finish = [&](const std::string& why) -> std::string {
-        // Encerra o worker: pede "quit" se ainda de pe, senao mata
         if (WaitForSingleObject(run.process, 0) == WAIT_TIMEOUT) {
             if (!quitSent && run.pipe != INVALID_HANDLE_VALUE && run.gotHello) {
                 {
@@ -432,7 +419,6 @@ std::string WorkerHost::Core::runOnce(int attempt, bool& fatal, Clock::duration&
                 }
                 flushOutbox(run);
             }
-            // Conversao do Office em andamento pode demorar para fechar; o resto sai em ms
             if (WaitForSingleObject(run.process, why.empty() ? 6000 : 1500) != WAIT_OBJECT_0)
                 TerminateProcess(run.process, 1);
             WaitForSingleObject(run.process, 2000);
@@ -455,13 +441,11 @@ std::string WorkerHost::Core::runOnce(int attempt, bool& fatal, Clock::duration&
         healthy = lasted > std::chrono::milliseconds(kStableMs) && run.gotFrame;
         {
             std::lock_guard lk(frameMutex);
-            // Mantem o recebimento so enquanto o worker vive; o proximo reabre pelas mensagens tex/shm
             rx.reset();
         }
         return why;
     };
 
-    // --- aguarda a conexao do worker ---
     {
         OVERLAPPED ov{};
         ov.hEvent = cev;
@@ -487,7 +471,6 @@ std::string WorkerHost::Core::runOnce(int attempt, bool& fatal, Clock::duration&
             return finish("falha ao conectar ao processo auxiliar");
     }
 
-    // --- mensagem open ---
     {
         WorkerJson open_;
         std::string transport;
@@ -505,7 +488,6 @@ std::string WorkerHost::Core::runOnce(int attempt, bool& fatal, Clock::duration&
         outbox.push_front(std::move(open_));
     }
 
-    // --- laco de servico ---
     std::string pending;
     std::vector<char> buf(64 * 1024);
     OVERLAPPED rov{};
@@ -529,7 +511,7 @@ std::string WorkerHost::Core::runOnce(int attempt, bool& fatal, Clock::duration&
     for (;;) {
         HANDLE waits[4] = {rev, run.process, stopEvent, wakeEvent};
         const DWORD r = WaitForMultipleObjects(4, waits, FALSE, 250);
-        if (r == WAIT_OBJECT_0 + 2) { // pedido de parada do app
+        if (r == WAIT_OBJECT_0 + 2) {
             quitSent = false;
             return finish(std::string());
         }
@@ -567,7 +549,6 @@ std::string WorkerHost::Core::runOnce(int attempt, bool& fatal, Clock::duration&
             if (!startRead())
                 return finish("a conexão com o processo auxiliar caiu");
         }
-        // Escritas pendentes (open, comandos, ping)
         if (!flushOutbox(run))
             return finish("não foi possível falar com o processo auxiliar");
 
@@ -637,8 +618,6 @@ void WorkerHost::Core::supervise()
     g_liveCv.notify_all();
 }
 
-// ----------------------------------------------------------------------------- WorkerHost
-
 WorkerHost::WorkerHost() = default;
 
 WorkerHost::~WorkerHost()
@@ -687,7 +666,7 @@ void WorkerHost::stop()
     core_->stop = true;
     SetEvent(core_->stopEvent);
     if (core_->thread.joinable())
-        core_->thread.detach(); // o Core vive ate a thread terminar
+        core_->thread.detach();
     core_.reset();
 }
 
@@ -706,7 +685,7 @@ void WorkerHost::send(WorkerJson msg)
     {
         std::lock_guard lk(core_->mutex);
         if (core_->snap.state != HostState::Running && core_->snap.state != HostState::Starting)
-            return; // sem worker no momento: o estado atual vai no proximo "open"
+            return;
         core_->outbox.push_back(std::move(msg));
         if (core_->outbox.size() > 512)
             core_->outbox.pop_front();
@@ -790,4 +769,4 @@ bool WorkerHost::processRunning(unsigned long pid)
     return alive;
 }
 
-} // namespace bsl::media
+}

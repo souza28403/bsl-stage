@@ -125,7 +125,7 @@
 
         <div class="main-content">
             <div class="card" style="border-left-color: #333;">
-                <h3 style="color: #fff; margin-top: 0;">OVERVIEW DE COMPOSIÇÃO (RESOLUME)</h3>
+                <h3 style="color: #fff; margin-top: 0;">OVERVIEW DE COMPOSIÇÃO</h3>
                 <div class="canvas-container">
                     <canvas id="mapaCanvas"></canvas>
                     <button style="margin-top: 20px; width: 100%; background: #1a1a1a; border: 1px solid #333; color: #fff;" onclick="baixarMapaGeral()">⬇ EXPORTAR OVERVIEW MAP (.PNG)</button>
@@ -203,7 +203,7 @@
         let html = `<table><thead><tr>
             <th>Identificação</th>
             <th>Físico (NovaLCT)</th>
-            <th>Proporção Resolume</th>
+            <th>Proporção da composição</th>
             <th style="text-align:center;">Pattern</th>
             <th style="text-align:center;">Ação</th>
         </tr></thead><tbody>`;
@@ -411,7 +411,7 @@
     function baixarMapaGeral() {
         if(fatias.length === 0) { alert("Adicione ao menos um painel."); return; }
         const link = document.createElement('a');
-        link.download = 'BSLLight_Resolume_Map.png';
+        link.download = 'BSLLight_Map.png';
         link.href = document.getElementById('mapaCanvas').toDataURL('image/png');
         link.click();
     }

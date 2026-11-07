@@ -20,7 +20,6 @@ namespace {
 
 constexpr int kThumbW = 160;
 constexpr int kThumbH = 90;
-// Cartao do alvo: tamanhos em dp (a miniatura de 160x90 e so a resolucao da textura)
 float cardW() { return dp(176.0f); }
 float cardH() { return dp(6.0f + 90.0f + 52.0f); }
 const char* const kPopupName = "Escolher alvo da captura";
@@ -39,7 +38,7 @@ struct ChooserState
     std::vector<media::MonitorTarget> monitors;
     std::vector<media::WindowTarget> windows;
     std::map<std::string, Thumb> thumbs;
-    std::deque<std::string> pending; // chaves aguardando miniatura
+    std::deque<std::string> pending;
 };
 ChooserState g_state;
 
@@ -84,7 +83,6 @@ void uploadThumb(Thumb& t, const media::ThumbRgba& img)
     t.tex = Texture(id, img.w, img.h);
 }
 
-// Gera poucas miniaturas por quadro (PrintWindow/BitBlt custam alguns ms cada)
 void pumpThumbs()
 {
     for (int n = 0; n < 2 && !g_state.pending.empty(); ++n) {
@@ -109,7 +107,6 @@ void pumpThumbs()
     }
 }
 
-// Texto cortado na largura do cartao (sem partir UTF-8)
 void drawClipped(ImDrawList* dl, ImVec2 pos, float width, ImU32 color, const std::string& text)
 {
     dl->PushClipRect(pos, ImVec2(pos.x + width, pos.y + ImGui::GetFontSize() + dp(4.0f)), true);
@@ -117,7 +114,6 @@ void drawClipped(ImDrawList* dl, ImVec2 pos, float width, ImU32 color, const std
     dl->PopClipRect();
 }
 
-// Cartao clicavel com miniatura. true quando clicado.
 bool card(const std::string& key, const std::string& title, const std::string& subtitle, bool current)
 {
     const ImVec2 a = ImGui::GetCursorScreenPos();
@@ -149,7 +145,6 @@ bool card(const std::string& key, const std::string& title, const std::string& s
     return pressed;
 }
 
-// Quebra de linha dos cartoes conforme a largura disponivel
 void cardFlow(int& column, int perRow)
 {
     ++column;
@@ -159,7 +154,7 @@ void cardFlow(int& column, int perRow)
         column = 0;
 }
 
-} // namespace
+}
 
 void requestCaptureTarget(int deck, int layer, int column)
 {
@@ -193,7 +188,7 @@ void drawCaptureTargetChooser(PanelContext& ctx)
     ImGui::SetNextWindowSize(dp(820.0f, 560.0f), ImGuiCond_Appearing);
     bool keepOpen = true;
     if (!ImGui::BeginPopupModal(kPopupName, &keepOpen, ImGuiWindowFlags_NoSavedSettings)) {
-        if (!ImGui::IsPopupOpen(kPopupName)) { // fechou por fora
+        if (!ImGui::IsPopupOpen(kPopupName)) {
             g_state.open = false;
             g_state.thumbs.clear();
         }
@@ -211,7 +206,7 @@ void drawCaptureTargetChooser(PanelContext& ctx)
                 current = *t;
         }
     }
-    if (!clip) { // a celula mudou enquanto a janela estava aberta
+    if (!clip) {
         ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
         g_state.open = false;
@@ -282,4 +277,4 @@ void drawCaptureTargetChooser(PanelContext& ctx)
     ImGui::EndPopup();
 }
 
-} // namespace bsl::ui
+}

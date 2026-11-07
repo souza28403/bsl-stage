@@ -1,5 +1,5 @@
 #include "FFGLGradients.h"
-#include <math.h>//floor
+#include <math.h>
 using namespace ffglex;
 
 enum ParamType : FFUInt32
@@ -16,16 +16,16 @@ enum ParamType : FFUInt32
 };
 
 static CFFGLPluginInfo PluginInfo(
-	PluginFactory< FFGLGradients >,// Create method
-	"RS01",                        // Plugin unique ID
-	"Gradient Example",            // Plugin name
-	2,                             // API major version number
-	1,                             // API minor version number
-	1,                             // Plugin major version number
-	000,                           // Plugin minor version number
-	FF_SOURCE,                     // Plugin type
-	"Sample FFGL Gradients plugin",// Plugin description
-	"Resolume FFGL Example"        // About
+	PluginFactory< FFGLGradients >,
+	"RS01",
+	"Gradient Example",
+	2,
+	1,
+	1,
+	000,
+	FF_SOURCE,
+	"Sample FFGL Gradients plugin",
+	"FFGL Example"
 );
 
 static const char vertexShaderCode[] = R"(#version 410 core
@@ -59,12 +59,10 @@ FFGLGradients::FFGLGradients() :
 	rgbLeftLocation( -1 ),
 	rgbRightLocation( -1 )
 {
-	// Input properties
 	SetMinInputs( 0 );
 	SetMaxInputs( 0 );
 
 	hsba2.hue = 0.5f;
-	// Parameters
 	SetParamInfof( PT_RED1, "Red 1", FF_TYPE_RED );
 	SetParamInfof( PT_GREEN1, "Green 1", FF_TYPE_GREEN );
 	SetParamInfof( PT_BLUE1, "Blue 1", FF_TYPE_BLUE );
@@ -90,12 +88,10 @@ FFResult FFGLGradients::InitGL( const FFGLViewportStruct* vp )
 		return FF_FAIL;
 	}
 
-	//FFGL requires us to leave the context in a default state on return, so use this scoped binding to help us do that.
 	ScopedShaderBinding shaderBinding( shader.GetGLID() );
 	rgbLeftLocation  = shader.FindUniform( "RGBALeft" );
 	rgbRightLocation = shader.FindUniform( "RGBARight" );
 
-	//Use base-class init as success result so that it retains the viewport.
 	return CFFGLPlugin::InitGL( vp );
 }
 FFResult FFGLGradients::ProcessOpenGL( ProcessOpenGLStruct* pGL )
@@ -105,7 +101,6 @@ FFResult FFGLGradients::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 	HSVtoRGB( hue2, hsba2.sat, hsba2.bri, rgba2[ 0 ], rgba2[ 1 ], rgba2[ 2 ] );
 	rgba2[ 3 ] = hsba2.alpha;
 
-	//FFGL requires us to leave the context in a default state on return, so use this scoped binding to help us do that.
 	ScopedShaderBinding shaderBinding( shader.GetGLID() );
 	glUniform4f( rgbLeftLocation, rgba1.red, rgba1.green, rgba1.blue, rgba1.alpha );
 	glUniform4f( rgbRightLocation, rgba2[ 0 ], rgba2[ 1 ], rgba2[ 2 ], rgba2[ 3 ] );

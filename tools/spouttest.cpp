@@ -1,7 +1,3 @@
-// bslstage_spouttest: cria um sender Spout (bsl::SpoutOutput), recebe com um receiver no mesmo
-// processo e confere os pixels. Precisa de GPU/driver com OpenGL e D3D11 (janela GLFW oculta).
-// Código de saída 0 = passou.
-
 #include "output/SpoutOutput.h"
 #include "spouttest_source.h"
 
@@ -29,12 +25,10 @@ constexpr int kH = 32;
 
 struct Px { int r, g, b; };
 
-// Quadrantes (em linhas de baixo para cima, como o GL guarda): embaixo-esq vermelho, embaixo-dir verde,
-// em cima-esq azul, em cima-dir amarelo.
 Px quadrantColor(int x, int y)
 {
     const bool right = x >= kW / 2;
-    const bool top = y >= kH / 2; // y cresce para cima no buffer GL
+    const bool top = y >= kH / 2;
     if (!top)
         return right ? Px{0, 255, 0} : Px{255, 0, 0};
     return right ? Px{255, 255, 0} : Px{0, 0, 255};
@@ -45,7 +39,7 @@ bool closeTo(Px a, Px b)
     return std::abs(a.r - b.r) <= 3 && std::abs(a.g - b.g) <= 3 && std::abs(a.b - b.b) <= 3;
 }
 
-} // namespace
+}
 
 int main()
 {
@@ -61,7 +55,6 @@ int main()
     }
     glfwMakeContextCurrent(window);
 
-    // Textura de origem com os quadrantes
     std::vector<unsigned char> src(static_cast<size_t>(kW) * kH * 4);
     for (int y = 0; y < kH; ++y)
         for (int x = 0; x < kW; ++x) {
@@ -92,14 +85,12 @@ int main()
             std::printf("FAIL: SpoutOutput::send devolveu false (iteracao %d)\n", i);
             return 1;
         }
-        if (rx.IsUpdated()) { // tamanho do sender mudou / primeira conexao
+        if (rx.IsUpdated()) {
             rw = static_cast<int>(rx.GetSenderWidth());
             rh = static_cast<int>(rx.GetSenderHeight());
             glBindTexture(GL_TEXTURE_2D, rxTex);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, rw, rh, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
         }
-        // O sender inverte (textura GL origem embaixo -> compartilhada origem em cima, como nos outros
-        // apps de VJ); um receiver GL inverte de volta com bInvert = true.
         if (rx.ReceiveTexture(rxTex, GL_TEXTURE_2D, true) && rx.IsConnected() && rw == kW && rh == kH && !rx.IsUpdated())
             received = rx.IsFrameNew() || i > 5;
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -133,8 +124,6 @@ int main()
 
     rx.ReleaseReceiver();
 
-    // Segunda parte: o mesmo sender visto pela fonte Spout do app (gerador "gen:spout", entrada de qualquer programa DX/GL).
-    // A textura da fonte sai com a linha 0 = topo da imagem: o topo do GL (y >= kH/2 no buffer do sender) vem primeiro.
     {
         spouttest::AppSourceResult app;
         const bool ran = spouttest::receiveWithAppSource("BSLStageSpoutTest", [&] { out.send(srcTex, kW, kH); }, app);
@@ -150,7 +139,6 @@ int main()
             const int ays[2] = {kH / 4, 3 * kH / 4};
             for (int yi = 0; yi < 2; ++yi)
                 for (int xi = 0; xi < 2; ++xi) {
-                    // y da memoria cresce para baixo na imagem; o quadrante de origem tem y GL = kH - 1 - y
                     const Px want = quadrantColor(axs[xi], kH - 1 - ays[yi]);
                     const unsigned char* p = &app.rgba[(static_cast<size_t>(ays[yi]) * kW + static_cast<size_t>(axs[xi])) * 4];
                     const Px got{p[0], p[1], p[2]};

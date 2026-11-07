@@ -17,7 +17,7 @@ user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 shell32 = ctypes.WinDLL("shell32", use_last_error=True)
 
-try:  # coordenadas em pixels fisicos, iguais as do app
+try:
     ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
 except Exception:
     pass
@@ -35,6 +35,7 @@ VK = {
     "left": 0x25, "up": 0x26, "right": 0x27, "down": 0x28, "backspace": 0x08, "home": 0x24, "end": 0x23,
     "space": 0x20, "f4": 0x73,
 }
+VK.update({"f%d" % n: 0x6F + n for n in range(1, 13)})
 EXTENDED = {0x25, 0x26, 0x27, 0x28, 0x2E, 0x24, 0x23}
 
 ULONG_PTR = ctypes.c_size_t
@@ -89,6 +90,72 @@ class QaFailure(Exception):
     pass
 
 
+class ForeignWindow:
+    WS_OVERLAPPEDWINDOW, WS_VISIBLE, ES_MULTILINE, ES_AUTOVSCROLL = 0x00CF0000, 0x10000000, 0x0004, 0x0040
+    WM_NULL, SMTO_ABORTIFHUNG, SMTO_BLOCK = 0x0000, 0x0002, 0x0001
+
+    def __init__(self, title="BSL Stage QA - segundo plano", rect=(60, 60, 560, 320)):
+        user32.CreateWindowExW.restype = wintypes.HWND
+        user32.CreateWindowExW.argtypes = [wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_int,
+                                           ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.HWND, wintypes.HMENU,
+                                           wintypes.HINSTANCE, ctypes.c_void_p]
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        user32.SendMessageTimeoutW.restype = ctypes.c_size_t
+        user32.SendMessageTimeoutW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM, wintypes.UINT,
+                                               wintypes.UINT, ctypes.c_void_p]
+        user32.IsHungAppWindow.argtypes = [wintypes.HWND]
+        x, y, w, h = rect
+        style = self.WS_OVERLAPPEDWINDOW | self.WS_VISIBLE | self.ES_MULTILINE | self.ES_AUTOVSCROLL
+        self.hwnd = user32.CreateWindowExW(0, "EDIT", title, style, x, y, w, h, None, None, None, None)
+        if not self.hwnd:
+            raise QaFailure("nao foi possivel criar a janela de teste do segundo plano")
+        self.pump()
+
+    def pump(self):
+        msg = wintypes.MSG()
+        while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
+            user32.TranslateMessage(ctypes.byref(msg))
+            user32.DispatchMessageW(ctypes.byref(msg))
+
+    def activate(self, timeout=3.0):
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            fg = user32.GetForegroundWindow()
+            cur = kernel32.GetCurrentThreadId()
+            fg_thread = user32.GetWindowThreadProcessId(fg, None) if fg else 0
+            if fg_thread and fg_thread != cur:
+                user32.AttachThreadInput(cur, fg_thread, True)
+            user32.SetForegroundWindow(self.hwnd)
+            if fg_thread and fg_thread != cur:
+                user32.AttachThreadInput(cur, fg_thread, False)
+            self.pump()
+            time.sleep(0.1)
+            if user32.GetForegroundWindow() == self.hwnd:
+                return True
+        return False
+
+    def is_foreground(self):
+        return user32.GetForegroundWindow() == self.hwnd
+
+    def text(self):
+        buf = ctypes.create_unicode_buffer(4096)
+        user32.GetWindowTextW(self.hwnd, buf, 4096)
+        return buf.value
+
+    def close(self):
+        if self.hwnd:
+            user32.DestroyWindow(self.hwnd)
+            self.hwnd = 0
+
+
+def ping_window(hwnd, timeout_ms=1500):
+    t0 = time.time()
+    result = ctypes.c_size_t()
+    ok = user32.SendMessageTimeoutW(hwnd, ForeignWindow.WM_NULL, 0, 0, ForeignWindow.SMTO_ABORTIFHUNG | ForeignWindow.SMTO_BLOCK,
+                                    timeout_ms, ctypes.byref(result))
+    return bool(ok), (time.time() - t0) * 1000.0, bool(user32.IsHungAppWindow(hwnd))
+
+
 class Rect:
     def __init__(self, r):
         self.x0, self.y0, self.x1, self.y1 = r
@@ -141,10 +208,17 @@ def _matches(item_label, query):
 class App:
     """Uma instancia do BSLStage controlada por input real."""
 
-    def __init__(self, exe, qa_dir, args=(), size=(1600, 900), pos=(40, 40)):
+    def __init__(self, exe, qa_dir, args=(), size=(1600, 900), pos=(40, 40), keep=False):
         self.exe = exe
         self.dir = qa_dir
-        shutil.rmtree(qa_dir, ignore_errors=True)  # comeca limpo: settings.json, imgui.ini e log novos
+        if not keep:
+            shutil.rmtree(qa_dir, ignore_errors=True)
+        else:
+            for f in ("snapshot.json", "summary.json"):
+                try:
+                    os.remove(os.path.join(qa_dir, f))
+                except OSError:
+                    pass
         os.makedirs(qa_dir, exist_ok=True)
         cmd = [exe, "--qa", qa_dir, "--window-size", str(size[0]), str(size[1])] + list(args)
         self.proc = subprocess.Popen(cmd, cwd=os.path.dirname(exe))
@@ -164,7 +238,6 @@ class App:
         self.move_window(pos[0], pos[1])
         self.wait_frames(10)
 
-    # ------------------------------------------------------------ janela
     def _find_window(self):
         found = []
 
@@ -178,7 +251,6 @@ class App:
                 if buf.value.startswith("GLFW"):
                     title = ctypes.create_unicode_buffer(64)
                     user32.GetWindowTextW(hwnd, title, 64)
-                    # A janela de saida (monitor) tambem e GLFW: a principal e a que tem o titulo do app
                     if title.value.startswith("BSL Stage") and "— Saída" not in title.value:
                         found.append(hwnd)
             return True
@@ -200,7 +272,7 @@ class App:
         return r.right - r.left, r.bottom - r.top
 
     def move_window(self, x, y):
-        user32.SetWindowPos(self.hwnd, 0, x, y, 0, 0, 0x0001 | 0x0004)  # NOSIZE | NOZORDER
+        user32.SetWindowPos(self.hwnd, 0, x, y, 0, 0, 0x0001 | 0x0004)
         self.focus()
 
     def resize_client(self, w, h):
@@ -238,7 +310,6 @@ class App:
         self.wait_frames(8)
 
     def focus(self):
-        # AttachThreadInput libera o SetForegroundWindow sem apertar teclas (Alt ativaria a navegacao do ImGui)
         fg = user32.GetForegroundWindow()
         cur = kernel32.GetCurrentThreadId()
         fg_thread = user32.GetWindowThreadProcessId(fg, None) if fg else 0
@@ -249,7 +320,6 @@ class App:
             user32.AttachThreadInput(cur, fg_thread, False)
         time.sleep(0.1)
 
-    # ------------------------------------------------------------ snapshot
     def read(self):
         path = os.path.join(self.dir, "snapshot.json")
         for _ in range(5):
@@ -329,11 +399,8 @@ class App:
             time.sleep(0.05)
         raise QaFailure("estado esperado nao ocorreu: " + what)
 
-    # ------------------------------------------------------------ input
     def to_screen(self, x, y):
         ox, oy = self.client_origin()
-        # O app nao e "DPI aware": com a escala do Windows em 120%/150% a area cliente tem mais pixels reais do que os
-        # que ele conta (snapshot "win"). O driver e DPI aware, entao converte.
         kx = ky = 1.0
         win = (self.snapshot or {}).get("win")
         if win and win[0] > 0 and win[1] > 0:
@@ -420,7 +487,6 @@ class App:
             self.key("esc")
 
     def ensure_focus(self):
-        # Outra janela pode ter roubado o foco entre dois passos (o teclado iria para ela): traz o app de volta
         if user32.GetForegroundWindow() != self.hwnd:
             self.focus()
 
@@ -439,9 +505,17 @@ class App:
             self.wait_frames(2)
 
     def hold_key(self, name, seconds):
-        _key(VK[name])
+        self.key_down(name)
         time.sleep(seconds)
-        _key(VK[name], up=True)
+        self.key_up(name)
+
+    def key_down(self, name):
+        """Aperta e segura a tecla (atalho no modo 'segurar'): solte com key_up."""
+        self.ensure_focus()
+        _key(VK[name] if name in VK else ord(name.upper()))
+
+    def key_up(self, name):
+        _key(VK[name] if name in VK else ord(name.upper()), up=True)
 
     def type_text_nowait(self, text):
         self.ensure_focus()
@@ -455,7 +529,6 @@ class App:
         self.type_text_nowait(text)
         self.wait_frames(2)
 
-    # ------------------------------------------------------------ comandos para o app
     def command(self, line):
         self._cmd_serial += 1
         tmp = os.path.join(self.dir, "tmp_cmd.txt")
@@ -481,7 +554,6 @@ class App:
         self.hover(at_item.rect.cx, at_item.rect.cy)
         self.command("drop " + "|".join(os.path.abspath(f) for f in files))
 
-    # ------------------------------------------------------------ dialogos nativos do Windows
     def find_dialog(self, timeout=6.0):
         t0 = time.time()
         while time.time() - t0 < timeout:
@@ -505,10 +577,9 @@ class App:
         return 0
 
     def dialog_close(self, dlg):
-        user32.PostMessageW(dlg, 0x0010, 0, 0)  # WM_CLOSE
+        user32.PostMessageW(dlg, 0x0010, 0, 0)
         time.sleep(0.3)
 
-    # ------------------------------------------------------------ encerramento
     def quit(self):
         if self.alive():
             try:

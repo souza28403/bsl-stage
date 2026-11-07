@@ -8,7 +8,6 @@ public:
 	AddSubtract();
 	~AddSubtract();
 
-	//CFFGLPlugin
 	FFResult InitGL( const FFGLViewportStruct* vp ) override;
 	FFResult ProcessOpenGL( ProcessOpenGLStruct* pGL ) override;
 	FFResult DeInitGL() override;
@@ -18,8 +17,8 @@ public:
 	float GetFloatParameter( unsigned int index ) override;
 
 private:
-	ffglex::FFGLShader shader;  //!< Utility to help us compile and link some shaders into a program.
-	ffglex::FFGLScreenQuad quad;//!< Utility to help us render a full screen quad.
+	ffglex::FFGLShader shader;
+	ffglex::FFGLScreenQuad quad;
 
 	float r, g, b;
 };

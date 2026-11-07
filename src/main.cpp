@@ -10,16 +10,6 @@
 
 namespace {
 
-// Linha de comando:  --demo <pasta>   --screenshot <arquivo.png> <segundos>
-//                    --output-window   --screenshot-output <arquivo.png> <segundos>   --mode mapping|pixelmap
-//                    --identify   --test-missing-monitor   --window-size <w> <h>
-//                    --trigger <camada> <coluna>   (testes: dispara o clip depois do --demo; repetivel)
-//                    --ui-scale <f>   --ui-mode window|system|fixed   (escala da interface, para testes)
-//                    --tab efeitos|arquivos|geradores|camada|composicao|saida   (aba a mostrar, para testes)
-//                    --plugins <pasta>   (testes: pasta extra de plugins FFGL, sem gravar nas configuracoes)
-//                    --ndi-lib <dll>   (testes: carrega o runtime do NDI deste caminho)
-//                    --qa <pasta>   (teste de interface: ver app/Qa.h e tools/uiqa.py)
-//                    <projeto>.bslstage   (primeiro argumento posicional: abre o projeto)
 bsl::AppOptions parseArgs()
 {
     bsl::AppOptions options;
@@ -44,7 +34,6 @@ bsl::AppOptions parseArgs()
             options.startInMapping = std::wcscmp(mode, L"mapping") == 0;
             options.startInPixelMap = std::wcscmp(mode, L"pixelmap") == 0;
         } else if (argv[i][0] != L'-' && options.projectPath.empty()) {
-            // Primeiro argumento posicional <projeto>.bslstage
             const std::filesystem::path file(argv[i]);
             if (_wcsicmp(file.extension().c_str(), L".bslstage") == 0)
                 options.projectPath = file;
@@ -69,8 +58,10 @@ bsl::AppOptions parseArgs()
         } else if (std::wcscmp(argv[i], L"--qa") == 0 && i + 1 < argc) {
             options.qaDir = argv[++i];
         } else if (std::wcscmp(argv[i], L"--tab") == 0 && i + 1 < argc) {
-            for (const wchar_t* p = argv[++i]; *p; ++p) // nomes de aba sao ASCII
+            for (const wchar_t* p = argv[++i]; *p; ++p)
                 options.focusTab += static_cast<char>(*p);
+        } else if (std::wcscmp(argv[i], L"--fake-release") == 0 && i + 1 < argc) {
+            options.fakeRelease = argv[++i];
         } else if (std::wcscmp(argv[i], L"--ndi-lib") == 0 && i + 1 < argc) {
             options.ndiLib = argv[++i];
         } else if (std::wcscmp(argv[i], L"--plugins") == 0 && i + 1 < argc) {
@@ -78,6 +69,9 @@ bsl::AppOptions parseArgs()
         } else if (std::wcscmp(argv[i], L"--fx-open") == 0 && i + 1 < argc) {
             for (const wchar_t* p = argv[++i]; *p; ++p)
                 options.fxOpen += static_cast<char>(*p);
+        } else if (std::wcscmp(argv[i], L"--dmx-demo") == 0 && i + 1 < argc) {
+            for (const wchar_t* p = argv[++i]; *p; ++p)
+                options.dmxDemo += static_cast<char>(*p);
         } else if (std::wcscmp(argv[i], L"--choose-target") == 0) {
             options.openCaptureChooser = true;
         } else if (std::wcscmp(argv[i], L"--identify") == 0) {
@@ -96,7 +90,7 @@ bsl::AppOptions parseArgs()
     return options;
 }
 
-} // namespace
+}
 
 int main()
 {

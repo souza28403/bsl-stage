@@ -26,7 +26,7 @@ bool contains(std::span<const std::string_view> list, const std::string& ext)
     return std::find(list.begin(), list.end(), ext) != list.end();
 }
 
-} // namespace
+}
 
 std::span<const std::string_view> videoExtensions()
 {
@@ -95,4 +95,4 @@ MediaKind classify(const std::filesystem::path& path)
     return MediaKind::Unknown;
 }
 
-} // namespace bsl::media
+}

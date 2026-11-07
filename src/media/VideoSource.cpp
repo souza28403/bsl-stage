@@ -26,7 +26,6 @@ bool VideoSource::open(const std::filesystem::path& path, std::string* error)
     width_ = decoder_.info().width;
     height_ = decoder_.info().height;
 
-    // Placeholder transparente 1x1 ate chegar o primeiro frame.
     Frame blank;
     blank.allocate(1, 1, PixelFormat::RGBA8);
     uploadRgbaTexture(rgbaTex_, rgbaW_, rgbaH_, blank);
@@ -85,4 +84,4 @@ void VideoSource::present(const Frame& frame)
     height_ = frame.height;
 }
 
-} // namespace bsl::media
+}

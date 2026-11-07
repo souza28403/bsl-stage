@@ -77,10 +77,10 @@ BOOL CALLBACK enumWindowsProc(HWND hwnd, LPARAM lp)
     DWORD pid = 0;
     GetWindowThreadProcessId(hwnd, &pid);
     if (pid == GetCurrentProcessId())
-        return TRUE; // janela principal e de saida do BSL Stage
+        return TRUE;
     const std::string exe = exeNameOf(pid);
     if (!exe.empty() && exe == ownExeName())
-        return TRUE; // outra instancia do BSL Stage
+        return TRUE;
 
     RECT r{};
     GetWindowRect(hwnd, &r);
@@ -121,7 +121,6 @@ BOOL CALLBACK enumMonitorsProc(HMONITOR mon, HDC, LPRECT, LPARAM lp)
     return TRUE;
 }
 
-// Cria um DIB 32 bpp top-down e devolve o ponteiro dos pixels
 HBITMAP createDib(HDC dc, int w, int h, void** bits)
 {
     BITMAPINFO bi{};
@@ -134,7 +133,6 @@ HBITMAP createDib(HDC dc, int w, int h, void** bits)
     return CreateDIBSection(dc, &bi, DIB_RGB_COLORS, bits, nullptr, 0);
 }
 
-// Reduz 'srcDc' (sw x sh) para caber em w x h com fundo escuro; devolve RGBA
 bool shrinkToThumb(HDC srcDc, int srcX, int srcY, int sw, int sh, int w, int h, ThumbRgba& out)
 {
     if (sw <= 0 || sh <= 0)
@@ -197,7 +195,7 @@ std::set<std::string> tokens(const std::string& s)
     return out;
 }
 
-} // namespace
+}
 
 std::vector<MonitorTarget> listMonitors()
 {
@@ -217,7 +215,7 @@ std::vector<WindowTarget> listWindows()
 {
     EnumData data;
     EnumWindows(enumWindowsProc, reinterpret_cast<LPARAM>(&data));
-    return data.out; // EnumWindows ja entrega na ordem Z (a de cima primeiro)
+    return data.out;
 }
 
 double titleSimilarity(const std::string& a, const std::string& b)
@@ -325,7 +323,6 @@ bool grabWindowThumb(const WindowTarget& win, int w, int h, ThumbRgba& out)
     bool ok = false;
     if (bmp && bits) {
         const HGDIOBJ old = SelectObject(mem, bmp);
-        // PW_RENDERFULLCONTENT (2): inclui janelas aceleradas por GPU
         if (PrintWindow(hwnd, mem, 2))
             ok = shrinkToThumb(mem, 0, 0, ww, wh, w, h, out);
         SelectObject(mem, old);
@@ -337,4 +334,4 @@ bool grabWindowThumb(const WindowTarget& win, int w, int h, ThumbRgba& out)
     return ok;
 }
 
-} // namespace bsl::media
+}

@@ -50,4 +50,4 @@ void TexBlitter::copy(GLuint srcTex, int srcW, int srcH, const Fbo& dst, bool li
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-} // namespace bsl::fx
+}

@@ -11,7 +11,6 @@ namespace bsl::ffgl {
 
 namespace {
 
-// Leitor de arquivo com offsets de 64 bits e limites (nunca le o arquivo inteiro: um libcef.dll tem 300 MB)
 class FileReader
 {
 public:
@@ -45,7 +44,6 @@ struct Section
     std::uint32_t rva = 0, rawSize = 0, rawPtr = 0, virtSize = 0;
 };
 
-// RVA -> offset no arquivo (0 e invalido)
 std::uint64_t rvaToOffset(const std::vector<Section>& sections, std::uint32_t rva)
 {
     for (const Section& s : sections) {
@@ -60,7 +58,7 @@ std::uint64_t rvaToOffset(const std::vector<Section>& sections, std::uint32_t rv
     return 0;
 }
 
-} // namespace
+}
 
 PeVerdict inspectPe(const std::filesystem::path& file, std::string* detail)
 {
@@ -104,7 +102,6 @@ PeVerdict inspectPe(const std::filesystem::path& file, std::string* detail)
     if (exportDir.VirtualAddress == 0 || exportDir.Size == 0)
         return fail(PeVerdict::NoPlugMain, "a DLL não exporta nada");
 
-    // Tabela de secoes
     std::vector<Section> sections;
     const std::uint64_t secOff = ntOff + 4 + sizeof(fh) + fh.SizeOfOptionalHeader;
     const unsigned nSections = std::min<unsigned>(fh.NumberOfSections, 96);
@@ -135,7 +132,7 @@ PeVerdict inspectPe(const std::filesystem::path& file, std::string* detail)
         char buf[sizeof(kWanted) + 1] = {};
         if (off == 0 || !r.read(off, buf, std::min<std::uint64_t>(sizeof(buf), r.size() - off)))
             continue;
-        if (std::memcmp(buf, kWanted, sizeof(kWanted)) == 0) // inclui o terminador
+        if (std::memcmp(buf, kWanted, sizeof(kWanted)) == 0)
             return PeVerdict::Candidate;
     }
     return fail(PeVerdict::NoPlugMain, "não exporta plugMain");
@@ -153,4 +150,4 @@ const char* peVerdictText(PeVerdict v)
     return "";
 }
 
-} // namespace bsl::ffgl
+}

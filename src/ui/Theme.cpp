@@ -19,9 +19,6 @@ ImFont* tryFont(ImGuiIO& io, const std::filesystem::path& path, float size)
     return io.Fonts->AddFontFromFileTTF(paths::toUtf8(path).c_str(), size);
 }
 
-// Mescla os icones (Lucide, ver Icons.h) na fonte recem-adicionada. Os glifos ficam na area de uso privado,
-// sem conflito com o texto. Com fontes dinamicas (ImGui 1.92+) os glifos sao gerados sob demanda no tamanho
-// em uso, entao a troca de escala em runtime nao exige reconstruir o atlas.
 void mergeIcons(ImGuiIO& io, const std::filesystem::path& fontsDir, float size)
 {
     if (fontsDir.empty())
@@ -33,13 +30,13 @@ void mergeIcons(ImGuiIO& io, const std::filesystem::path& fontsDir, float size)
     ImFontConfig cfg;
     cfg.MergeMode = true;
     cfg.PixelSnapH = true;
-    cfg.ExtraSizeScale = 0.90f;                 // o glifo do Lucide ocupa a altura toda do em; o texto Barlow e menor
-    cfg.GlyphOffset = ImVec2(0.0f, size * 0.12f); // centraliza o icone na altura das minusculas
-    cfg.GlyphMinAdvanceX = size * 1.05f;           // largura fixa: icones alinham em colunas
+    cfg.ExtraSizeScale = 0.90f;
+    cfg.GlyphOffset = ImVec2(0.0f, size * 0.12f);
+    cfg.GlyphMinAdvanceX = size * 1.05f;
     io.Fonts->AddFontFromFileTTF(paths::toUtf8(file).c_str(), size, &cfg);
 }
 
-} // namespace
+}
 
 void loadFont(ImGuiIO& io)
 {
@@ -47,7 +44,6 @@ void loadFont(ImGuiIO& io)
         ? std::filesystem::path()
         : paths::assetsDir() / L"fonts";
 
-    // a primeira fonte adicionada vira a padrao do ImGui
     g_fonts.body = tryFont(io, fontsDir.empty() ? fontsDir : fontsDir / L"Barlow-Medium.ttf", theme::kFontSize);
     if (!g_fonts.body)
         g_fonts.body = tryFont(io, L"C:\\Windows\\Fonts\\segoeui.ttf", theme::kFontSize - 1.0f);
@@ -79,7 +75,7 @@ void applyTheme(float scale)
 {
     using namespace theme;
     ImGuiStyle& s = ImGui::GetStyle();
-    s = ImGuiStyle(); // recomeça do zero: ScaleAllSizes nao pode acumular ao trocar de escala
+    s = ImGuiStyle();
 
     s.WindowPadding = ImVec2(kPadding, 8.0f);
     s.FramePadding = ImVec2(8.0f, 4.0f);
@@ -93,19 +89,19 @@ void applyTheme(float scale)
     s.WindowBorderSize = 0.0f;
     s.ChildBorderSize = 1.0f;
     s.PopupBorderSize = 1.0f;
-    s.FrameBorderSize = 1.0f; // campos com contorno fino, como nos apps Adobe
+    s.FrameBorderSize = 1.0f;
     s.TabBorderSize = 0.0f;
     s.TabBarBorderSize = 1.0f;
     s.TabBarOverlineSize = 2.0f;
     s.DockingSeparatorSize = kPanelGap;
-    s.WindowMenuButtonPosition = ImGuiDir_None; // sem o triangulo do dock ("esconder barra de abas" confunde)
+    s.WindowMenuButtonPosition = ImGuiDir_None;
 
     s.WindowRounding = kRoundingWindow;
     s.ChildRounding = kRounding;
     s.FrameRounding = kRounding;
     s.PopupRounding = kRounding;
     s.ScrollbarRounding = 8.0f;
-    s.GrabRounding = 8.0f; // alça redonda no slider
+    s.GrabRounding = 8.0f;
     s.TabRounding = kRounding;
 
     s.WindowTitleAlign = ImVec2(0.0f, 0.5f);
@@ -121,7 +117,6 @@ void applyTheme(float scale)
     c[ImGuiCol_FrameBg] = kField;
     c[ImGuiCol_FrameBgHovered] = rgb(0x1C1C1C);
     c[ImGuiCol_FrameBgActive] = rgb(0x121212);
-    // Faixa das abas no mesmo tom do painel: a separacao vem dos vaos escuros
     c[ImGuiCol_TitleBg] = kPanel;
     c[ImGuiCol_TitleBgActive] = kPanel;
     c[ImGuiCol_TitleBgCollapsed] = kPanel;
@@ -139,13 +134,12 @@ void applyTheme(float scale)
     c[ImGuiCol_Header] = kAccentSoft;
     c[ImGuiCol_HeaderHovered] = rgb(kAccentHex, 0.28f);
     c[ImGuiCol_HeaderActive] = rgb(kAccentHex, 0.38f);
-    c[ImGuiCol_Separator] = kBackground; // tambem pinta os vaos entre paineis (splitters do dock)
+    c[ImGuiCol_Separator] = kBackground;
     c[ImGuiCol_SeparatorHovered] = kAccentDim;
     c[ImGuiCol_SeparatorActive] = kAccent;
     c[ImGuiCol_ResizeGrip] = ImVec4(0, 0, 0, 0);
     c[ImGuiCol_ResizeGripHovered] = kAccentDim;
     c[ImGuiCol_ResizeGripActive] = kAccent;
-    // Abas no mesmo tom do painel; so o painel em foco ganha a linha vermelha
     c[ImGuiCol_Tab] = kPanel;
     c[ImGuiCol_TabHovered] = kPanelRaised;
     c[ImGuiCol_TabSelected] = kPanel;
@@ -165,4 +159,4 @@ void applyTheme(float scale)
     s.FontScaleDpi = scale;
 }
 
-} // namespace bsl::ui
+}

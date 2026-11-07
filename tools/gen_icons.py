@@ -14,27 +14,18 @@ INFO = os.path.join(ROOT, "tools", "data", "lucide-info.json")
 OUT = os.path.join(ROOT, "src", "ui", "Icons.h")
 LUCIDE_VERSION = "1.61.0"
 
-# Nome no Lucide -> constante (ICON_<NOME>); so os usados pela interface
 ICONS = [
-    # transporte
     ("play", "PLAY"), ("pause", "PAUSE"), ("square", "STOP"), ("minus", "MINUS"), ("plus", "PLUS"),
     ("rotate-ccw", "RESYNC"), ("skip-back", "SKIP_BACK"),
-    # camadas
     ("x", "X"), ("eye", "EYE"), ("eye-off", "EYE_OFF"),
-    # tipos de arquivo / pastas
     ("film", "FILM"), ("image", "IMAGE"), ("file-text", "FILE_TEXT"), ("presentation", "PRESENTATION"),
     ("file", "FILE"), ("globe", "GLOBE"), ("folder", "FOLDER"), ("folder-open", "FOLDER_OPEN"),
     ("corner-left-up", "CORNER_LEFT_UP"),
-    # geradores
     ("palette", "PALETTE"), ("type", "TYPE"), ("monitor", "MONITOR"), ("video", "VIDEO"), ("grid-3x3", "GRID"),
-    # clip
     ("chevron-left", "CHEVRON_LEFT"), ("chevron-right", "CHEVRON_RIGHT"), ("repeat", "REPEAT"),
     ("arrow-right-to-line", "ARROW_RIGHT_TO_LINE"), ("arrow-left-right", "ARROW_LEFT_RIGHT"),
-    # mapeamento
     ("square-plus", "SQUARE_PLUS"), ("copy", "COPY"), ("trash-2", "TRASH"), ("scan", "SCAN"),
-    # menus
     ("file-plus", "FILE_PLUS"), ("save", "SAVE"), ("save-all", "SAVE_ALL"),
-    # efeitos (Fase 4)
     ("sparkles", "SPARKLES"), ("grip-vertical", "GRIP"), ("ellipsis", "ELLIPSIS"),
     ("chevron-down", "CHEVRON_DOWN"), ("move", "MOVE"), ("sliders-horizontal", "SLIDERS"),
     ("droplet", "DROPLET"), ("contrast", "CONTRAST"), ("sun", "SUN"), ("pipette", "PIPETTE"),
@@ -42,11 +33,8 @@ ICONS = [
     ("flower-2", "FLOWER"), ("grid-2x2", "GRID_2X2"), ("zap", "ZAP"), ("blend", "BLEND"),
     ("circle-dot", "CIRCLE_DOT"), ("layers", "LAYERS"), ("refresh-cw", "REFRESH"), ("folder-cog", "FOLDER_COG"),
     ("search", "SEARCH"), ("file-code", "FILE_CODE"), ("undo-2", "UNDO"),
-    # plugins FFGL (Fase 4B)
     ("plug", "PLUG"), ("triangle-alert", "ALERT"), ("package-plus", "PACKAGE_PLUS"),
-    # audio nativo e plugins BSL Light (Fase 4C)
     ("audio-lines", "AUDIO_LINES"), ("mic", "MIC"), ("headphones", "HEADPHONES"),
-    # editor de mapeamento: ima, desfazer/refazer, vista, alinhar, distribuir e encostar
     ("magnet", "MAGNET"), ("redo-2", "REDO"), ("maximize", "MAXIMIZE"), ("ruler", "RULER"),
     ("align-start-vertical", "ALIGN_LEFT"), ("align-center-vertical", "ALIGN_CENTER_H"),
     ("align-end-vertical", "ALIGN_RIGHT"), ("align-start-horizontal", "ALIGN_TOP"),
@@ -54,9 +42,9 @@ ICONS = [
     ("align-horizontal-distribute-center", "DISTRIBUTE_H"), ("align-vertical-distribute-center", "DISTRIBUTE_V"),
     ("arrow-up-to-line", "ARROW_UP_TO_LINE"), ("arrow-down-to-line", "ARROW_DOWN_TO_LINE"),
     ("arrow-left-to-line", "ARROW_LEFT_TO_LINE"),
-    # Pixel Map: cadeado do input, exportar/importar, CSV, padrao HD
     ("lock", "LOCK"), ("lock-open", "LOCK_OPEN"), ("download", "DOWNLOAD"), ("upload", "UPLOAD"),
     ("file-spreadsheet", "FILE_SPREADSHEET"), ("image-down", "IMAGE_DOWN"), ("image-plus", "IMAGE_PLUS"),
+    ("link", "LINK"),
 ]
 
 

@@ -1,6 +1,3 @@
-// bslstage_gltest: smoke test do lado GPU (YuvConverter, VideoSource, ImageSource) com janela oculta.
-// Uso: bslstage_gltest [pasta_testmedia]
-
 #include "media/ImageSource.h"
 #include "media/VideoSource.h"
 #include "media/YuvConverter.h"
@@ -44,7 +41,6 @@ void expect(const char* name, Px got, Px want, int tol)
         ++failures;
 }
 
-// Frame YUV420P 4x4 de cor solida; 'pad' bytes extras de stride para testar GL_UNPACK_ROW_LENGTH.
 Frame solid(int y, int u, int v, ColorSpace cs, ColorRange range, int pad, int alpha = -1)
 {
     Frame f;
@@ -108,7 +104,7 @@ void testFile(const fs::path& p, bool wantAlpha)
         ++failures;
 }
 
-} // namespace
+}
 
 int main(int argc, char** argv)
 {

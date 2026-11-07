@@ -4,6 +4,7 @@
 #include "media/FontCatalog.h"
 #include "ui/Theme.h"
 #include "ui/Widgets.h"
+#include "ui/panels/DmxWindow.h"
 #include "ui/panels/SliceEditor.h"
 
 #include <imgui.h>
@@ -25,7 +26,6 @@ using media::ParamDesc;
 using media::ParamSet;
 using media::ParamType;
 
-// InputText sobre std::string (cresce conforme o usuario digita)
 struct StringBuffer
 {
     std::string* str;
@@ -58,7 +58,6 @@ bool inputMultiline(const char* id, std::string& value, int maxLength, ImVec2 si
                                      ImGuiInputTextFlags_CallbackResize, stringResizeCallback, &sb);
 }
 
-// Combo com busca quando ha muitas opcoes. Devolve o indice escolhido (-1 = nada).
 int comboWithFilter(const char* id, const std::string& preview, const std::vector<std::string>& labels, int selected)
 {
     int chosen = -1;
@@ -91,7 +90,7 @@ float labelWidth()
     return std::clamp(ImGui::GetContentRegionAvail().x * 0.36f, dp(100.0f), dp(160.0f));
 }
 
-} // namespace
+}
 
 bool paramConditionMet(const std::string& condition, const ParamSet& set)
 {
@@ -124,7 +123,6 @@ std::vector<ParamEdit> drawParams(const std::vector<ParamDesc>& descs, const med
 
         ImGui::PushID(d.id.c_str());
         if (d.type == ParamType::Custom && d.custom == "bsl-slices") {
-            // Editor do Slice Refiner: ocupa a largura toda (sem a coluna de rotulo)
             Json out;
             if (drawSliceEditor(set, d.id, out))
                 edits.push_back({d.id, std::move(out)});
@@ -151,12 +149,13 @@ std::vector<ParamEdit> drawParams(const std::vector<ParamDesc>& descs, const med
 
         switch (d.type) {
         case ParamType::Float: {
-            // Numero arrastavel (estilo After Effects): o formato do descritor ("%.0f px") vira numero + unidade
             float v = set.f(d.id);
             std::string numberFormat, unit;
             splitValueFormat(d.format.empty() ? "%.2f" : d.format.c_str(), numberFormat, unit);
             const float lo = static_cast<float>(d.min), hi = static_cast<float>(d.max);
             const float def = d.def.is_number() ? d.def.get<float>() : NAN;
+            if (dmxParamOwnerValid())
+                hotDmx(dmxEffectRef(d.id));
             if (hotNumber("##v", v, lo, hi, (hi - lo) / 200.0f, numberFormat.c_str(), unit.c_str(), def))
                 edits.push_back({d.id, media::param::floatJson(v)});
             break;
@@ -167,6 +166,8 @@ std::vector<ParamEdit> drawParams(const std::vector<ParamDesc>& descs, const med
             splitValueFormat(d.format.empty() ? "%d" : d.format.c_str(), numberFormat, unit);
             const int lo = static_cast<int>(d.min), hi = static_cast<int>(d.max);
             const int def = d.def.is_number() ? d.def.get<int>() : INT_MIN;
+            if (dmxParamOwnerValid())
+                hotDmx(dmxEffectRef(d.id));
             if (hotInt("##v", v, lo, hi, std::max(0.05f, static_cast<float>(hi - lo) / 200.0f), numberFormat.c_str(),
                        unit.c_str(), def))
                 edits.push_back({d.id, Json(v)});
@@ -176,6 +177,10 @@ std::vector<ParamEdit> drawParams(const std::vector<ParamDesc>& descs, const med
             bool v = set.b(d.id);
             if (ImGui::Checkbox("##v", &v))
                 edits.push_back({d.id, Json(v)});
+            if (dmxParamOwnerValid() && ImGui::BeginPopupContextItem("##dmx_ctx")) {
+                dmxParamMenu(dmxEffectRef(d.id));
+                ImGui::EndPopup();
+            }
             break;
         }
         case ParamType::Color: {
@@ -214,6 +219,10 @@ std::vector<ParamEdit> drawParams(const std::vector<ParamDesc>& descs, const med
             const int chosen = comboWithFilter("##v", preview, labels, selected);
             if (chosen >= 0)
                 edits.push_back({d.id, Json(d.options[static_cast<size_t>(chosen)].value)});
+            if (dmxParamOwnerValid() && ImGui::BeginPopupContextItem("##dmx_ctx")) {
+                dmxParamMenu(dmxEffectRef(d.id));
+                ImGui::EndPopup();
+            }
             break;
         }
         case ParamType::Font: {
@@ -224,7 +233,6 @@ std::vector<ParamEdit> drawParams(const std::vector<ParamDesc>& descs, const med
                 ImGui::BeginDisabled();
                 beginCombo("##v", "Carregando fontes…");
                 ImGui::EndDisabled();
-                // BeginCombo desabilitado nunca abre; evita EndCombo sem Begin
                 break;
             }
             const std::vector<media::FontEntry> entries = fonts.entries();
@@ -251,7 +259,7 @@ std::vector<ParamEdit> drawParams(const std::vector<ParamDesc>& descs, const med
             if (ImGui::Button("…", ImVec2(btn, 0.0f))) {
                 std::wstring spec;
                 std::wstring name = L"Arquivos";
-                if (!d.fileFilter.empty()) { // "Nome (*.png;*.jpg)|*.png;*.jpg"
+                if (!d.fileFilter.empty()) {
                     const size_t bar = d.fileFilter.find('|');
                     if (bar != std::string::npos) {
                         const std::string n = d.fileFilter.substr(0, bar), s = d.fileFilter.substr(bar + 1);
@@ -266,7 +274,6 @@ std::vector<ParamEdit> drawParams(const std::vector<ParamDesc>& descs, const med
         }
         case ParamType::Custom: {
             if (d.custom == "point2d") {
-                // ISF point2D: valor [x, y] em dois numeros arrastaveis lado a lado
                 const Json cur = set.raw(d.id);
                 const Json def = d.def;
                 auto comp = [](const Json& j, size_t i) {
@@ -284,22 +291,7 @@ std::vector<ParamEdit> drawParams(const std::vector<ParamDesc>& descs, const med
                     edits.push_back({d.id, Json::array({media::param::floatJson(vx), media::param::floatJson(vy)})});
                 break;
             }
-            if (d.custom == "bsl-export") {
-                // LED Mapper: "Exportar…" abre o diálogo de salvar; o valor guarda {n: contador, path: arquivo}. A fonte
-                // grava o XML quando o contador muda (nunca ao abrir um projeto).
-                if (ImGui::Button("Exportar…##exportar", ImVec2(-FLT_MIN, 0.0f))) {
-                    const Json cur = set.raw(d.id);
-                    const int n = cur.is_object() && cur.contains("n") && cur["n"].is_number() ? cur["n"].get<int>() : 0;
-                    if (auto file = dialogs::saveFile(GetActiveWindow(), L"Exportar slices (Advanced Output do Resolume)",
-                                                      L"XML do Resolume (*.xml)", L"*.xml", L"LEDMapperPro_AdvancedOutput.xml",
-                                                      L"xml"))
-                        edits.push_back({d.id, Json{{"n", n + 1},
-                                                    {"path", std::string(reinterpret_cast<const char*>(file->u8string().c_str()))}}});
-                }
-                break;
-            }
             if (d.custom == "event") {
-                // ISF event: botao; cada clique soma 1 ao contador (o shader ve verdadeiro por um quadro)
                 if (ImGui::Button("Disparar", ImVec2(-FLT_MIN, 0.0f))) {
                     const Json cur = set.raw(d.id);
                     edits.push_back({d.id, Json((cur.is_number() ? cur.get<int>() : 0) + 1)});
@@ -324,4 +316,4 @@ std::vector<ParamEdit> drawParams(const std::vector<ParamDesc>& descs, const med
     return edits;
 }
 
-} // namespace bsl::ui
+}

@@ -8,8 +8,8 @@
 
 | Item | Risco | Situação / ação |
 |---|---|---|
-| Ideia do programa (clips, camadas, grade, slices) | Baixo | Nenhuma patente da Resolume B.V. encontrada. Conceito de VJ/mixer existe desde os anos 90. |
-| Código do Resolume | — | Não copiamos nada (regra clean room em `ENGENHARIA-REVERSA.md`). Isso é direito autoral, não patente. |
+| Ideia do programa (clips, camadas, grade, slices) | Baixo | Nenhuma patente encontrada sobre a ideia geral. Conceito de VJ/mixer existe desde os anos 90. |
+| Código de outros programas | — | Não copiamos nada: todo o código é de autoria própria ou de bibliotecas abertas listadas em `THIRD-PARTY-NOTICES.md`. Isso é direito autoral, não patente. |
 | H.264 (AVC) — decodificação | **Médio** | Patentes no pool Via LA; última patente nos EUA prevista para ~nov/2027. Ver mitigação abaixo. |
 | H.265 (HEVC) — decodificação | **Médio-alto** | Patentes ativas em vários pools (Access Advance, Via LA). Ver mitigação abaixo. |
 | VP8 / VP9 / AV1 (WEBM) | Baixo | Formatos com licença livre do Google/AOMedia. A Sisvel tem pool contestando, mas cobra só **hardware**, não software nem conteúdo. |
@@ -17,7 +17,7 @@
 | HAP | Nenhum | Formato aberto (Vidvox, BSD). |
 | DXV3 | Baixo | Nenhuma patente encontrada; decoder do FFmpeg feito por interoperabilidade. |
 | PNG, JPG, GIF, WEBP, TIFF | Nenhum | Patentes do GIF (LZW) e JPEG relevantes já expiraram. |
-| PDF (PDFium, Fase 3) | Nenhum | ISO 32000; a Adobe concede licença de patente gratuita para implementações. PDFium é BSD-3 (binários bblanchon/pdfium-binaries: licenças das dependências em `third_party/pdfium/*/licenses`; distribuir junto o `LICENSE`). |
+| PDF (PDFium, Fase 3) | Nenhum | ISO 32000; o detentor das patentes do formato concede licença gratuita para implementações. PDFium é BSD-3 (binários bblanchon/pdfium-binaries: licenças das dependências em `third_party/pdfium/*/licenses`; distribuir junto o `LICENSE`). |
 | Web (CEF, Fase 3B) | Baixo | CEF/Chromium: BSD-3, com licenças de terceiros listadas em `CREDITS.html` (distribuir junto). O build padrão do CEF **não** inclui os codecs H.264/AAC proprietários (só VP8/VP9/AV1, Opus, Vorbis…), o que combina com a mitigação dos codecs acima. |
 | Office (Fase 3B) | Nenhum | O programa só chama o Microsoft Office / LibreOffice **já instalados pelo usuário** (COM / linha de comando); nada deles é distribuído. |
 | Warp de 4 cantos (homografia) | Nenhum | Matemática de livro-texto, décadas de uso. |
@@ -33,7 +33,7 @@
 | IA local: DirectML 1.15.4 (`DirectML.dll`) | Licença própria (permissiva) | NÃO é MIT: "Microsoft Software License Terms – DirectML". Permite copiar e distribuir a DLL em aplicativos para Windows que usam ferramentas de aprendizado de máquina. Ver a seção "IA local". |
 | IA local: Depth Anything V2 **Small** | Nenhum | Apache-2.0 (só o Small; os modelos Base/Large/Giant NÃO são Apache e não são usados). |
 | IA local: MODNet | Nenhum | Apache-2.0. |
-| Nome "BSL Stage" | Verificar | Pesquisar marca no INPI antes do lançamento público. Não usar "Resolume" em nome, ícone ou divulgação. |
+| Nome "BSL Stage" | Verificar | Pesquisar marca no INPI antes do lançamento público. Não usar nomes, ícones ou logotipos de outros programas na divulgação. |
 
 ## Brasil × exterior
 
@@ -69,8 +69,7 @@ desenvolvimento.
   símbolos exportados pelo runtime oficial (o `bslstage_ndittest` repete essa conferência).
 - **Marca**: "NDI® is a registered trademark of Vizrt NDI AB" aparece em Ajuda > Sobre. Não usar o logotipo do NDI sem seguir as
   diretrizes de marca da NDI.
-- **Teste**: `bslstage_ndittest --ndi-lib <dll>` carrega o runtime de onde ele já estiver instalado (nesta máquina, a pasta do
-  Resolume Arena); a DLL nunca é copiada para o projeto nem para a pasta de build.
+- **Teste**: `bslstage_ndittest --ndi-lib <dll>` carrega o runtime de onde ele já estiver instalado; a DLL nunca é copiada para o projeto nem para a pasta de build.
 - **Distribuição**: se um dia o instalador do BSL Stage incluir o runtime, será preciso aceitar a licença de redistribuição do NDI
   SDK e seguir o guia de marca. Hoje o instalador não o inclui.
 
@@ -102,11 +101,15 @@ nenhuma imagem é enviada para fora. É opcional e fica desligada no perfil Eco.
   Leland D. Melvin with his dogs Jake and Scout" (NASA, domínio público),
   <https://commons.wikimedia.org/wiki/File:NASA_astronaut_Leland_D._Melvin_with_his_dogs_Jake_and_Scout.jpg>. Sem ela o teste valida
   só o formato de saída da máscara.
-- **Privacidade**: o app não abre conexão de rede para a IA. Os downloads acontecem só no `cmake`, em tempo de compilação.
+- **Privacidade**: o app não abre conexão de rede para a IA. Os downloads acontecem só no `cmake`, em tempo de compilação. A build oficial do
+  ONNX Runtime para Windows liga por padrão eventos de telemetria da plataforma (`Privacy.md` do pacote); o `AiRuntime` os desliga ao iniciar
+  (`Env::DisableTelemetryEvents`), para que "nenhuma telemetria" (`PRIVACIDADE.md`) seja verdade.
+- **Avisos e textos das licenças**: o conjunto completo de terceiros (com versão, copyright, URL e os textos em `licenses/`) está em
+  `THIRD-PARTY-NOTICES.md`; este documento continua sendo a análise de risco. As decisões jurídicas pendentes (DirectML, FFmpeg da BtbN, React Bits no
+  bundle web) estão listadas lá e em `TERMOS-DE-USO.md`.
 
 ## Fontes
 
-- Resolume B.V. — dados da empresa: <https://resolume.com/company>
 - Advanced Video Coding (patentes e pool): <https://en.wikipedia.org/wiki/Advanced_Video_Coding>
 - Via LA: <https://en.wikipedia.org/wiki/Via-LA>
 - Prazo das patentes AVC nos EUA: <https://phpboyscout.uk/an-encoder-on-borrowed-time/>

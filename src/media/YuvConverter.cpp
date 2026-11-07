@@ -17,7 +17,6 @@ void main()
 }
 )";
 
-// v=0 e a primeira linha do frame (topo) tanto na entrada quanto na saida do FBO.
 const char* kFragmentSrc = R"(#version 330 core
 in vec2 vUv;
 out vec4 fragColor;
@@ -26,9 +25,9 @@ uniform sampler2D uU;
 uniform sampler2D uV;
 uniform sampler2D uA;
 uniform int uHasAlpha;
-uniform vec2 uLuma;   // x = escala, y = offset (limited: 255/219, 16/255)
-uniform vec2 uChroma; // x = escala, y = offset (limited: 255/224, 128/255)
-uniform vec4 uCoef;   // Cr->R, Cb->G, Cr->G, Cb->B
+uniform vec2 uLuma;
+uniform vec2 uChroma;
+uniform vec4 uCoef;
 void main()
 {
     float y  = (texture(uY, vUv).r - uLuma.y) * uLuma.x;
@@ -51,7 +50,6 @@ void setupTexture(GLuint tex)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
 
-// Estado GL tocado pela conversao, restaurado ao sair.
 struct GlStateGuard {
     GLint viewport[4];
     GLint drawFbo, program, vao, activeTex;
@@ -97,7 +95,7 @@ struct GlStateGuard {
     }
 };
 
-} // namespace
+}
 
 void uploadRgbaTexture(GLuint& tex, int& texW, int& texH, const Frame& frame)
 {
@@ -159,7 +157,6 @@ int YuvConverter::height() const
     return fbo_ ? fbo_->height() : 0;
 }
 
-// Assume GL_UNPACK_ALIGNMENT = 1 (definido por convert()).
 void YuvConverter::uploadPlane(int i, const Frame& frame)
 {
     const size_t s = static_cast<size_t>(i);
@@ -171,7 +168,7 @@ void YuvConverter::uploadPlane(int i, const Frame& frame)
         planeW_[s] = planeH_[s] = 0;
     }
     glBindTexture(GL_TEXTURE_2D, planeTex_[s]);
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, frame.strides[s]); // 1 byte/pixel: stride em bytes == pixels
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, frame.strides[s]);
     if (planeW_[s] != w || planeH_[s] != h) {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, w, h, 0, GL_RED, GL_UNSIGNED_BYTE, frame.planes[s].data());
         planeW_[s] = w;
@@ -201,7 +198,6 @@ void YuvConverter::convert(const Frame& frame)
 
     const bool hasAlpha = frame.hasAlphaPlane();
     if (!hasAlpha) {
-        // sampler do alpha precisa apontar para uma textura valida
         glActiveTexture(GL_TEXTURE3);
         glBindTexture(GL_TEXTURE_2D, planeTex_[0]);
     }
@@ -236,7 +232,6 @@ void YuvConverter::convert(const Frame& frame)
     glDisable(GL_CULL_FACE);
     glBindVertexArray(vao_);
     glDrawArrays(GL_TRIANGLES, 0, 3);
-    // ~GlStateGuard restaura FBO, viewport, programa, VAO, texturas e flags.
 }
 
-} // namespace bsl::media
+}

@@ -7,7 +7,7 @@
 #include <audioclient.h>
 #include <endpointvolume.h>
 #include <mmdeviceapi.h>
-#include <initguid.h> // com INITGUID, o propkeydef.h define os PKEY_* deste arquivo (sem precisar de uma lib)
+#include <initguid.h>
 #include <propkeydef.h>
 #include <functiondiscoverykeys_devpkey.h>
 #include <wrl/client.h>
@@ -86,7 +86,6 @@ struct ComScope
     }
 };
 
-// A saida que esta tocando agora (a de maior pico); sem nada tocando, a padrao. Como o AudioCapture dos plugins.
 ComPtr<IMMDevice> findActiveRenderDevice(IMMDeviceEnumerator* enumerator)
 {
     ComPtr<IMMDeviceCollection> col;
@@ -127,7 +126,6 @@ bool isFloatFormat(const WAVEFORMATEX* f)
     return false;
 }
 
-// Pacote de qualquer formato PCM/float -> mono (media dos canais)
 void toMono(const BYTE* data, UINT32 frames, const WAVEFORMATEX* f, std::vector<float>& out)
 {
     const int ch = std::max<int>(f->nChannels, 1);
@@ -156,15 +154,15 @@ void toMono(const BYTE* data, UINT32 frames, const WAVEFORMATEX* f, std::vector<
     }
 }
 
-} // namespace
+}
 
 struct AudioAnalyzer::Impl
 {
     mutable std::mutex mutex;
     std::condition_variable cv;
     AudioConfig config;
-    std::atomic<std::uint64_t> dspGen{1};    // qualquer mudanca de configuracao
-    std::atomic<std::uint64_t> deviceGen{1}; // mudou o que exige reconectar (ligado, fonte, dispositivo)
+    std::atomic<std::uint64_t> dspGen{1};
+    std::atomic<std::uint64_t> deviceGen{1};
     AudioSnapshot snap;
     std::optional<AudioSnapshot> override_;
     std::string status = "Parado";
@@ -172,7 +170,7 @@ struct AudioAnalyzer::Impl
     std::atomic<bool> stopFlag{false};
     bool started = false;
 
-    AudioDsp dsp; // so a thread de captura mexe
+    AudioDsp dsp;
 
     void setStatus(const std::string& s)
     {
@@ -201,7 +199,6 @@ struct AudioAnalyzer::Impl
     }
 
     void run();
-    // Uma conexao: devolve quando precisa reconectar (config mudou, dispositivo caiu) ou parar
     void session(const AudioConfig& cfg, IMMDeviceEnumerator* enumerator);
 };
 
@@ -229,7 +226,6 @@ void AudioAnalyzer::Impl::run()
         if (!cfg.enabled) {
             publishZero();
             setStatus("Desligado");
-            // espera uma mudanca de configuracao (ou o fim)
             while (!stopFlag.load() && deviceGen.load() == gen)
                 waitFor(std::chrono::milliseconds(100));
             continue;
@@ -237,7 +233,7 @@ void AudioAnalyzer::Impl::run()
         session(cfg, enumerator.Get());
         if (stopFlag.load())
             break;
-        if (deviceGen.load() == gen) // a sessao acabou por falha, nao por mudanca: tenta de novo em 1,5 s
+        if (deviceGen.load() == gen)
             waitFor(std::chrono::milliseconds(1500));
     }
     publishZero();
@@ -292,7 +288,6 @@ void AudioAnalyzer::Impl::session(const AudioConfig& cfg, IMMDeviceEnumerator* e
         return;
     }
 
-    // Copia o formato (inclusive a extensao) antes de liberar o original
     std::vector<BYTE> formatBytes(sizeof(WAVEFORMATEX) + mix->cbSize);
     std::memcpy(formatBytes.data(), mix, formatBytes.size());
     CoTaskMemFree(mix);
@@ -316,7 +311,7 @@ void AudioAnalyzer::Impl::session(const AudioConfig& cfg, IMMDeviceEnumerator* e
         }
         UINT32 packet = 0;
         if (FAILED(capture->GetNextPacketSize(&packet)))
-            break; // dispositivo mudou ou foi removido: reconecta
+            break;
         bool gotData = false;
         while (packet > 0 && !stopFlag.load()) {
             BYTE* data = nullptr;
@@ -342,10 +337,8 @@ void AudioAnalyzer::Impl::session(const AudioConfig& cfg, IMMDeviceEnumerator* e
             lastData = now;
             publish(true);
         } else if (now - lastData > std::chrono::milliseconds(40)) {
-            // Loopback sem nada tocando nao entrega pacotes: o tempo anda com silencio e as bandas caem
             dsp.feedSilence(std::chrono::duration<double>(now - lastTick).count());
             publish(true);
-            // Parado ha 2,5 s no loopback automatico: confere se o som foi para outra saida
             if (loopback && cfg.deviceId.empty() && now - lastCheck > std::chrono::milliseconds(2500)) {
                 lastCheck = now;
                 ComPtr<IMMDevice> other = findActiveRenderDevice(enumerator);
@@ -475,4 +468,4 @@ std::vector<AudioDeviceInfo> AudioAnalyzer::listDevices(AudioSource source)
     return out;
 }
 
-} // namespace bsl::audio
+}

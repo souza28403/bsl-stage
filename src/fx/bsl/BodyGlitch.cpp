@@ -1,10 +1,3 @@
-// BSL Cybernetic Body-Parts Glitch: isola as partes do corpo mais próximas da câmera (máscara de pessoa da IA E
-// profundidade acima do limiar de "perto": mãos estendidas, rosto...) e só nessa região aplica um glitch: datamosh (mesma
-// lógica do BSL Datamosh & Pixel Sort), clones atrasados (N cópias com atraso em quadros), wireframe 3D (curvas de nível da
-// profundidade e grade deformada pelo relevo) ou slicer Voronoi/grade. Fora da região a imagem fica igual à entrada (os
-// clones são a exceção: o rastro dos clones passa para fora da região atual, que é o ponto deles).
-// IA local: Depth Anything V2 Small + MODNet (src/ai).
-
 #include "fx/bsl/BslCommon.h"
 #include "fx/bsl/BslEffects.h"
 
@@ -23,14 +16,13 @@ using namespace media::param;
 constexpr int kMaxClones = 6;
 constexpr int kRingMaxW = 640;
 
-// Regiao: pessoa E perto da camera (texturas da IA: linha 0 = topo, mesma orientacao de imgPos())
 const char* const kRegionGlsl = R"(
 uniform sampler2D uMask;
 uniform sampler2D uDepth;
-uniform float uNear;      // limiar de "perto" (0..1)
-uniform float uSoft;      // suavidade da borda
-uniform float uMaskCut;   // corte da mascara de pessoa
-uniform float uUseMask;   // 0 = so profundidade
+uniform float uNear;
+uniform float uSoft;
+uniform float uMaskCut;
+uniform float uUseMask;
 float regionAt(vec2 uv)
 {
     float soft = max(uSoft, 0.01);
@@ -41,23 +33,19 @@ float regionAt(vec2 uv)
 )";
 
 const char* const kGlitchBody = R"(
-uniform sampler2D uFb;    // saida do quadro anterior (datamosh)
-uniform sampler2D uC0, uC1, uC2, uC3, uC4, uC5;   // clones: quadros antigos (RGB * regiao, A = regiao)
-uniform int uMode;        // 0 datamosh, 1 clones, 2 wireframe, 3 slicer
+uniform sampler2D uFb;
+uniform sampler2D uC0, uC1, uC2, uC3, uC4, uC5;
+uniform int uMode;
 uniform float uAspect;
 uniform float uMix;
 uniform vec3 uColor;
 uniform float uTint;
 uniform float uDebug;
 uniform float uAmount;
-// datamosh
 uniform float uMoshAmt, uMoshTol;
-// clones
 uniform int uCloneN;
 uniform float uCloneOff, uCloneAlpha;
-// wireframe
 uniform float uCells, uLevels, uLine, uRelief;
-// slicer
 uniform float uSlices, uShift, uGridMode;
 
 vec4 cloneAt(int i, vec2 uv)
@@ -79,7 +67,6 @@ vec3 rgb2yuv(vec3 c)
                 0.615 * c.r - 0.51499 * c.g - 0.10001 * c.b);
 }
 
-// Datamosh: a imagem antiga escorre pelo vetor de cor entre o quadro novo e o anterior
 vec3 datamosh(vec2 uv, vec3 cam)
 {
     vec4 lastP = texture(uFb, toTex(uv));
@@ -92,7 +79,6 @@ vec3 datamosh(vec2 uv, vec3 cam)
     return diff < uMoshTol ? moshed : mix(moshed, cam, 0.5);
 }
 
-// Wireframe 3D: curvas de nivel da profundidade + grade deformada pelo relevo
 vec3 wireframe(vec2 uv, vec3 cam)
 {
     float d = texture(uDepth, uv).r;
@@ -106,7 +92,6 @@ vec3 wireframe(vec2 uv, vec3 cam)
     return cam * 0.28 + uColor * clamp(max(grid * 0.9, contour), 0.0, 1.0);
 }
 
-// Slicer: celulas (Voronoi ou grade) deslocadas e com o RGB separado, trocando varias vezes por segundo
 vec3 slicer(vec2 uv, vec3 cam)
 {
     float t = floor(uTime * 8.0);
@@ -138,7 +123,6 @@ void main()
     else if (uMode == 2) g = wireframe(uv, cam.rgb);
     else if (uMode == 3) g = slicer(uv, cam.rgb);
 
-    // cor do glitch (clones e wireframe ja usam a cor propria)
     if (uMode == 0 || uMode == 3)
         g = mix(g, uColor * (0.35 + dot(g, vec3(0.3333)) * 1.3), uTint);
 
@@ -146,7 +130,6 @@ void main()
     vec3 rgb = mix(cam.rgb, g, k);
 
     if (uMode == 1) {
-        // clones: do mais antigo para o mais novo, cada um deslocado, tingido e mais transparente
         for (int i = uCloneN - 1; i >= 0; --i) {
             float f = float(i + 1);
             vec4 c = cloneAt(i, toTex(uv - vec2(uCloneOff * f, 0.0)));
@@ -162,7 +145,6 @@ void main()
 }
 )";
 
-// Quadro "recortado" para o buffer dos clones: RGB * regiao, A = regiao
 const char* const kCaptureBody = R"(
 void main()
 {
@@ -181,7 +163,6 @@ public:
 protected:
     std::string fragmentSource() const override
     {
-        // O prelude ja traz as declaracoes comuns; a regiao vem antes do corpo
         return std::string(kBslPrelude) + kRegionGlsl + kGlitchBody;
     }
 
@@ -247,7 +228,6 @@ protected:
         s.setFloat("uShift", p.f("sliceShift") * 0.01f);
         s.setFloat("uGridMode", p.b("sliceGrid") ? 1.0f : 0.0f);
 
-        // Clones: o mais novo (1 * atraso) ao mais antigo, nas unidades 4..9
         static const char* kNames[kMaxClones] = {"uC0", "uC1", "uC2", "uC3", "uC4", "uC5"};
         for (int i = 0; i < kMaxClones; ++i) {
             GLuint tex = 0;
@@ -299,8 +279,7 @@ private:
         head_ = 0;
     }
 
-    // Guarda o quadro atual (so a regiao) no buffer dos clones, em baixa resolucao
-    void captureClone(int /*w*/, int /*h*/)
+    void captureClone(int , int )
     {
         if (!capShader_) {
             try {
@@ -348,7 +327,7 @@ private:
     ScreenVao capVao_;
 };
 
-} // namespace
+}
 
 std::vector<media::ParamDesc> describeBodyGlitch()
 {
@@ -413,4 +392,4 @@ std::unique_ptr<IEffect> makeBodyGlitch()
     return std::make_unique<BodyGlitchEffect>();
 }
 
-} // namespace bsl::fx::bsllight
+}

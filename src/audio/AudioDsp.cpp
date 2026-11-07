@@ -34,8 +34,6 @@ void fftRadix2(std::complex<float>* a, int n)
 
 namespace {
 
-// Tempo de queda (ms) que reproduz os coeficientes por atualizacao dos plugins (0,16 / 0,20 / 0,24 a cada 256 amostras
-// de 48 kHz): tau = -dt / ln(1 - k)
 constexpr float kBassTauMs = 30.59f;
 constexpr float kMidTauMs = 23.90f;
 constexpr float kHighTauMs = 19.43f;
@@ -51,7 +49,7 @@ float follow(float current, float target, float dtMs, float attackMs, float tauM
     return current + (target - current) * (1.0f - std::exp(-dtMs / std::max(tauMs, 0.1f)));
 }
 
-} // namespace
+}
 
 AudioDsp::AudioDsp() : ring_(kSpecFft, 0.0f), work_(kSpecFft), windowBands_(kBandFft), windowSpec_(kSpecFft)
 {
@@ -69,7 +67,6 @@ void AudioDsp::setSampleRate(int sampleRate)
     sampleRate_ = std::clamp(sampleRate, 8000, 384000);
     const float sr = static_cast<float>(sampleRate_);
 
-    // As faixas dos plugins sao em bins de 93,75 Hz (48 kHz); aqui sao convertidas por frequencia
     const float binHz = sr / static_cast<float>(kBandFft);
     auto bin = [&](float hz) { return std::clamp(static_cast<int>(std::lround(hz / binHz)), 1, kBandFft / 2 - 1); };
     bassLo_ = bin(93.75f);
@@ -79,7 +76,6 @@ void AudioDsp::setSampleRate(int sampleRate)
     highLo_ = bin(2812.5f);
     highHi_ = std::max(highLo_, bin(11250.0f));
 
-    // Espectro: 32 bandas geometricas entre 40 Hz e 16 kHz (ou 45% da taxa, se menor)
     specBins_.clear();
     const float fLo = 40.0f;
     const float fHi = std::min(16000.0f, sr * 0.45f);
@@ -129,7 +125,6 @@ void AudioDsp::feed(const float* mono, std::size_t count)
         }
     }
 
-    // AGC: rastreia o maximo; a queda e 1,5% a cada 10 ms (o plugin atualizava uma vez por pacote de ~10 ms)
     const float per10ms = static_cast<float>(count) / (0.01f * static_cast<float>(sampleRate_));
     if (batchPeak > rollingPeak_)
         rollingPeak_ = batchPeak;
@@ -137,7 +132,6 @@ void AudioDsp::feed(const float* mono, std::size_t count)
         rollingPeak_ += (batchPeak - rollingPeak_) * (1.0f - std::pow(1.0f - 0.015f, std::max(per10ms, 0.0f)));
     agcScale_ = 0.50f / std::max(0.05f, std::min(rollingPeak_, 1.0f));
 
-    // Medidor: RMS e pico do sinal bruto (sem AGC)
     const float seconds = static_cast<float>(count) / static_cast<float>(sampleRate_);
     const float batchRms = static_cast<float>(std::sqrt(sumSq / static_cast<double>(count)));
     rms_ = batchRms > rms_ ? batchRms : rms_ + (batchRms - rms_) * (1.0f - std::exp(-seconds / 0.15f));
@@ -186,7 +180,6 @@ void AudioDsp::processBands()
 
     const float dtMs = 1000.0f * static_cast<float>(kBandHop) / static_cast<float>(sampleRate_);
 
-    // Batida (onset dos graves): limiar calibrado no ganho de referencia dos plugins, independente do ganho geral
     const float rbRef = rawBass / std::clamp(config_.gain, 0.01f, 16.0f) * kKickRefGain;
     float kickPulse = 0.0f;
     if (rbRef > prevBass_ * 1.25f && rbRef > 0.08f)
@@ -199,7 +192,6 @@ void AudioDsp::processBands()
         sinceBeat_ = 0.0;
     }
 
-    // Seguidores: ataque configuravel (padrao instantaneo) e queda organica
     const float rel = std::clamp(config_.releaseScale, 0.25f, 4.0f);
     const float atk = std::clamp(config_.attackMs, 0.0f, 200.0f);
     smBass_ = follow(smBass_, rawBass, dtMs, atk, kBassTauMs * rel);
@@ -210,7 +202,7 @@ void AudioDsp::processBands()
 void AudioDsp::processSpectrum()
 {
     const float totalGain = std::clamp(config_.gain, 0.01f, 16.0f) * agcScale_;
-    const std::size_t start = writeIdx_ % static_cast<std::size_t>(kSpecFft); // o mais antigo
+    const std::size_t start = writeIdx_ % static_cast<std::size_t>(kSpecFft);
     for (int i = 0; i < kSpecFft; ++i) {
         const float s = ring_[(start + static_cast<std::size_t>(i)) % static_cast<std::size_t>(kSpecFft)] * totalGain;
         work_[static_cast<size_t>(i)] = std::complex<float>(s * windowSpec_[static_cast<size_t>(i)], 0.0f);
@@ -223,7 +215,7 @@ void AudioDsp::processSpectrum()
         float mx = 0.0f;
         for (int k = specBins_[static_cast<size_t>(b)].first; k <= specBins_[static_cast<size_t>(b)].second; ++k)
             mx = std::max(mx, std::abs(work_[static_cast<size_t>(k)]));
-        const float amp = mx * 4.0f / static_cast<float>(kSpecFft); // senoide de amplitude A com Hann -> ~A
+        const float amp = mx * 4.0f / static_cast<float>(kSpecFft);
         const float db = 20.0f * std::log10(amp + 1.0e-6f);
         const float target = std::clamp((db + 60.0f) / 60.0f, 0.0f, 1.0f);
         float& v = spectrum_[static_cast<size_t>(b)];
@@ -247,4 +239,4 @@ AudioSnapshot AudioDsp::snapshot(bool active) const
     return s;
 }
 
-} // namespace bsl::audio
+}

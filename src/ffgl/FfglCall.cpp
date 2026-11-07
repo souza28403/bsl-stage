@@ -2,7 +2,6 @@
 
 #include <windows.h>
 
-// Este arquivo nao tem objetos com destrutor: so tipos simples e ponteiros.
 namespace bsl::ffgl {
 
 namespace {
@@ -16,7 +15,7 @@ union Mixed
 
 using PlugMainFn = Mixed(__stdcall*)(std::uint32_t, Mixed, void*);
 
-} // namespace
+}
 
 bool rawPlugMain(void* fn, std::uint32_t code, std::uintptr_t in, void* instance, std::uintptr_t* out,
                  unsigned long* exception)
@@ -87,4 +86,4 @@ bool rawSetLogCallback(void* fn, void* callback, unsigned long* exception)
     return true;
 }
 
-} // namespace bsl::ffgl
+}

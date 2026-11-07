@@ -1,8 +1,5 @@
 #pragma once
 
-// Pagina web ao vivo (CEF em modo off-screen no worker). Serve ao gerador "Web (URL)" e aos arquivos
-// .html/.htm soltos na grade (abrem como file://). Fonte exclusiva: so uma instancia por clip.
-
 #include "media/RemoteSource.h"
 
 namespace bsl::media {
@@ -13,20 +10,15 @@ public:
     WebSource(int canvasWidth, int canvasHeight);
     ~WebSource() override;
 
-    // Gerador (com campo URL) e arquivo .html (sem URL)
     static std::vector<ParamDesc> describe(const ParamValues& values);
     static std::vector<ParamDesc> describeFile(const ParamValues& values);
     static std::string label(const ParamValues& values);
-    // O CEF (cef/libcef.dll ao lado do worker) esta presente? Sem ele a Web fica desabilitada.
     static bool available();
-    // file:///C:/pasta/arquivo.html com percent-encoding
     static std::string fileUrl(const std::filesystem::path& file);
 
     std::vector<ParamDesc> paramDescs() const override;
     bool isLive() const override { return true; }
-    // Titulo da pagina, se o worker mandou
     std::string pageTitle() const { return hostSnapshot().title; }
-    // Pagina carregada e enviando quadros
     bool hasPageSize() const { return width() > 0; }
 
 protected:
@@ -37,7 +29,6 @@ protected:
     void onParamsChanged() override;
     void onCanvasResized(int w, int h) override;
 
-    // Pagina e parametros enviados ao worker; as fontes BSL Light (WebBackgrounds, WebMotion) trocam os dois
     virtual WorkerJson paramsJson() const;
     virtual std::string currentUrl() const;
 
@@ -48,4 +39,4 @@ private:
     int lastW_ = 0, lastH_ = 0;
 };
 
-} // namespace bsl::media
+}

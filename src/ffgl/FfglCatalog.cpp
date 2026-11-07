@@ -71,7 +71,7 @@ std::shared_ptr<const CatalogEntry> makeEntry(const PluginInfo& info, const std:
     return e;
 }
 
-} // namespace
+}
 
 std::string pluginDisplayName(const PluginInfo& info)
 {
@@ -80,7 +80,7 @@ std::string pluginDisplayName(const PluginInfo& info)
 
 Catalog& Catalog::instance()
 {
-    static Catalog* c = new Catalog(); // nunca destruido: o fim do processo derruba a thread (ver shutdown())
+    static Catalog* c = new Catalog();
     return *c;
 }
 
@@ -101,7 +101,6 @@ void Catalog::shutdown()
 
 void Catalog::configure(std::vector<Folder> folders)
 {
-    // O processo de varredura roda com outro diretorio atual: caminhos relativos nao valem la
     for (Folder& f : folders) {
         std::error_code ec;
         const std::filesystem::path abs = std::filesystem::absolute(f.path, ec);
@@ -177,7 +176,7 @@ void Catalog::retry(const std::string& pathUtf8)
         retryPaths_.push_back(lowerAscii(pathUtf8));
         std::erase_if(sessionBlocked_, [&](const BlockedPlugin& b) { return b.path == pathUtf8; });
     }
-    faultEpoch_.fetch_add(1); // instancias que ainda esperam o desbloqueio olham de novo
+    faultEpoch_.fetch_add(1);
     version_.fetch_add(1);
     rescan();
 }
@@ -198,10 +197,10 @@ EntryPtr Catalog::find(const std::string& typeId) const
     for (const EntryPtr& e : entries_)
         if (e->typeId == typeId)
             return e;
-    for (const EntryPtr& e : entries_) // mesmo id (o arquivo foi renomeado)
+    for (const EntryPtr& e : entries_)
         if (makeTypeId(e->info.pluginId, e->info.fileName).compare(0, 9, typeId, 0, 9) == 0)
             return e;
-    for (const EntryPtr& e : entries_) // mesmo nome de arquivo (o plugin mudou de id)
+    for (const EntryPtr& e : entries_)
         if (lowerAscii(e->info.fileName) == lowFile)
             return e;
     return nullptr;
@@ -252,8 +251,6 @@ bool Catalog::sessionBlocked(const std::string& pathUtf8, std::string* reason) c
     return false;
 }
 
-// ----------------------------------------------------------------------------------------------- cache
-
 void Catalog::loadCache()
 {
     if (cacheLoaded_)
@@ -295,7 +292,6 @@ void Catalog::loadCache()
         std::lock_guard lk(mutex_);
         cache_ = std::move(loaded);
     } catch (const Json::exception&) {
-        // cache corrompido: reescaneia tudo
     }
 }
 
@@ -335,8 +331,6 @@ void Catalog::saveCache() const
         fs::remove(tmp, ec);
     }
 }
-
-// ----------------------------------------------------------------------------------------------- varredura
 
 ScanResult Catalog::scanOne(const Candidate& c)
 {
@@ -401,7 +395,7 @@ ScanResult Catalog::scanOne(const Candidate& c)
             const Json j = Json::parse(json);
             ScanResult r = ScanResult::fromJson(j);
             if (r.ok || !r.error.empty())
-                return r; // o worker respondeu, mesmo que tenha demorado para descarregar
+                return r;
         } catch (const Json::exception&) {
         }
     }
@@ -433,7 +427,6 @@ void Catalog::runScan()
         restart_ = false;
         loadCache();
 
-        // --- 1. DLLs candidatas nas pastas (so o cabecalho PE; nada e carregado) ---
         std::vector<Folder> folders;
         {
             std::lock_guard lk(mutex_);
@@ -454,7 +447,6 @@ void Catalog::runScan()
                     it.disable_recursion_pending();
                 std::error_code fec;
                 if (it->is_directory(fec)) {
-                    // A pasta do Chromium do WebBrowser (centenas de MB de DLLs que nao sao plugins) nunca e percorrida
                     if (lowerAscii(utf8(it->path().filename())) == "webbrowser.cef")
                         it.disable_recursion_pending();
                     continue;
@@ -462,12 +454,12 @@ void Catalog::runScan()
                 if (!it->is_regular_file(fec) || !hasDllExtension(it->path()))
                     continue;
                 if (lowerAscii(utf8(it->path().filename())) == "webbrowser.dll") {
-                    webBrowser = true; // nao e carregado: o BSL Stage tem a fonte Web nativa
+                    webBrowser = true;
                     continue;
                 }
                 const std::string key = lowerAscii(utf8(it->path()));
                 if (!seen.insert(key).second)
-                    continue; // a mesma DLL por duas pastas
+                    continue;
                 if (inspectPe(it->path()) != PeVerdict::Candidate) {
                     ++ignored;
                     continue;
@@ -486,8 +478,7 @@ void Catalog::runScan()
         ignored_ = ignored;
         webBrowser_ = webBrowser;
 
-        // --- 2. cache x varredura ---
-        std::vector<char> done(candidates.size(), 0); // 1 = resolvido pelo cache
+        std::vector<char> done(candidates.size(), 0);
         std::vector<std::string> retries;
         {
             std::lock_guard lk(mutex_);
@@ -496,7 +487,7 @@ void Catalog::runScan()
         }
         struct Outcome
         {
-            bool known = false; // tem resultado (cache ou varredura)
+            bool known = false;
             bool ok = false;
             std::string error;
             PluginInfo info;
@@ -540,7 +531,6 @@ void Catalog::runScan()
         };
         snapshot();
 
-        // --- 3. varre o que mudou (um processo por DLL) ---
         size_t pending = 0;
         for (char d : done)
             pending += d ? 0 : 1;
@@ -568,7 +558,6 @@ void Catalog::runScan()
                 log::warn("Plugin FFGL bloqueado (" + utf8(c.path.filename()) + "): " + r.error);
             }
             outcomes[i] = {true, r.ok, r.error, r.info};
-            // Arquivo que nao deu para ler (preso por outro programa): bloqueia agora, mas nao grava no cache
             const bool transient = !r.ok && r.error.find("ilegível") != std::string::npos;
             if (!transient) {
                 std::lock_guard lk(mutex_);
@@ -595,4 +584,4 @@ void Catalog::runScan()
     }
 }
 
-} // namespace bsl::ffgl
+}

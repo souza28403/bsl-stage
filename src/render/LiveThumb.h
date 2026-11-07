@@ -8,8 +8,6 @@
 
 namespace bsl {
 
-// Reduz a textura de uma fonte para uma miniatura 160x90 (proporcao da fonte preservada, resto transparente)
-// com media de 4x4 amostras por pixel. Usada nas celulas de geradores/fontes ao vivo (no maximo 1x/s por clip).
 class LiveThumbnailer
 {
 public:
@@ -21,7 +19,6 @@ public:
     LiveThumbnailer(const LiveThumbnailer&) = delete;
     LiveThumbnailer& operator=(const LiveThumbnailer&) = delete;
 
-    // Cria 'dst' na primeira vez. O estado GL do chamador e restaurado.
     void blit(GLuint srcTexture, int srcWidth, int srcHeight, Texture& dst);
 
 private:
@@ -30,4 +27,4 @@ private:
     GLuint fbo_ = 0;
 };
 
-} // namespace bsl
+}

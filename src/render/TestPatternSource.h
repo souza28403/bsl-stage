@@ -8,8 +8,6 @@
 
 namespace bsl {
 
-// Gerador "Padrao de teste": barras de cor, rampa, grade e um circulo em movimento,
-// desenhado numa textura propria. Segue a convencao do ISource (v=0 = topo da imagem).
 class TestPatternSource final : public media::ISource
 {
 public:
@@ -37,4 +35,4 @@ private:
     GLuint vao_ = 0;
 };
 
-} // namespace bsl
+}

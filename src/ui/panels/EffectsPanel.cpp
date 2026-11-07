@@ -1,7 +1,3 @@
-// Aba "Efeitos": catálogo (Nativos, ISF, FFGL em breve) com busca e categorias recolhíveis. Cada item é arrastável
-// (payload BSL_EFFECT) para a cadeia de um clip, camada ou master, ou para uma célula/cabeçalho de camada da grade;
-// duplo clique adiciona ao clip selecionado (ou à camada selecionada se não houver clip).
-
 #include "ui/panels/TabPanels.h"
 
 #include "app/IsfSetup.h"
@@ -16,6 +12,7 @@
 #include "ui/Ui.h"
 #include "ui/Widgets.h"
 #include "ui/panels/EffectChainWidget.h"
+#include "ui/panels/PluginWizard.h"
 #include "ui/panels/PluginsWindow.h"
 
 #include <imgui.h>
@@ -42,15 +39,13 @@ struct PanelState
     bool openFolders = false;
 };
 PanelState g_state;
-std::string g_onlyOpenSection; // testes (--fx-open): so esta secao nasce aberta
+std::string g_onlyOpenSection;
 
 bool openFirst(const char* section)
 {
     return g_onlyOpenSection.empty() || g_onlyOpenSection == section;
 }
 
-// Linha com ícone + nome, arrastável. O Selectable não tem texto (o ImGui não recuaria o nome); ícone e nome são
-// desenhados por cima e o nome vira o rótulo do item para o teste de interface.
 bool effectRow(const fx::EffectTypeInfo& t, bool usable)
 {
     ImGui::PushID(t.id.c_str());
@@ -69,7 +64,6 @@ bool effectRow(const fx::EffectTypeInfo& t, bool usable)
                 ImGui::GetColorU32(usable ? ImGui::GetStyleColorVec4(ImGuiCol_Text) : theme::kWarning), t.name.c_str());
     dl->PopClipRect();
     if (t.ai) {
-        // Selo "IA": o efeito usa a IA local (ver o tooltip)
         const char* tag = "IA";
         const ImVec2 ts = ImGui::CalcTextSize(tag);
         const float pad = dp(5.0f);
@@ -85,24 +79,37 @@ bool effectRow(const fx::EffectTypeInfo& t, bool usable)
         ImGui::EndDragDropSource();
     }
     ImGui::EndDisabled();
+    if (t.section == fx::EffectSection::Isf && !t.sourceFile.empty() && ImGui::BeginPopupContextItem("##isf_ctx")) {
+        const std::filesystem::path file{std::u8string(t.sourceFile.begin(), t.sourceFile.end())};
+        if (ImGui::MenuItem(ICON_FILE_CODE "  Abrir no editor##isf_ctx_editor"))
+            openPluginInEditor(file);
+        if (ImGui::MenuItem(ICON_FOLDER_OPEN "  Mostrar na pasta##isf_ctx_pasta"))
+            showPluginInFolder(file);
+        if (ImGui::MenuItem(ICON_COPY "  Duplicar##isf_ctx_duplicar"))
+            duplicateUserPlugin(file);
+        ImGui::Separator();
+        if (ImGui::MenuItem(ICON_UPLOAD "  Exportar .bslplugin…##isf_ctx_exportar", nullptr, false, t.error.empty()))
+            openExportPluginWindow(t.id, file);
+        ImGui::EndPopup();
+    }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
         if (!t.error.empty())
             ImGui::SetTooltip(t.section == fx::EffectSection::Ffgl ? "Indisponível:\n%s" : "Não foi possível carregar este shader:\n%s",
                               t.error.c_str());
         else if (!t.description.empty())
             ImGui::SetTooltip("%s%s\n\nArraste para um clip, camada ou master — ou dê duplo clique para adicionar ao "
-                              "clip (ou camada) selecionado",
+                              "clip (ou camada) selecionado%s",
                               t.description.c_str(),
                               t.ai ? "\n\nIA: usa inteligência artificial local, que roda neste PC (GPU via DirectML ou CPU). "
-                                     "Nenhuma imagem sai do computador. Desligada no perfil Eco (Ver > IA)."
-                                   : "");
+                                     "Nenhuma imagem sai do computador. Desligada no perfil Eco (Exibir > IA)."
+                                   : "",
+                              t.section == fx::EffectSection::Isf ? "\nBotão direito: abrir no editor, duplicar, exportar" : "");
     }
     const bool doubleClicked = usable && clicked && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
     ImGui::PopID();
     return doubleClicked;
 }
 
-// Duplo clique: o clip selecionado; sem clip (celula vazia ou so a camada selecionada), a camada
 void addToSelection(PanelContext& ctx, const std::string& typeId)
 {
     Composition& comp = ctx.composition;
@@ -122,7 +129,6 @@ void addToSelection(PanelContext& ctx, const std::string& typeId)
 void drawSection(PanelContext& ctx, const char* sectionId, const std::vector<const fx::EffectTypeInfo*>& items,
                  bool filtering)
 {
-    // Categorias na ordem em que aparecem
     std::vector<std::string> cats;
     for (const fx::EffectTypeInfo* t : items)
         if (std::find(cats.begin(), cats.end(), t->category) == cats.end())
@@ -158,7 +164,7 @@ void drawFoldersPopup(PanelContext& ctx)
     ImGui::PushTextWrapPos(dp(440.0f));
     ImGui::TextColored(theme::kTextDim,
                        "O BSL Stage lê os arquivos .fs (e .vs opcional) destas pastas, inclusive subpastas. "
-                       "Depois de editar um shader, use Recarregar.");
+                       "Ao salvar um shader no editor, o efeito recompila sozinho; Recarregar lê as pastas de novo.");
     ImGui::PopTextWrapPos();
     ImGui::Spacing();
 
@@ -174,6 +180,14 @@ void drawFoldersPopup(PanelContext& ctx)
     popMono();
     if (ImGui::Button("Abrir no Explorer##isf_abrir_principal"))
         openFolder(paths::isfDir());
+
+    ImGui::Spacing();
+    dimLabel("Meus plugins (Novo plugin e Importar gravam aqui)");
+    pushMono();
+    ImGui::TextWrapped("%s", paths::toUtf8(paths::pluginsDir()).c_str());
+    popMono();
+    if (ImGui::Button("Abrir no Explorer##isf_abrir_meus"))
+        openFolder(paths::pluginsDir());
 
     ImGui::Spacing();
     dimLabel("Extras");
@@ -214,7 +228,7 @@ void drawFoldersPopup(PanelContext& ctx)
     ImGui::EndPopup();
 }
 
-} // namespace
+}
 
 void setEffectsPanelOnlyOpen(const std::string& section)
 {
@@ -225,10 +239,9 @@ void drawEffectsPanel(PanelContext& ctx)
 {
     beginPanel(panel::kEffects);
 
-    // Busca + Recarregar + Pastas
     const float btn = ImGui::GetFrameHeight();
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
-    ImGui::SetNextItemWidth(std::max(dp(80.0f), ImGui::GetContentRegionAvail().x - 3.0f * (btn + spacing)));
+    ImGui::SetNextItemWidth(std::max(dp(80.0f), ImGui::GetContentRegionAvail().x - 5.0f * (btn + spacing)));
     ImGui::InputTextWithHint("##efeitos_busca", "Buscar efeitos…", g_state.filter, sizeof(g_state.filter));
     ImGui::SameLine();
     if (iconButton(ICON_REFRESH, "##isf_recarregar", "Recarregar os shaders ISF das pastas"))
@@ -239,6 +252,12 @@ void drawEffectsPanel(PanelContext& ctx)
     ImGui::SameLine();
     if (iconButton(ICON_PLUG, "##plugins_abrir", "Plugins FFGL: pastas, importar, bloqueados…"))
         openPluginsWindow();
+    ImGui::SameLine();
+    if (iconButton(ICON_PACKAGE_PLUS, "##plugin_novo", "Novo plugin… (crie seu próprio efeito ou gerador)"))
+        openNewPluginWizard();
+    ImGui::SameLine();
+    if (iconButton(ICON_DOWNLOAD, "##plugin_importar", "Importar plugin (.bslplugin)…"))
+        openImportPluginWindow();
     drawFoldersPopup(ctx);
 
     fx::EffectRegistry& reg = fx::EffectRegistry::instance();
@@ -264,12 +283,10 @@ void drawEffectsPanel(PanelContext& ctx)
     };
 
     ImGui::Spacing();
-    // Cabecalhos de secao neutros (o vermelho fica para o que esta ativo)
     ImGui::PushStyleColor(ImGuiCol_Header, theme::kPanelRaised);
     ImGui::PushStyleColor(ImGuiCol_HeaderHovered, theme::kPanelHover);
     ImGui::PushStyleColor(ImGuiCol_HeaderActive, theme::kPanelActive);
     if (ImGui::BeginChild("##efeitos_lista", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None)) {
-        // Plugins BSL Light: ja vem instalados (nativos), no topo
         const auto bslItems = pick(fx::EffectSection::Bsl);
         ImGui::SetNextItemOpen(openFirst("bsl"), ImGuiCond_Once);
         if (brandHeader("BSL Light##secao_bsl")) {
@@ -330,4 +347,4 @@ void drawEffectsPanel(PanelContext& ctx)
     endPanel();
 }
 
-} // namespace bsl::ui
+}

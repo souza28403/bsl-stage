@@ -37,10 +37,9 @@ std::string errString(int err)
     return buf;
 }
 
-} // namespace
+}
 
 struct VideoDecoder::Impl {
-    // --- FFmpeg (a partir do open(), so a thread de decodificacao mexe nisto) ---
     AVFormatContext* fmt = nullptr;
     AVCodecContext* cc = nullptr;
     int streamIdx = -1;
@@ -50,28 +49,26 @@ struct VideoDecoder::Impl {
     int outW = 0;
     int outH = 0;
 
-    std::atomic<bool> abortIo{false}; // interrompe leituras bloqueadas (dispositivo sumiu) no close()
+    std::atomic<bool> abortIo{false};
 
     VideoInfo info;
     VideoDecoderOptions options;
     std::string error;
     bool opened = false;
 
-    // --- Sincronizacao ---
     mutable std::mutex m;
     std::condition_variable cvWorker;
     std::condition_variable cvConsumer;
     std::deque<Queued> queue;
     bool stop = false;
     bool loop = false;
-    bool loopBroken = false;   // a volta ao inicio nao produziu frames: desiste do loop nativo
-    bool eof = false;          // fim alcancado; aguarda seek/loop
+    bool loopBroken = false;
+    bool eof = false;
     bool seekPending = false;
     double seekTarget = 0.0;
     int seekGen = 0;
-    int epoch = 0;             // carimbo dos frames produzidos (incrementa a cada volta do loop)
+    int epoch = 0;
 
-    // --- Estado do consumidor (protegido por m) ---
     int consumerEpoch = 0;
     bool delivered = false;
     double lastT = 0.0;
@@ -91,7 +88,7 @@ struct VideoDecoder::Impl {
     bool openFile(const std::filesystem::path& path);
     void run();
     void seekInternal(double target, double& discardBefore);
-    std::unique_ptr<Frame> takeDue(double clipTime); // m deve estar travado
+    std::unique_ptr<Frame> takeDue(double clipTime);
 };
 
 namespace {
@@ -99,7 +96,7 @@ int ioInterrupt(void* opaque)
 {
     return static_cast<std::atomic<bool>*>(opaque)->load() ? 1 : 0;
 }
-} // namespace
+}
 
 bool VideoDecoder::Impl::openFile(const std::filesystem::path& path)
 {
@@ -159,7 +156,6 @@ bool VideoDecoder::Impl::openFile(const std::filesystem::path& path)
     const AVCodec* codec = avcodec_find_decoder(par->codec_id);
     bool alphaFlag = false;
 
-    // WEBM com alpha: o decoder nativo ignora o canal alpha; libvpx entrega yuva420p.
     if (par->codec_id == AV_CODEC_ID_VP8 || par->codec_id == AV_CODEC_ID_VP9) {
         const AVDictionaryEntry* e = av_dict_get(st->metadata, "alpha_mode", nullptr, 0);
         if (e && e->value && std::string(e->value) == "1") {
@@ -182,9 +178,8 @@ bool VideoDecoder::Impl::openFile(const std::filesystem::path& path)
         return false;
     }
     cc->pkt_timebase = st->time_base;
-    cc->thread_count = 0; // auto
+    cc->thread_count = 0;
     if (options.live) {
-        // Frame threading acrescenta quadros de latencia
         cc->thread_type = FF_THREAD_SLICE;
         cc->flags |= AV_CODEC_FLAG_LOW_DELAY;
     } else {
@@ -218,7 +213,6 @@ bool VideoDecoder::Impl::openFile(const std::filesystem::path& path)
         info.duration = static_cast<double>(fmt->duration) / AV_TIME_BASE;
     startTime = (st->start_time != AV_NOPTS_VALUE) ? static_cast<double>(st->start_time) * av_q2d(st->time_base) : 0.0;
 
-    // Downscale do perfil Eco
     outW = outH = 0;
     if (options.lowPower && options.targetWidth > 0 && options.targetHeight > 0 &&
         (info.width > options.targetWidth || info.height > options.targetHeight)) {
@@ -279,7 +273,7 @@ void VideoDecoder::Impl::run()
             seekInternal(seekTo, discardBefore);
             draining = false;
             lastPts = seekTo - frameDur;
-            framesSinceLoop = 1; // seek explicito nao aciona a protecao de loop vazio
+            framesSinceLoop = 1;
         } else if (doLoop) {
             seekInternal(0.0, discardBefore);
             draining = false;
@@ -302,7 +296,7 @@ void VideoDecoder::Impl::run()
                     ++framesSinceLoop;
                     std::lock_guard lk(m);
                     if (!stop && localGen == seekGen && !seekPending) {
-                        if (options.live) // descarta os atrasados: o dispositivo nunca espera pela UI
+                        if (options.live)
                             while (queue.size() >= static_cast<size_t>(std::max(1, options.queueSize)))
                                 queue.pop_front();
                         queue.push_back({std::move(frame), epoch});
@@ -318,7 +312,6 @@ void VideoDecoder::Impl::run()
                     avcodec_send_packet(cc, pkt);
                 av_packet_unref(pkt);
             } else if (options.live) {
-                // Dispositivo parou/sumiu: fim definitivo (a fonte tenta reabrir)
                 std::lock_guard lk(m);
                 eof = true;
                 cvConsumer.notify_all();
@@ -331,7 +324,6 @@ void VideoDecoder::Impl::run()
                 cvConsumer.notify_all();
             }
         } else {
-            // AVERROR_EOF (decoder drenado) ou erro irrecuperavel: fim da volta
             std::lock_guard lk(m);
             eof = true;
             if (loop && framesSinceLoop == 0)
@@ -346,7 +338,6 @@ void VideoDecoder::Impl::run()
 std::unique_ptr<Frame> VideoDecoder::Impl::takeDue(double t)
 {
     if (info.duration > 0.0 && lastT - t > info.duration * 0.5) {
-        // relogio deu a volta (loop): descarta o que sobrou da volta anterior
         ++consumerEpoch;
         while (!queue.empty() && queue.front().epoch < consumerEpoch)
             queue.pop_front();
@@ -357,7 +348,7 @@ std::unique_ptr<Frame> VideoDecoder::Impl::takeDue(double t)
     while (!queue.empty()) {
         Queued& head = queue.front();
         if (head.epoch > consumerEpoch)
-            break; // frame da proxima volta: espera o relogio dar a volta
+            break;
         if (head.frame->pts <= t + 0.001) {
             best = std::move(head.frame);
             queue.pop_front();
@@ -373,8 +364,6 @@ std::unique_ptr<Frame> VideoDecoder::Impl::takeDue(double t)
         delivered = true;
     return best;
 }
-
-// ---------------------------------------------------------------------------
 
 VideoDecoder::VideoDecoder() : impl_(std::make_unique<Impl>()) {}
 
@@ -533,4 +522,4 @@ bool VideoDecoder::atEnd() const
     return d.eof && !d.canLoop() && d.queue.empty();
 }
 
-} // namespace bsl::media
+}

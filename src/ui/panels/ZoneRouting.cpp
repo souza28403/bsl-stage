@@ -20,12 +20,11 @@ struct SliceRef
     int slice = 0;
 };
 
-// Estado do assistente aberto (so um por vez: e um modal)
 struct Wizard
 {
     int zones = 3;
     int source = kZoneSourceMaster;
-    int pick[4] = {-1, -1, -1, -1}; // indice na lista de slices; -1 = nenhum
+    int pick[4] = {-1, -1, -1, -1};
     bool open = false;
 };
 Wizard g_wizard;
@@ -50,7 +49,6 @@ std::string sliceLabel(const OutputSetup& out, const SliceRef& r)
     return s.name + " / " + s.slices[static_cast<size_t>(r.slice)].name;
 }
 
-// Sugestao inicial: o que ja esta roteado para esta fonte; o resto, os proximos slices ainda sem zona
 void prefill(const OutputSetup& out, const std::vector<SliceRef>& list)
 {
     for (int& p : g_wizard.pick)
@@ -81,8 +79,7 @@ void prefill(const OutputSetup& out, const std::vector<SliceRef>& list)
 
 void apply(PanelContext& ctx, const std::vector<SliceRef>& list)
 {
-    mapHistoryCommit(ctx); // o que estava pendente vira uma operacao propria
-    // Os slices que estavam roteados para esta fonte e ficaram sem zona na tabela voltam a mostrar tudo
+    mapHistoryCommit(ctx);
     for (const SliceRef& r : list) {
         Slice& s = sliceAt(ctx.output, r);
         if (s.zSource == g_wizard.source && s.zFilter >= kZoneFront && s.zFilter < kZoneFront + g_wizard.zones)
@@ -96,10 +93,10 @@ void apply(PanelContext& ctx, const std::vector<SliceRef>& list)
         s.zFilter = kZoneFront + z;
         s.zSource = g_wizard.source;
     }
-    mapHistoryCommit(ctx); // uma operacao de desfazer para tudo
+    mapHistoryCommit(ctx);
 }
 
-} // namespace
+}
 
 std::string zoneSourceLabel(const Composition& comp, int zoneSource)
 {
@@ -156,7 +153,7 @@ void drawZoneRoutingButton(PanelContext& ctx, const media::ParamSet& params, int
                 for (int i = 0; i < static_cast<int>(list.size()); ++i) {
                     const std::string label = sliceLabel(ctx.output, list[static_cast<size_t>(i)]) + "##zrota_s" + std::to_string(i);
                     if (ImGui::Selectable(label.c_str(), cur == i)) {
-                        for (int& other : g_wizard.pick) // um slice recebe uma zona so
+                        for (int& other : g_wizard.pick)
                             if (other == i)
                                 other = -1;
                         g_wizard.pick[z] = i;
@@ -187,4 +184,4 @@ void drawZoneRoutingButton(PanelContext& ctx, const media::ParamSet& params, int
     ImGui::EndPopup();
 }
 
-} // namespace bsl::ui
+}

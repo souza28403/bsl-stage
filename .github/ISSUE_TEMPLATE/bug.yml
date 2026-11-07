@@ -1,0 +1,46 @@
+name: Reportar problema
+description: Algo não funciona como deveria no BSL Stage
+title: "[Problema] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado por ajudar! No BSL Stage, **Ajuda > Reportar problema…** monta este texto para você e abre esta página já preenchida.
+        Este formulário tem os mesmos campos da janela do programa. **Não coloque senhas, nomes de clientes nem dados pessoais:** o texto fica público.
+  - type: textarea
+    id: descricao
+    attributes:
+      label: Descrição do problema
+      description: O que aconteceu e o que você esperava que acontecesse.
+      placeholder: "Ex.: ao disparar a coluna 3 com um PDF, a saída do monitor 2 fica preta por 2 segundos."
+    validations:
+      required: true
+  - type: textarea
+    id: passos
+    attributes:
+      label: Passos para reproduzir
+      description: Em ordem, do começo. Se souber, diga se acontece sempre ou só às vezes.
+      placeholder: |
+        1. Abrir o projeto…
+        2. Disparar…
+        3. …
+  - type: textarea
+    id: sistema
+    attributes:
+      label: Informações do sistema
+      description: Versão do BSL Stage, Windows, placa de vídeo e driver OpenGL, perfil de desempenho e memória. A janela do programa preenche isto se você marcar a caixa.
+      placeholder: |
+        - BSL Stage: 0.1.0
+        - Windows: Windows 11 (build 26200)
+        - GPU: …
+        - OpenGL / driver: …
+        - Perfil de desempenho: Balanceado
+        - Memória (RAM): 16,0 GB
+      render: markdown
+  - type: textarea
+    id: log
+    attributes:
+      label: Últimas linhas do log
+      description: O arquivo fica em `%APPDATA%\BSL Stage\bslstage.log`. Se colar, confira se não há nada que você não queira publicar.
+      render: text

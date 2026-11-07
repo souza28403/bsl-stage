@@ -1,8 +1,12 @@
 #pragma once
 
+#include "app/FrameWatch.h"
 #include "app/Settings.h"
+#include "control/KeyService.h"
 #include "core/Composition.h"
+#include "dmx/DmxService.h"
 #include "ui/PanelContext.h"
+#include "update/Service.h"
 
 #include <chrono>
 #include <filesystem>
@@ -21,41 +25,37 @@ class OutputRenderer;
 class ProjectSession;
 class ThumbnailCache;
 
-// Argumentos de linha de comando
 struct AppOptions
 {
-    std::filesystem::path demoFolder;       // --demo <pasta>
-    std::filesystem::path screenshotPath;   // --screenshot <arquivo.png> <segundos>
+    std::filesystem::path demoFolder;
+    std::filesystem::path screenshotPath;
     double screenshotSeconds = 0.0;
 
-    // Fase 2A (testes automaticos)
-    bool outputWindow = false;                    // --output-window
-    bool startInMapping = false;                  // --mode mapping
-    bool startInPixelMap = false;                 // --mode pixelmap
-    std::filesystem::path screenshotOutputPath;   // --screenshot-output <arquivo.png> <segundos>
+    bool outputWindow = false;
+    bool startInMapping = false;
+    bool startInPixelMap = false;
+    std::filesystem::path screenshotOutputPath;
     double screenshotOutputSeconds = 0.0;
-    int canvasWidth = 0;                          // --canvas <w> <h>: muda o canvas depois de montar a saida
+    int canvasWidth = 0;
     int canvasHeight = 0;
-    bool identify = false;                        // --identify: liga o modo Identificar
-    bool testMissingMonitor = false;              // --test-missing-monitor: Screen em monitor inexistente
-    int windowWidth = 0;                          // --window-size <w> <h>: tamanho da janela (nao e salvo)
+    bool identify = false;
+    bool testMissingMonitor = false;
+    int windowWidth = 0;
     int windowHeight = 0;
 
-    // Fase 2B: primeiro argumento posicional <projeto>.bslstage
     std::filesystem::path projectPath;
 
-    // Fase 3A (testes): --trigger <camada> <coluna> (1 = primeira) dispara o clip depois do --demo; repetivel
     std::vector<std::pair<int, int>> triggers;
-    // Escala da interface (testes): --ui-scale <f> fixa o valor (modo Fixed); --ui-mode window|system|fixed
     float uiScale = 0.0f;
     std::string uiMode;
-    // --qa <pasta>: modo de teste de interface (ver app/Qa.h). Isola settings/imgui.ini/log em <pasta>/appdata.
     std::filesystem::path qaDir;
-    bool openCaptureChooser = false; // --choose-target: abre a janela de alvo da captura (celula 3,2) para o screenshot
-    std::vector<std::filesystem::path> pluginFolders; // --plugins <pasta>: pasta de plugins FFGL extra, so nesta execucao (testes)
-    std::string fxOpen;              // --fx-open nativos|isf|ffgl: so essa secao da aba Efeitos nasce aberta (testes)
-    std::string focusTab;            // --tab efeitos|arquivos|geradores|camada|composicao|saida: aba a mostrar (testes)
-    std::filesystem::path ndiLib;    // --ndi-lib <dll>: runtime do NDI neste caminho (so para testes; senao: pasta do exe / NDI_RUNTIME_DIR_V6|V5)
+    bool openCaptureChooser = false;
+    std::vector<std::filesystem::path> pluginFolders;
+    std::string fxOpen;
+    std::string focusTab;
+    std::string dmxDemo;
+    std::filesystem::path fakeRelease;
+    std::filesystem::path ndiLib;
 };
 
 class App
@@ -88,7 +88,13 @@ private:
     void applySwapInterval();
     void updateLiveThumbs();
     void updateUiScale();
+    void applyFullscreen(bool on);
     void runQaCommands();
+    void setupKeyHooks();
+    void setupDmxDemo();
+    void setupUpdates();
+    void updateTick();
+    void pollSystemHotkeys();
     std::string qaStateJson() const;
     void saveScreenshotTo(const std::filesystem::path& file);
     static void onDrop(GLFWwindow* window, int count, const char** paths);
@@ -111,6 +117,7 @@ private:
     std::unique_ptr<Compositor> compositor_;
     std::unique_ptr<OutputRenderer> outputs_;
     int swapInterval_ = -1;
+    FrameWatch frameWatch_;
     bool screenshotDone_ = false;
     bool outputShotDone_ = false;
     std::filesystem::path qaShotPath_;
@@ -118,7 +125,16 @@ private:
     std::unique_ptr<ThumbnailCache> thumbs_;
     std::unique_ptr<LiveThumbnailer> liveThumbs_;
     std::string iniPath_;
-    std::unique_ptr<ProjectSession> project_; // por ultimo: referencia os membros acima
+    bool fullscreen_ = false;
+    bool fsMaximized_ = false;
+    int fsX_ = 0, fsY_ = 0, fsW_ = 0, fsH_ = 0;
+    control::KeyService keyService_;
+    dmx::Service dmx_;
+    update::Service updates_;
+    double nextAutoCheck_ = 0.0;
+    bool restartSawModal_ = false;
+    bool updaterLaunched_ = false;
+    std::unique_ptr<ProjectSession> project_;
 
     Clock::time_point lastFrameStart_{};
     Clock::time_point startTime_{};
@@ -128,4 +144,4 @@ private:
     int frameCount_ = 0;
 };
 
-} // namespace bsl
+}

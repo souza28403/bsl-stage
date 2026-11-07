@@ -1,13 +1,3 @@
-// bslstage_worker.exe: processo auxiliar do BSL Stage (PDF, Office e Web).
-//
-//   bslstage_worker.exe --pipe <nome> --parent <pid>         modo normal (um por clip)
-//   bslstage_worker.exe --thumb <entrada> <saida> <w> <h>    miniatura da pagina 1 (arquivo bruto: w, h, paginas, RGBA)
-//   bslstage_worker.exe --scan-ffgl <dll> [<saida.json>]      varre um plugin FFGL (JSON na saida padrao ou no arquivo)
-//   bslstage_worker.exe --type=...                            subprocesso do CEF (quando a Web esta habilitada)
-//
-// Se o app morrer, o job object do app (KILL_ON_JOB_CLOSE) derruba o worker; alem disso o worker vigia o
-// processo pai e sai sozinho.
-
 #include "media/WorkerProtocol.h"
 #include "worker/FfglScan.h"
 #include "worker/FrameSink.h"
@@ -52,14 +42,11 @@ void colorFromJson(const Json& v, std::uint8_t outBgra[4])
             if (v[i].is_number())
                 c[i] = std::clamp(v[i].get<float>(), 0.0f, 1.0f);
     auto b = [](float f) { return static_cast<std::uint8_t>(std::lround(f * 255.0f)); };
-    // BGRA com alpha reta
     outBgra[0] = b(c[2]);
     outBgra[1] = b(c[1]);
     outBgra[2] = b(c[0]);
     outBgra[3] = b(c[3]);
 }
-
-// --------------------------------------------------------------------------------- modo miniatura
 
 int runThumbnail(const std::wstring& in, const std::wstring& out, int w, int h)
 {
@@ -106,8 +93,6 @@ int runThumbnail(const std::wstring& in, const std::wstring& out, int w, int h)
     }
     return ec ? 6 : 0;
 }
-
-// --------------------------------------------------------------------------------- modo normal
 
 class Worker
 {
@@ -173,7 +158,6 @@ public:
     }
 
 private:
-    // ------------------------------------------------------------------ mensagens
     void handle(const Json& m)
     {
         const std::string t = m.value("t", std::string());
@@ -202,8 +186,6 @@ private:
 #endif
     }
 
-    // So para teste: BSLSTAGE_WORKER_HANG_ONCE=<arquivo>. Na primeira execucao (arquivo ainda nao existe) cria o
-    // arquivo e trava de verdade (sem responder a pings); as proximas execucoes seguem normalmente.
     void simulateHangOnce()
     {
         wchar_t marker[MAX_PATH];
@@ -346,7 +328,6 @@ private:
             showPage(curPage_);
     }
 
-    // ------------------------------------------------------------------ PDF
     void loadPdf(const fs::path& file)
     {
         std::string error;
@@ -418,7 +399,6 @@ private:
         return false;
     }
 
-    // Pre-renderiza a proxima e a anterior, uma por ciclo (nao segura os pings)
     void prerenderStep()
     {
         if (!needsPrerender())
@@ -431,7 +411,6 @@ private:
         }
     }
 
-    // ------------------------------------------------------------------ Office -> PDF
     void startConvert(const fs::path& file)
     {
         convertThread_ = std::thread([this, file] {
@@ -474,7 +453,7 @@ private:
 #ifdef BSL_WITH_CEF
         web_.reset();
 #endif
-        joinConvert(); // deixa o Office fechar o que abriu
+        joinConvert();
         pdf_.close();
         sink_.reset();
     }
@@ -513,9 +492,9 @@ private:
 #endif
 };
 
-} // namespace
+}
 
-} // namespace bsl::worker
+}
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
 {
@@ -525,7 +504,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    std::wstring pipe, thumbIn, thumbOut, scanDll, scanOut;
+    std::wstring pipe, thumbIn, thumbOut, scanDll, scanOut, panelUrl, panelTitle = L"BSL Stage";
     DWORD parent = 0;
     int thumbW = 160, thumbH = 90;
     bool thumb = false;
@@ -546,6 +525,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
             scanDll = argv[++i];
             if (i + 1 < argc && std::wstring(argv[i + 1]).rfind(L"--", 0) != 0)
                 scanOut = argv[++i];
+        } else if (a == L"--panel" && i + 1 < argc) {
+            panelUrl = argv[++i];
+        } else if (a == L"--title" && i + 1 < argc) {
+            panelTitle = argv[++i];
         } else if (a.rfind(L"--type=", 0) == 0) {
             cefSub = true;
         }
@@ -560,13 +543,20 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
 #endif
     }
     if (!scanDll.empty())
-        runFfglScan(scanDll, scanOut); // nao volta
+        runFfglScan(scanDll, scanOut);
     if (thumb)
         return runThumbnail(thumbIn, thumbOut, std::clamp(thumbW, 16, 1024), std::clamp(thumbH, 16, 1024));
+    if (!panelUrl.empty()) {
+#ifdef BSL_WITH_CEF
+        return runPanelWindow(instance, panelUrl, panelTitle, parent);
+#else
+        return 1;
+#endif
+    }
     if (pipe.empty() || parent == 0)
         return 2;
     if (GetEnvironmentVariableW(L"BSLSTAGE_WORKER_CRASH", nullptr, 0) > 0)
-        return 42; // so para teste: simula um worker que nunca sobe
+        return 42;
 
     const HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     Worker worker;

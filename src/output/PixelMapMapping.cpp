@@ -25,7 +25,6 @@ Slice sliceFor(const Panel& p, double canvasPerPhysX, double canvasPerPhysY, int
 {
     Slice s;
     s.name = p.name;
-    // Entrada: o retangulo escalado no canvas real (Math.round como a tabela), dentro do canvas
     int x = static_cast<int>(jsRound(p.x * canvasPerPhysX));
     int y = static_cast<int>(jsRound(p.y * canvasPerPhysY));
     int w = static_cast<int>(jsRound(p.w * canvasPerPhysX));
@@ -35,7 +34,6 @@ Slice sliceFor(const Panel& p, double canvasPerPhysX, double canvasPerPhysY, int
     w = std::clamp(w, 1, std::max(1, canvasW - x));
     h = std::clamp(h, 1, std::max(1, canvasH - y));
     s.input = {x, y, w, h};
-    // Saida: a posicao fisica
     const float fx = static_cast<float>(p.x), fy = static_cast<float>(p.y);
     const float fw = static_cast<float>(p.w), fh = static_cast<float>(p.h);
     s.corners[kCornerTL] = {fx, fy};
@@ -45,7 +43,7 @@ Slice sliceFor(const Panel& p, double canvasPerPhysX, double canvasPerPhysY, int
     return s;
 }
 
-} // namespace
+}
 
 int createMapping(const Config& c, OutputSetup& out, MapMode mode, int targetScreen, int canvasW, int canvasH)
 {
@@ -67,7 +65,7 @@ int createMapping(const Config& c, OutputSetup& out, MapMode mode, int targetScr
     screen.slices.clear();
     for (const Panel& p : c.panels)
         screen.slices.push_back(sliceFor(p, kx, ky, canvasW, canvasH));
-    if (screen.slices.empty()) // uma Screen sem slices nao mostra nada: deixa o slice cheio de sempre
+    if (screen.slices.empty())
         screen.slices.push_back(makeFullSlice("Slice 1", canvasW, canvasH, screen.width, screen.height));
     return index;
 }
@@ -102,4 +100,4 @@ bool importFromScreen(Config& c, const Screen& screen)
     return true;
 }
 
-} // namespace bsl::pixelmap
+}

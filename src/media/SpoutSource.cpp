@@ -21,7 +21,7 @@ std::string shortName(std::string name, size_t maxChars)
     return name.substr(0, cut) + "…";
 }
 
-} // namespace
+}
 
 SpoutSource::SpoutSource() = default;
 
@@ -30,7 +30,7 @@ SpoutSource::~SpoutSource()
     close();
 }
 
-std::vector<ParamDesc> SpoutSource::describe(const ParamValues& /*values*/)
+std::vector<ParamDesc> SpoutSource::describe(const ParamValues& )
 {
     using namespace param;
     std::vector<ParamDesc> d;
@@ -70,7 +70,7 @@ GLuint SpoutSource::texture() const
     return (input_.connected() && input_.texture()) ? input_.texture() : blackTex_;
 }
 
-bool SpoutSource::open(const std::filesystem::path& /*path*/, std::string* /*error*/)
+bool SpoutSource::open(const std::filesystem::path& , std::string* )
 {
     close();
     clock_ = ClipClock{};
@@ -102,7 +102,7 @@ void SpoutSource::showBlack()
     uploadRgbaTexture(blackTex_, blackW_, blackH_, black);
 }
 
-void SpoutSource::update(double /*dt*/)
+void SpoutSource::update(double )
 {
     if (!open_)
         return;
@@ -115,7 +115,7 @@ void SpoutSource::update(double /*dt*/)
         }
     }
     {
-        GlStateGuard guard; // o Spout mexe em FBOs/texturas próprios
+        GlStateGuard guard;
         input_.receive();
     }
     if (input_.connected()) {
@@ -137,4 +137,4 @@ SourceStatus SpoutSource::status() const
     return {Level::Warning, "Sem sinal: nenhum sender Spout ativo"};
 }
 
-} // namespace bsl::media
+}

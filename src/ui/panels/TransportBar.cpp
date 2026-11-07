@@ -1,5 +1,6 @@
 #include "ui/panels/TransportBar.h"
 
+#include "control/KeyService.h"
 #include "ui/Theme.h"
 #include "ui/Widgets.h"
 
@@ -15,32 +16,12 @@ namespace {
 
 constexpr float kBpmMin = 20.0f;
 constexpr float kBpmMax = 300.0f;
-constexpr double kTapResetSeconds = 2.0;
-constexpr size_t kTapWindow = 4; // média das últimas 4 batidas
 
 float clampBpm(float v)
 {
     return std::clamp(v, kBpmMin, kBpmMax);
 }
 
-// TAP: média dos intervalos entre as últimas 4 batidas; 2 s sem toque recomeça a contagem
-void registerTap(Composition& comp)
-{
-    static std::vector<double> taps;
-    const double now = ImGui::GetTime();
-    if (!taps.empty() && now - taps.back() > kTapResetSeconds)
-        taps.clear();
-    taps.push_back(now);
-    if (taps.size() > kTapWindow)
-        taps.erase(taps.begin());
-    if (taps.size() >= 2) {
-        const double avg = (taps.back() - taps.front()) / static_cast<double>(taps.size() - 1);
-        if (avg > 0.0)
-            comp.bpm = clampBpm(static_cast<float>(60.0 / avg));
-    }
-}
-
-// Pisca em vermelho no início de cada batida e apaga em seguida
 void drawBeatIndicator(const Composition& comp)
 {
     const float h = transportBarHeight();
@@ -61,7 +42,7 @@ void drawBeatIndicator(const Composition& comp)
     dl->AddCircle(c, radius, ImGui::GetColorU32(theme::kBorder), 24, std::max(1.0f, dp(1.0f)));
 }
 
-} // namespace
+}
 
 void drawTransportBar(PanelContext& ctx)
 {
@@ -73,7 +54,6 @@ void drawTransportBar(PanelContext& ctx)
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, dp(6.0f, 6.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(dp(10.0f), frameY));
 
-    // --- Play / pause / stop globais ---
     if (iconButton(ICON_PLAY, "##transport_play", "Tocar (retoma tudo)", btn,
                    comp.anyActive() && !comp.paused ? IconButton_Active : 0))
         comp.resumeAll();
@@ -86,7 +66,6 @@ void drawTransportBar(PanelContext& ctx)
         comp.beat = 0.0;
     }
 
-    // --- BPM ---
     ImGui::SameLine(0.0f, dp(20.0f));
     ImGui::AlignTextToFramePadding();
     dimLabel("BPM");
@@ -105,7 +84,7 @@ void drawTransportBar(PanelContext& ctx)
     if (!twoRows)
         ImGui::SameLine();
     if (ImGui::Button("TAP", ImVec2(dp(52.0f), transportBarHeight())))
-        registerTap(comp);
+        ctx.keys.tap.tap(comp, ctx.keys.now());
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Toque no ritmo: média das últimas 4 batidas");
     ImGui::SameLine();
@@ -118,7 +97,6 @@ void drawTransportBar(PanelContext& ctx)
     if (ImGui::Button("×2", ImVec2(dp(38.0f), transportBarHeight())))
         comp.bpm = clampBpm(comp.bpm * 2.0f);
 
-    // --- Indicador de beat + posição no compasso ---
     ImGui::SameLine(0.0f, dp(14.0f));
     drawBeatIndicator(comp);
     ImGui::SameLine();
@@ -131,4 +109,4 @@ void drawTransportBar(PanelContext& ctx)
     ImGui::PopStyleVar(2);
 }
 
-} // namespace bsl::ui
+}

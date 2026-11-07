@@ -39,7 +39,7 @@ std::string uniqueSliceName(const Screen& screen, const std::string& base)
     return uniqueName(screen.slices, base, [](const Slice& s) -> const std::string& { return s.name; });
 }
 
-} // namespace
+}
 
 Slice makeFullSlice(const std::string& name, int canvasW, int canvasH, int screenW, int screenH)
 {
@@ -79,6 +79,38 @@ void resetWarp(Slice& slice)
     slice.corners[kCornerTR] = {maxX, minY};
     slice.corners[kCornerBR] = {maxX, maxY};
     slice.corners[kCornerBL] = {minX, maxY};
+}
+
+std::vector<LayerViewRequest> collectLayerViews(const OutputSetup& setup, int previewScreenId)
+{
+    std::vector<LayerViewRequest> out;
+    for (const Screen& screen : setup.screens) {
+        const bool preview = screen.id == previewScreenId;
+        if (!preview && !screen.live())
+            continue;
+        for (const Slice& s : screen.slices) {
+            if (s.source != kSliceFromLayer || s.layerId <= 0)
+                continue;
+            if (!preview && (!s.enabled || s.opacity <= 0.0f))
+                continue;
+            const LayerViewRequest req{s.layerId, s.includeMaster, s.applyLayerTransform};
+            if (std::find(out.begin(), out.end(), req) == out.end())
+                out.push_back(req);
+        }
+    }
+    return out;
+}
+
+std::vector<std::string> slicesLinkedToLayer(const OutputSetup& setup, int layerId)
+{
+    std::vector<std::string> out;
+    if (layerId <= 0)
+        return out;
+    for (const Screen& screen : setup.screens)
+        for (const Slice& s : screen.slices)
+            if (s.source == kSliceFromLayer && s.layerId == layerId)
+                out.push_back(screen.name + " / " + s.name);
+    return out;
 }
 
 const char* outputKindName(OutputKind kind)
@@ -201,4 +233,4 @@ void OutputSetup::rescaleInputs(int oldW, int oldH, int newW, int newH)
     }
 }
 
-} // namespace bsl
+}

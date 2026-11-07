@@ -17,3 +17,10 @@ docs/qa/
 
 third_party/onnxruntime/
 assets/models/
+
+# certificado de assinatura de codigo: nunca publicar
+Certificado BSL Stage/
+*.pfx
+*.p12
+*.cer
+*.key

@@ -1,7 +1,3 @@
-// Parte do bslstage_spouttest que usa o lado "app": a fonte Spout (media::SpoutSource, criada pelo registro de
-// geradores) recebendo o sender do teste. Fica em outro arquivo porque aqui entra o glad/ISource, e o Spout traz o
-// proprio carregador de GL (os dois nao convivem no mesmo arquivo).
-
 #include "core/Generators.h"
 #include "media/SpoutSource.h"
 
@@ -29,7 +25,6 @@ bool receiveWithAppSource(const std::string& sender, const std::function<void()>
         return false;
     out.registered = true;
 
-    // A lista de senders ativos (com atualizacao automatica) tem de mostrar o sender do teste
     for (int i = 0; i < 40 && !out.listed; ++i) {
         sendOne();
         const std::vector<std::string> senders = bsl::media::SpoutSource::activeSenders();
@@ -69,4 +64,4 @@ bool receiveWithAppSource(const std::string& sender, const std::function<void()>
     return true;
 }
 
-} // namespace spouttest
+}

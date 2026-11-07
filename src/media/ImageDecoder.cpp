@@ -86,7 +86,7 @@ bool decodeStb(const std::filesystem::path& path, DecodedImage& out, std::string
                 f.range = ColorRange::Full;
                 double d = (delays && z > 1) ? delays[i] / 1000.0 : 0.0;
                 if (z > 1 && d <= 0.011)
-                    d = kDefaultDelay; // convencao dos navegadores para delays 0/1
+                    d = kDefaultDelay;
                 f.pts = out.totalDuration();
                 out.frames.push_back(std::move(f));
                 out.delays.push_back(d);
@@ -240,7 +240,6 @@ bool decodeFfmpeg(const std::filesystem::path& path, DecodedImage& out, std::str
                     d = kDefaultDelay;
                 out.delays[i] = d;
             }
-            // pts em segundos acumulados, independente do que o demuxer informou
             double acc = 0.0;
             for (size_t i = 0; i < n; ++i) {
                 out.frames[i].pts = acc;
@@ -258,7 +257,7 @@ bool decodeFfmpeg(const std::filesystem::path& path, DecodedImage& out, std::str
     return ok;
 }
 
-} // namespace
+}
 
 bool decodeImage(const std::filesystem::path& path, DecodedImage& out, std::string* error)
 {
@@ -293,4 +292,4 @@ bool decodeImage(const std::filesystem::path& path, DecodedImage& out, std::stri
     return ok;
 }
 
-} // namespace bsl::media
+}

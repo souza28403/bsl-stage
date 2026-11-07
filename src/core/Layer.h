@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/LayerTransform.h"
 #include "fx/EffectChain.h"
 
 #include <string>
@@ -18,17 +19,19 @@ inline const char* blendModeName(BlendMode mode)
     return names[static_cast<int>(mode)];
 }
 
-// Camadas sao globais (valem para todos os decks); so a grade de clips e por deck.
 struct Layer
 {
+    int id = 0;
     std::string name;
-    float opacity = 1.0f;  // 0..1
+    float opacity = 1.0f;
     BlendMode blendMode = BlendMode::Normal;
-    bool bypass = false;   // ignora a camada na composicao
-    bool solo = false;     // se alguma camada esta em solo, so as em solo aparecem
-    int activeDeck = -1;   // deck do clip tocando (-1 = nenhum)
-    int activeColumn = -1; // coluna do clip tocando (-1 = nenhuma)
-    fx::EffectChain effects; // efeitos da camada (no tamanho do canvas, antes do blend)
+    bool bypass = false;
+    bool solo = false;
+    int activeDeck = -1;
+    int activeColumn = -1;
+    fx::EffectChain effects;
+    bool sliceOnly = false;
+    LayerTransform transform;
 };
 
-} // namespace bsl
+}

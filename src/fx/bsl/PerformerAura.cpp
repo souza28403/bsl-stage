@@ -1,21 +1,3 @@
-// BSL Volumetric Performer Aura & Fluid Collisions: usa a máscara de pessoa da IA local (MODNet, ver src/ai) não só para
-// recortar o DJ, mas para empurrar um fluido 2D ao redor do corpo conforme as bordas da silhueta se mexem.
-//
-// Por quadro, tudo na GPU e em baixa resolução (1/8, 1/4 ou 1/2 da imagem; padrão 1/4):
-//  1. suaviza a máscara (tent 3x3 em passos de 1,5 texel; a borda vem do gradiente dela);
-//  2. derivadas espaciais e temporais da máscara (Ix, Iy, It);
-//  3. fluxo óptico de Lucas-Kanade de 1 nível sobre a máscara (janela 5x5 com regularização): o movimento das bordas em
-//     texels por quadro, mantido e esmaecido entre as atualizações da IA (que roda a 15-30 fps);
-//  4. velocidade do fluido: advecção semi-lagrangiana + difusão leve + amortecimento; perto das bordas em movimento (a
-//     "espessura da aura" é o alcance disso) a velocidade é puxada para o movimento da borda;
-//  5. densidade: advecção semi-lagrangiana pela velocidade, dissipação exponencial e injeção nas bordas que se movem.
-// Máscara parada = sem injeção: a densidade e a velocidade só caem. O desenho final (tela cheia) tem 3 visualizações:
-// aura/fumaça (gradiente de 2 cores com brilho), partículas (densidade pontilhada, uma passada só) e grade de lasers
-// deformada pelo campo de velocidade.
-//
-// Texturas da simulação: linha 0 = TOPO da imagem (amostradas com imgPos(), como as da IA); RGBA32F (o Fbo só tem 8 bits
-// ou 32F).
-
 #include "fx/bsl/BslCommon.h"
 #include "fx/bsl/BslEffects.h"
 
@@ -37,11 +19,10 @@ in vec2 vUv;
 out vec4 fragColor;
 )";
 
-// 1. Máscara suavizada (r)
 const char* const kSmoothBody = R"(
-uniform sampler2D uMask;   // R8 da IA, linha 0 = topo
-uniform vec2 uTexel;       // 1 / tamanho da simulacao
-uniform float uStep;       // passo dos taps, em texels
+uniform sampler2D uMask;
+uniform vec2 uTexel;
+uniform float uStep;
 void main()
 {
     float s = 0.0;
@@ -54,7 +35,6 @@ void main()
 }
 )";
 
-// 2. Derivadas: xy = gradiente (media dos dois quadros), z = diferenca temporal, w = mascara
 const char* const kDerivBody = R"(
 uniform sampler2D uCur;
 uniform sampler2D uPrev;
@@ -70,15 +50,14 @@ void main()
 }
 )";
 
-// 3. Lucas-Kanade de 1 nivel (janela 5x5 ponderada): movimento das bordas em texels por quadro
 const char* const kFlowBody = R"(
 uniform sampler2D uDer;
 uniform sampler2D uMPrev;
 uniform vec2 uTexel;
-uniform float uLambda;     // regularizacao: sem gradiente nao ha fluxo
-uniform float uMaxFlow;    // texels por quadro
-uniform float uMDecay;     // esmaecimento do movimento mantido entre atualizacoes da IA
-uniform float uDead;       // abaixo disso e ruido
+uniform float uLambda;
+uniform float uMaxFlow;
+uniform float uMDecay;
+uniform float uDead;
 void main()
 {
     float a = 0.0, b = 0.0, c = 0.0, bx = 0.0, by = 0.0;
@@ -107,7 +86,6 @@ void main()
 }
 )";
 
-// 4. Velocidade (xy, alturas da imagem por segundo) e forca local (z = movimento espalhado, texels por quadro)
 const char* const kVelBody = R"(
 uniform sampler2D uV;
 uniform sampler2D uM;
@@ -116,8 +94,8 @@ uniform float uDt;
 uniform float uAspect;
 uniform float uDecay;
 uniform float uDiffuse;
-uniform float uRadius;       // espessura da aura, em texels
-uniform float uTargetScale;  // texels/quadro -> alturas/s (ja com a forca)
+uniform float uRadius;
+uniform float uTargetScale;
 uniform float uForceGain;
 uniform float uForceBlend;
 void main()
@@ -129,7 +107,6 @@ void main()
                      + texture(uV, vUv + vec2(0.0, uTexel.y)).xy + texture(uV, vUv - vec2(0.0, uTexel.y)).xy);
     v = mix(v, avg, uDiffuse) * uDecay;
 
-    // O movimento da borda alcanca a espessura da aura: pega o mais forte da vizinhanca (3 aneis de 8 taps)
     vec2 best = texture(uM, vUv).xy;
     float bestLen = length(best);
     for (int ring = 1; ring <= 3; ++ring) {
@@ -151,7 +128,6 @@ void main()
 }
 )";
 
-// 5. Densidade (r) e "calor" (g, escolhe a cor no gradiente): advecta, dissipa e recebe das bordas em movimento
 const char* const kDenBody = R"(
 uniform sampler2D uD;
 uniform sampler2D uV;
@@ -174,26 +150,25 @@ void main()
 }
 )";
 
-// Desenho final, na resolucao do efeito
 const char* const kAuraBody = R"(
-uniform sampler2D uDen;     // r = densidade, g = calor
-uniform sampler2D uVel;     // rg = velocidade, b = movimento espalhado
-uniform sampler2D uPer;     // mascara da pessoa (IA)
-uniform sampler2D uDbgA;    // depuracao: mascara suavizada (r)
-uniform sampler2D uDbgB;    // depuracao: movimento das bordas (rg)
-uniform int uMode;          // 0 aura/fumaca, 1 particulas, 2 grade de lasers
-uniform int uDebug;         // 0 desligado, 1 mascara, 2 movimento, 3 velocidade, 4 densidade
-uniform int uOnly;          // 1 = so o efeito
-uniform int uCut;           // 1 = pessoa por cima
+uniform sampler2D uDen;
+uniform sampler2D uVel;
+uniform sampler2D uPer;
+uniform sampler2D uDbgA;
+uniform sampler2D uDbgB;
+uniform int uMode;
+uniform int uDebug;
+uniform int uOnly;
+uniform int uCut;
 uniform vec3 uColA;
 uniform vec3 uColB;
 uniform float uIntensity;
 uniform float uGlow;
 uniform float uAspect;
-uniform float uDot;         // tamanho do ponto (px em 1080p)
-uniform float uCells;       // linhas da grade na altura
-uniform float uLine;        // espessura das linhas (px)
-uniform float uWarp;        // deformacao da grade
+uniform float uDot;
+uniform float uCells;
+uniform float uLine;
+uniform float uWarp;
 
 float hash21(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 vec3 palette(float t) { return mix(uColA, uColB, smoothstep(0.0, 1.0, t)); }
@@ -226,7 +201,7 @@ vec3 particles(vec2 uv)
 vec3 lasers(vec2 uv)
 {
     vec2 vel = texture(uVel, uv).xy;
-    vec2 disp = texture(uVel, uv - vel * uWarp * 0.5).xy * uWarp;     // duas iteracoes: a grade acompanha o fluxo
+    vec2 disp = texture(uVel, uv - vel * uWarp * 0.5).xy * uWarp;
     vec2 g = (vec2(uv.x * uAspect, uv.y) - disp) * uCells;
     vec2 gd = abs(fract(g + 0.5) - 0.5);
     vec2 fw = max(fwidth(g), vec2(1.0e-4));
@@ -257,25 +232,23 @@ void main()
     if (uDebug == 4) { fragColor = vec4(vec3(clamp(texture(uDen, uv).r * 0.5, 0.0, 1.0)), 1.0); return; }
 
     vec3 add = uMode == 0 ? aura(uv) : (uMode == 1 ? particles(uv) : lasers(uv));
-    vec3 ps = src.rgb * src.a;                       // premultiplicado
+    vec3 ps = src.rgb * src.a;
     float pm = uCut == 1 ? smoothstep(0.35, 0.65, texture(uPer, uv).r) : 0.0;
     vec3 P;
     float A;
     if (uOnly == 1) {
-        P = add * (1.0 - pm) + ps * pm;              // so o efeito (a pessoa por cima, se ligado)
+        P = add * (1.0 - pm) + ps * pm;
         A = src.a * pm;
     } else {
-        // aura por cima da imagem: soma e escurece um pouco por baixo, para aparecer tambem sobre fundo claro
         float cover = clamp(max(add.r, max(add.g, add.b)), 0.0, 1.0);
         vec3 over = ps * (1.0 - 0.75 * cover) + add;
-        P = mix(over, ps, pm);                       // atras da pessoa se ligado
+        P = mix(over, ps, pm);
         A = src.a;
     }
     fragColor = toStraight(P, A);
 }
 )";
 
-// Estado da simulacao: ping-pong de FBOs RGBA32F no tamanho reduzido
 struct Pair
 {
     std::unique_ptr<Fbo> f[2];
@@ -414,7 +387,6 @@ private:
         return true;
     }
 
-    // Uma passada de simulacao: liga 'dst', o programa e as texturas (unidades 0..), e desenha
     void pass(Shader& s, const Fbo& dst, std::initializer_list<GLuint> textures)
     {
         bindOutput(dst, simW_, simH_);
@@ -431,26 +403,23 @@ private:
         const float texX = 1.0f / static_cast<float>(simW_), texY = 1.0f / static_cast<float>(simH_);
         const float dissip = p.f("dissipation") * 0.01f;
 
-        // 1. mascara suavizada
         smoothSh_->use();
         smoothSh_->setInt("uMask", 0);
         smoothSh_->setVec2("uTexel", texX, texY);
         smoothSh_->setFloat("uStep", 1.5f);
         pass(*smoothSh_, smooth_.next(), {maskTex_});
         smooth_.swap();
-        if (!primed_) { // primeiro quadro: sem diferenca temporal (senao a pessoa inteira "entraria" de uma vez)
+        if (!primed_) {
             blit_.copy(smooth_.now().texture(), simW_, simH_, smooth_.prev());
             primed_ = true;
         }
 
-        // 2. derivadas
         derivSh_->use();
         derivSh_->setInt("uCur", 0);
         derivSh_->setInt("uPrev", 1);
         derivSh_->setVec2("uTexel", texX, texY);
         pass(*derivSh_, *deriv_, {smooth_.now().texture(), smooth_.prev().texture()});
 
-        // 3. fluxo optico (movimento das bordas)
         flowSh_->use();
         flowSh_->setInt("uDer", 0);
         flowSh_->setInt("uMPrev", 1);
@@ -462,7 +431,6 @@ private:
         pass(*flowSh_, motion_.next(), {deriv_->texture(), motion_.now().texture()});
         motion_.swap();
 
-        // 4. velocidade
         const float strength = p.f("motionForce") * 0.01f * boost_;
         const float radius = std::max(1.0f, p.f("thickness") * 0.01f * static_cast<float>(simH_));
         velSh_->use();
@@ -480,8 +448,7 @@ private:
         pass(*velSh_, vel_.next(), {vel_.now().texture(), motion_.now().texture()});
         vel_.swap();
 
-        // 5. densidade
-        const float k = 0.12f + 8.0f * dissip * dissip; // dissipacao por segundo
+        const float k = 0.12f + 8.0f * dissip * dissip;
         denSh_->use();
         denSh_->setInt("uD", 0);
         denSh_->setInt("uV", 1);
@@ -512,7 +479,7 @@ private:
     TexBlitter blit_;
 };
 
-} // namespace
+}
 
 std::vector<media::ParamDesc> describeAura()
 {
@@ -569,4 +536,4 @@ std::unique_ptr<IEffect> makeAura()
     return std::make_unique<AuraEffect>();
 }
 
-} // namespace bsl::fx::bsllight
+}

@@ -15,7 +15,7 @@ Point2 rotated(float lx, float ly, float rot)
     return {lx * c - ly * s, lx * s + ly * c};
 }
 
-} // namespace
+}
 
 float normalizeAngle(float rad)
 {
@@ -32,7 +32,7 @@ void toCorners(const Xform& x, Point2 out[4])
     const float lx[4] = {-hw, hw, hw, -hw};
     const float ly[4] = {-hh, -hh, hh, hh};
     for (int i = 0; i < 4; ++i) {
-        if (x.rot == 0.0f) { // sem rotacao: sem ruido de ponto flutuante (as bordas ficam exatas)
+        if (x.rot == 0.0f) {
             out[i] = {x.cx + lx[i], x.cy + ly[i]};
         } else {
             const Point2 r = rotated(lx[i], ly[i], x.rot);
@@ -49,9 +49,9 @@ bool fromCorners(const Point2 c[4], Xform& out, float tol)
     bool rect = len1 > 1.0e-3f && len2 > 1.0e-3f;
     if (rect) {
         const float cross = v1x * v2y - v1y * v2x;
-        rect = cross > 0.0f;                                                   // horario: sem espelhar
-        rect = rect && std::abs(v1x * v2x + v1y * v2y) / len1 <= tol;           // lados perpendiculares
-        rect = rect && std::hypot(c[2].x - (c[1].x + v2x), c[2].y - (c[1].y + v2y)) <= tol; // paralelogramo
+        rect = cross > 0.0f;
+        rect = rect && std::abs(v1x * v2x + v1y * v2y) / len1 <= tol;
+        rect = rect && std::hypot(c[2].x - (c[1].x + v2x), c[2].y - (c[1].y + v2y)) <= tol;
     }
     if (rect) {
         out.cx = (c[0].x + c[2].x) * 0.5f;
@@ -59,7 +59,7 @@ bool fromCorners(const Point2 c[4], Xform& out, float tol)
         out.w = len1;
         out.h = len2;
         out.rot = std::abs(v1y) < 1.0e-3f && v1x > 0.0f ? 0.0f : std::atan2(v1y, v1x);
-        if (out.rot == 0.0f) { // quase sem rotacao: usa a caixa exata (nao a media de cantos ligeiramente diferentes)
+        if (out.rot == 0.0f) {
             const snap::RectF b = snap::boundsOf(c);
             out.cx = b.cx();
             out.cy = b.cy();
@@ -111,13 +111,12 @@ Xform resizeXform(const Xform& s, int handle, float lx, float ly, const ResizeOp
     if (hr) nr += lx;
     if (ht) nt += ly;
     if (hb) nb += ly;
-    if (opt.fromCenter) { // a borda oposta anda para o lado contrario
+    if (opt.fromCenter) {
         if (hl) nr = -nl;
         if (hr) nl = -nr;
         if (ht) nb = -nt;
         if (hb) nt = -nb;
     }
-    // tamanho minimo (sem inverter o retangulo)
     if (nr - nl < minS) {
         if (opt.fromCenter) { nl = -minS * 0.5f; nr = minS * 0.5f; }
         else if (hl) nl = nr - minS;
@@ -178,4 +177,4 @@ void roundToPixels(Xform& x)
     x.setPosition(std::round(x.x()), std::round(x.y()));
 }
 
-} // namespace bsl::mapedit
+}

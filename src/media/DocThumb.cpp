@@ -28,7 +28,7 @@ HANDLE workerJob()
             info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
             SetInformationJobObject(j, JobObjectExtendedLimitInformation, &info, sizeof(info));
         }
-        return j; // nunca fechado: fecha quando o app morre e leva os workers junto
+        return j;
     }();
     return job;
 }
@@ -41,7 +41,7 @@ HANDLE cancelEvent()
     return ev;
 }
 
-} // namespace
+}
 
 void cancelDocThumbnails()
 {
@@ -52,7 +52,7 @@ bool renderDocThumbnail(const std::filesystem::path& fileIn, int w, int h, Frame
 {
     namespace fs = std::filesystem;
     std::error_code absEc;
-    const fs::path file = fs::absolute(fileIn, absEc); // o worker roda em outra pasta de trabalho
+    const fs::path file = fs::absolute(fileIn, absEc);
     auto fail = [&](const std::string& msg) {
         if (error)
             *error = msg;
@@ -86,13 +86,12 @@ bool renderDocThumbnail(const std::filesystem::path& fileIn, int w, int h, Frame
     ResumeThread(pi.hThread);
     CloseHandle(pi.hThread);
 
-    // PDF: segundos. Office: o worker pode ter de abrir o aplicativo (e esperar outra conversão).
     const std::string ext = lowerExtension(file);
     const DWORD timeoutMs = (ext == "pdf") ? 40000 : 300000;
     DWORD code = 1;
     HANDLE waits[2] = {pi.hProcess, cancelEvent()};
     DWORD waited = WaitForMultipleObjects(2, waits, FALSE, timeoutMs);
-    if (waited == WAIT_OBJECT_0 + 1) // cancelado: dá uns segundos para o worker fechar o que abriu
+    if (waited == WAIT_OBJECT_0 + 1)
         waited = WaitForSingleObject(pi.hProcess, 5000);
     if (waited != WAIT_OBJECT_0) {
         TerminateProcess(pi.hProcess, 1);
@@ -130,4 +129,4 @@ bool renderDocThumbnail(const std::filesystem::path& fileIn, int w, int h, Frame
     return true;
 }
 
-} // namespace bsl::media
+}

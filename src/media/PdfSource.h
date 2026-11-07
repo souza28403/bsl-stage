@@ -1,9 +1,5 @@
 #pragma once
 
-// PDF e documentos do Office (convertidos para PDF no worker). O worker renderiza a pagina atual no tamanho
-// do canvas com PDFium e pre-renderiza a anterior e a proxima; aqui ficam os parametros, a navegacao, o
-// avanco automatico (tempo ou batidas da composicao) e a transicao em fade.
-
 #include "media/FadeBlender.h"
 #include "media/RemoteSource.h"
 
@@ -17,15 +13,18 @@ public:
     PdfSource(int canvasWidth, int canvasHeight);
     ~PdfSource() override;
 
-    // 'pages' = numero de paginas conhecido (0 = desconhecido): limita o parametro "page"
     static std::vector<ParamDesc> describe(const ParamValues& values, int pages = 0);
     std::vector<ParamDesc> paramDescs() const override { return describe(values_, pageCount()); }
 
-    int pageCount() const;       // 0 enquanto o documento nao foi lido
+    int pageCount() const;
     int page() const { return requestedPage_; }
-    void goToPage(int n);        // 1..N
+    void goToPage(int n);
     void nextPage() { goToPage(requestedPage_ + 1); }
     void prevPage() { goToPage(requestedPage_ - 1); }
+    void firstPage() { goToPage(homePage()); }
+    void lastPage() { goToPage(pageCount() > 0 ? pageCount() : requestedPage_); }
+    int homePage() const;
+    void reloadDocument();
 
     void update(double dt) override;
 
@@ -47,6 +46,7 @@ private:
     WorkerJson bgJson() const;
 
     int requestedPage_ = 1;
+    int reopenPage_ = 0;
     int lastParamPage_ = 1;
     WorkerJson lastBg_;
     double timer_ = 0.0;
@@ -56,4 +56,4 @@ private:
     bool fadePending_ = false;
 };
 
-} // namespace bsl::media
+}

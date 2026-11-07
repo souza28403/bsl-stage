@@ -1,9 +1,5 @@
 #pragma once
 
-// Dispositivos de captura de video (DirectShow via FFmpeg/avdevice) e os formatos que cada um oferece.
-// A enumeracao e feita em threads de fundo (abrir o dshow leva de centenas de ms a segundos); a UI so
-// consulta o que ja foi lido.
-
 #include <map>
 #include <memory>
 #include <mutex>
@@ -19,11 +15,10 @@ struct CaptureFormat
     int height = 0;
     double fpsMin = 0.0;
     double fpsMax = 0.0;
-    std::string pixelFormat; // "yuyv422", "nv12"... (vazio se for codec)
-    std::string codec;       // "mjpeg", "h264"... (vazio se for pixel_format)
+    std::string pixelFormat;
+    std::string codec;
 };
 
-// Formato escolhido: "WxH@F:formato" (formato = pixel_format ou codec); "auto" = o melhor
 struct ChosenFormat
 {
     bool automatic = true;
@@ -39,25 +34,20 @@ public:
     static DeviceCatalog& instance();
     ~DeviceCatalog() = default;
 
-    // Dispositivos de video (nome amigavel). Inicia a primeira leitura sozinho.
     void ensureListed();
-    void refresh();           // le de novo (em segundo plano)
+    void refresh();
     bool listing() const;
     bool listed() const;
     std::vector<std::string> deviceNames() const;
 
-    // Formatos de um dispositivo (le em segundo plano na primeira vez)
     void ensureFormats(const std::string& device);
     bool formatsReady(const std::string& device) const;
     std::vector<CaptureFormat> formats(const std::string& device) const;
-    // Bloqueia ate ler (usar so em thread de fundo). Dispositivo em uso/sem video: lista vazia.
     std::vector<CaptureFormat> formatsBlocking(const std::string& device);
 
-    // Interpretacao do log do dshow (-list_options) e escolha de formato: testaveis sem dispositivo
     static std::vector<CaptureFormat> parseFormats(const std::string& log);
     static std::string formatValue(const CaptureFormat& f, double fps);
     static ChosenFormat parseValue(const std::string& value);
-    // O melhor formato automatico: ate 1080p, >= 25 fps, maior area; empate prefere mjpeg
     static ChosenFormat pickBest(const std::vector<CaptureFormat>& formats);
 
 private:
@@ -66,7 +56,7 @@ private:
     void readFormats(const std::string& device);
 
     mutable std::mutex m_;
-    std::mutex avMutex_; // um acesso ao dshow por vez
+    std::mutex avMutex_;
     bool started_ = false;
     bool listing_ = false;
     bool listed_ = false;
@@ -80,4 +70,4 @@ private:
     std::map<std::string, Caps> caps_;
 };
 
-} // namespace bsl::media
+}

@@ -1,5 +1,6 @@
 #include "io/FileDialogs.h"
 
+#include "app/FrameWatch.h"
 #include "io/ProjectFile.h"
 #include "media/MediaFormats.h"
 
@@ -20,7 +21,6 @@ struct Filter
     std::wstring spec;
 };
 
-// COM em modo apartment para a duracao do dialogo (S_FALSE = ja estava iniciado)
 struct ComScope
 {
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
@@ -36,8 +36,8 @@ std::optional<std::filesystem::path> show(HWND owner, bool save, const wchar_t* 
                                           const std::vector<Filter>& filters, const wchar_t* defaultExt,
                                           const std::filesystem::path& initialDir, const std::wstring& fileName)
 {
+    const FrameWatch::Blocking blocking;
     ComScope com;
-    // RPC_E_CHANGED_MODE: a thread ja esta em outro modo COM; o dialogo funciona assim mesmo
     if (FAILED(com.hr) && com.hr != RPC_E_CHANGED_MODE)
         return std::nullopt;
 
@@ -73,7 +73,7 @@ std::optional<std::filesystem::path> show(HWND owner, bool save, const wchar_t* 
             dlg->SetFolder(folder.Get());
     }
 
-    if (FAILED(dlg->Show(owner))) // HRESULT_FROM_WIN32(ERROR_CANCELLED) quando cancela
+    if (FAILED(dlg->Show(owner)))
         return std::nullopt;
 
     ComPtr<IShellItem> item;
@@ -92,7 +92,7 @@ std::vector<Filter> projectFilters()
     return {{L"Projeto BSL Stage (*.bslstage)", L"*.bslstage"}, {L"Todos os arquivos (*.*)", L"*.*"}};
 }
 
-} // namespace
+}
 
 std::optional<std::filesystem::path> openProject(HWND owner, const std::filesystem::path& initialDir)
 {
@@ -113,7 +113,7 @@ std::optional<std::filesystem::path> openMedia(HWND owner, const std::filesystem
             if (!spec.empty())
                 spec += L';';
             spec += L"*.";
-            spec.append(e.begin(), e.end()); // extensoes sao ASCII
+            spec.append(e.begin(), e.end());
         }
     };
     add(media::videoExtensions());
@@ -174,4 +174,4 @@ std::optional<std::filesystem::path> pickFolder(HWND owner, const std::filesyste
     return result;
 }
 
-} // namespace bsl::dialogs
+}

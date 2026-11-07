@@ -33,4 +33,4 @@ const Brand& brand()
     return g_brand;
 }
 
-} // namespace bsl::ui
+}
