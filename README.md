@@ -6,7 +6,7 @@ Veja `docs/ARQUITETURA.md` (como funciona), `docs/ROADMAP.md` (fases) e `docs/Me
 ## O que faz
 
 - Grade de clips, camadas, blend modes, Transform, efeitos nativos, ISF e plugins FFGL, mídia (vídeo, imagem, PDF, Office, Web),
-  Spout e NDI, saídas por monitor com mapping (slices, warp, soft edge) e Pixel Map para painéis de LED.
+  Spout e NDI, Stream de rede (RTMP, RTSP, SRT, UDP, HLS: puxar um link ou receber um envio; `docs/STREAM.md`), saídas por monitor com mapping (slices, warp, soft edge) e Pixel Map para painéis de LED.
 - Atalhos de teclado personalizáveis (Exibir > Atalhos).
 - **DMX / Art-Net**: uma mesa ou software de luz controla o BSL Stage por **Art-Net e sACN**. Cada camada vira um fixture
   (opacidade, clip por faixa de valor, velocidade, blend, posição/escala/rotação em 8 ou 16 bits, efeitos), o master tem opacidade e blackout, e
@@ -75,6 +75,7 @@ build\Release\bslstage_updatetest.exe               # atualizações e reportes:
 build\Release\bslstage_uitest.exe                   # layouts, menu Exibir e os avisos legais (THIRD-PARTY-NOTICES.md x CMake, licenses/, aceite do aviso)
 build\Release\bslstage_plugintest.exe               # Novo plugin: modelos, recarga automática, .bslplugin (ida e volta e pacotes maliciosos), exemplos dos documentos
 build\Release\bslstage_transformtest.exe, ...       # fxtest, bsltest, maptest, pixelmaptest, doctest, livetest, spouttest, ffgltest, aitest
+build\Release\bslstage_streamtest.exe               # Stream de rede: receber/puxar RTMP, SRT e UDP, queda e reconexão, parada rápida, erros, projeto (só 127.0.0.1)
 build\Release\bslstage_ndittest.exe --ndi-lib "<pasta do NDI Runtime>\Processing.NDI.Lib.x64.dll"
 python tools/uiqa/run.py --config window            # teste de interface com mouse e teclado reais (tools/uiqa/README.md)
 ```

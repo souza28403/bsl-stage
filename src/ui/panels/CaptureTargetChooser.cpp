@@ -2,6 +2,7 @@
 
 #include "media/CaptureTargets.h"
 #include "render/Texture.h"
+#include "ui/panels/NetStreamWindow.h"
 #include "ui/Theme.h"
 #include "ui/Ui.h"
 #include "ui/Widgets.h"
@@ -168,7 +169,12 @@ void afterClipPlaced(const Composition& comp, int layer, int column)
 {
     if (!comp.validCell(layer, column))
         return;
-    const GeneratorInfo* info = comp.clip(layer, column).generatorInfo();
+    const Clip& placed = comp.clip(layer, column);
+    if (placed.isGenerator() && placed.generatorId == kNetStreamId) {
+        requestNetStreamWindow(comp.currentDeck, layer, column);
+        return;
+    }
+    const GeneratorInfo* info = placed.generatorInfo();
     if (info && info->needsSetup)
         requestCaptureTarget(comp.currentDeck, layer, column);
 }

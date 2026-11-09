@@ -19,6 +19,7 @@
 #include "ui/panels/CompositionPanel.h"
 #include "ui/panels/MapView.h"
 #include "ui/panels/MappingPanels.h"
+#include "ui/panels/NetStreamWindow.h"
 #include "ui/panels/PixelMapPanels.h"
 #include "ui/panels/PluginsWindow.h"
 #include "ui/panels/PluginWizard.h"
@@ -512,6 +513,7 @@ void drawUi(PanelContext& ctx)
     }
 
     drawCaptureTargetChooser(ctx);
+    drawNetStreamWindow(ctx);
     drawAboutModal();
     drawUpdateWindow(ctx);
     drawReportWindow(ctx);

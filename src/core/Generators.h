@@ -18,6 +18,7 @@ inline constexpr const char* kCaptureDeviceId = "gen:placa-de-captura";
 inline constexpr const char* kWebUrlId = "gen:web-url";
 inline constexpr const char* kNdiId = "gen:ndi";
 inline constexpr const char* kSpoutId = "gen:spout";
+inline constexpr const char* kNetStreamId = "gen:stream-de-rede";
 inline constexpr const char* kIsfPrefix = "isf:";
 inline bool isIsfGeneratorId(const std::string& id) { return id.rfind(kIsfPrefix, 0) == 0; }
 inline constexpr const char* kFfglPrefix = "ffgl:";

@@ -219,10 +219,11 @@ add_library(bslmedia_cpu STATIC
     src/media/DocThumb.cpp
     src/media/FrameConverter.cpp
     src/media/VideoDecoder.cpp
+    src/media/NetStream.cpp
     src/media/ImageDecoder.cpp
     src/media/Thumbnailer.cpp)
 target_include_directories(bslmedia_cpu PUBLIC src)
-target_link_libraries(bslmedia_cpu PUBLIC ffmpeg::ffmpeg stb_image nlohmann_json::nlohmann_json)
+target_link_libraries(bslmedia_cpu PUBLIC ffmpeg::ffmpeg stb_image nlohmann_json::nlohmann_json ws2_32 iphlpapi)
 target_compile_definitions(bslmedia_cpu PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
 
 add_library(bslupdate_core STATIC
@@ -277,6 +278,7 @@ add_library(bslsources STATIC
     src/ndi/NdiRuntime.cpp
     src/ndi/NdiFinder.cpp
     src/media/NdiSource.cpp
+    src/media/NetStreamSource.cpp
     src/media/SpoutInput.cpp
     src/media/SpoutSource.cpp
     src/render/Shader.cpp
@@ -396,6 +398,7 @@ add_executable(BSLStage
     src/ui/panels/ParamWidgets.cpp
     src/ui/panels/SliceEditor.cpp
     src/ui/panels/CaptureTargetChooser.cpp
+    src/ui/panels/NetStreamWindow.cpp
     src/ui/panels/VideoCompat.cpp
     src/ui/panels/UpdateUi.cpp
     src/ui/panels/ReportWindow.cpp
@@ -473,6 +476,12 @@ target_link_libraries(bslstage_mediatest PRIVATE bslmedia_cpu)
 
 add_executable(bslstage_gltest tools/gltest.cpp)
 target_link_libraries(bslstage_gltest PRIVATE bslsources glfw bslmedia_cpu)
+
+add_executable(bslstage_streamtest tools/streamtest.cpp
+    src/io/ProjectFile.cpp
+    src/core/Clip.cpp src/core/Composition.cpp
+    src/output/OutputSetup.cpp)
+target_link_libraries(bslstage_streamtest PRIVATE bslsources glfw nlohmann_json::nlohmann_json bslmedia_cpu shell32 ole32)
 
 add_executable(bslstage_livetest tools/livetest.cpp)
 target_link_libraries(bslstage_livetest PRIVATE bslsources glfw bslmedia_cpu)
@@ -622,7 +631,7 @@ target_link_libraries(bslstage_updatetest PRIVATE bslupdate_core)
 add_dependencies(bslstage_updatetest bslstage_updater)
 target_compile_definitions(bslstage_updatetest PRIVATE BSL_FIXTURES_DIR="${CMAKE_SOURCE_DIR}/tools/fixtures")
 
-foreach(_tgt BSLStage bslstage_spouttest bslstage_ndittest bslstage_pixelmaptest bslstage_mediatest bslstage_gltest bslstage_projecttest bslstage_livetest bslstage_doctest bslstage_fxtest bslstage_ffgltest bslstage_bsltest bslstage_outputstress bslstage_aitest bslstage_keystest bslstage_transformtest bslstage_dmxtest bslstage_isfcheck bslstage_plugintest)
+foreach(_tgt BSLStage bslstage_spouttest bslstage_ndittest bslstage_pixelmaptest bslstage_mediatest bslstage_gltest bslstage_projecttest bslstage_livetest bslstage_doctest bslstage_fxtest bslstage_ffgltest bslstage_bsltest bslstage_outputstress bslstage_aitest bslstage_keystest bslstage_transformtest bslstage_dmxtest bslstage_isfcheck bslstage_plugintest bslstage_streamtest)
     add_custom_command(TARGET ${_tgt} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${BSL_FFMPEG_DLLS} ${BSL_ORT_DLLS} $<TARGET_FILE_DIR:${_tgt}>
         VERBATIM)
@@ -656,6 +665,7 @@ if(MSVC)
     target_compile_options(bslstage_spouttest PRIVATE /W4 /utf-8 /permissive-)
     target_compile_options(bslstage_ndittest PRIVATE /W4 /utf-8 /permissive-)
     target_compile_options(bslstage_projecttest PRIVATE /W4 /utf-8 /permissive-)
+    target_compile_options(bslstage_streamtest PRIVATE /W4 /utf-8 /permissive-)
     target_compile_options(bslstage_maptest PRIVATE /W4 /utf-8 /permissive-)
     target_compile_options(bslstage_uitest PRIVATE /W4 /utf-8 /permissive-)
     target_compile_options(bslstage_pixelmaptest PRIVATE /W4 /utf-8 /permissive-)

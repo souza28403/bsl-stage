@@ -175,6 +175,15 @@ processo, confere pixels).
   nobuffer`, sem frame threading, fila que descarta os frames atrasados, `tryGetLatest`). Abrir/reabrir roda em
   thread de fundo; sem sinal = textura preta + "Sem sinal", nova tentativa a cada 2 s. `DeviceCatalog` lista os
   dispositivos e os formatos (`-list_options`) em segundo plano.
+- **Stream de rede** (`gen:stream-de-rede`, `media/NetStream.*` sem GL + `media/NetStreamSource.*`): puxa um link (rtmp, rtmps,
+  rtsp, srt, udp, http/https) ou escuta RTMP/SRT (`listen=1` / `mode=listener`, em `0.0.0.0`). Uma thread por fonte abre, lê e
+  decodifica; **toda** chamada bloqueante do avformat tem `AVIOInterruptCB` com flag de parada e prazo (abrir 10 s, probe 8 s,
+  leitura 5 s; 20 s em HLS), então fechar o clip leva menos de 0,5 s (o `StreamWorker` solta a thread se ela demorar mais que
+  250 ms). Baixa latência: `fflags nobuffer`, `probesize`/`analyzeduration` pequenos (com segunda tentativa maior se faltar vídeo),
+  decodificação com `low_delay` e fatiamento, descarte até o primeiro keyframe e um único quadro pendente (troca de buffers) para a
+  textura. Reconexão com espera 1, 2, 4, 8 e 10 s; no modo receber volta a escutar. A porta é conferida antes (um `bind` sem
+  `SO_REUSEADDR`) para dar "porta em uso" em vez de roubá-la. Só vídeo (sem áudio). Detalhes: `docs/STREAM.md`. Teste:
+  `bslstage_streamtest`.
 - **Exclusividade**: fonte ao vivo (`isLive()`) nunca tem segunda instância; a Prévia mostra a instância ativa ou
   um aviso. As células de geradores mostram miniatura vinda da fonte ativa (1x/s, `render/LiveThumb`).
 - Testes: `bslstage_livetest` (texto, letreiro, cor, D3D11→GL, captura, webcam), `bslstage_projecttest` (inclui

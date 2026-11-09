@@ -25,3 +25,5 @@ Certificado BSL Stage/
 *.p12
 *.cer
 *.key
+__pycache__/
+*.pyc

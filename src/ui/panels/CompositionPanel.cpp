@@ -5,6 +5,7 @@
 #include "app/ProjectSession.h"
 #include "app/Qa.h"
 #include "media/DocInfo.h"
+#include "media/NetStream.h"
 #include "output/OutputSetup.h"
 #include "render/ThumbnailCache.h"
 #include "ui/Theme.h"
@@ -148,7 +149,14 @@ void applyFileDrop(Composition& comp, Selection& selection, int layer, int colum
     bool first = true;
     for (const auto& file : files) {
         std::error_code ec;
-        Clip clip = std::filesystem::is_directory(file, ec) ? Clip{} : Clip::fromFile(file);
+        Clip clip;
+        if (const std::string url = media::net::urlFromShortcut(file); !url.empty()) {
+            clip = Clip::generator(kNetStreamId);
+            clip.setParam("mode", "pull");
+            clip.setParam("url", url);
+        } else if (!std::filesystem::is_directory(file, ec)) {
+            clip = Clip::fromFile(file);
+        }
         if (clip.empty()) {
             log::warn("Arquivo ignorado (formato não suportado): " + paths::toUtf8(file.filename()));
             continue;

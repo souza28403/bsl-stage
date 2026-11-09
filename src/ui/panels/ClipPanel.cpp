@@ -8,6 +8,7 @@
 #include "media/DeviceCatalog.h"
 #include "media/DocInfo.h"
 #include "media/ImageSource.h"
+#include "media/NetStreamSource.h"
 #include "media/PdfSource.h"
 #include "media/RemoteSource.h"
 #include "media/VideoSource.h"
@@ -18,6 +19,7 @@
 #include "ui/panels/CaptureTargetChooser.h"
 #include "ui/panels/DmxWindow.h"
 #include "ui/panels/EffectChainWidget.h"
+#include "ui/panels/NetStreamWindow.h"
 #include "ui/panels/ParamWidgets.h"
 #include "ui/panels/TransformEditor.h"
 #include "ui/panels/VideoCompat.h"
@@ -384,6 +386,20 @@ void clipParams(PanelContext& ctx, Clip& clip)
             }
             return false;
         }
+        if (d.custom == "net-url") {
+            static bool reveal = false;
+            static int revealLayer = -1, revealColumn = -1;
+            if (revealLayer != sel.layer || revealColumn != sel.column) {
+                revealLayer = sel.layer;
+                revealColumn = sel.column;
+                reveal = false;
+            }
+            return drawNetUrlEditor(current, reveal, out);
+        }
+        if (d.custom == "net-address") {
+            drawNetAddressRows(media::NetStreamSource::configFrom(clip.params), 2);
+            return false;
+        }
         if (d.custom == "capture-device") {
             media::DeviceCatalog& cat = media::DeviceCatalog::instance();
             cat.ensureListed();
@@ -425,6 +441,12 @@ void clipParams(PanelContext& ctx, Clip& clip)
         }
         return false;
     };
+
+    if (clip.isGenerator() && clip.generatorId == kNetStreamId) {
+        if (ImGui::Button("Abrir janela do stream##stream_abrir", ImVec2(-FLT_MIN, 0.0f)))
+            requestNetStreamWindow(ctx.composition.currentDeck, sel.layer, sel.column);
+        ImGui::Spacing();
+    }
 
     for (ParamEdit& e : drawParams(descs, clip.params, editor))
         clip.setParam(e.id, std::move(e.value));

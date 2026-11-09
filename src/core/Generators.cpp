@@ -5,6 +5,7 @@
 #include "fx/IsfSource.h"
 #include "media/CaptureDeviceSource.h"
 #include "media/NdiSource.h"
+#include "media/NetStreamSource.h"
 #include "media/ScreenCaptureSource.h"
 #include "media/SpoutSource.h"
 #include "media/TextSource.h"
@@ -44,6 +45,9 @@ const GeneratorInfo kGenerators[] = {
     {kSpoutId, "Spout", true, false, &media::SpoutSource::describe,
      [](int, int) -> std::unique_ptr<media::ISource> { return std::make_unique<media::SpoutSource>(); },
      &media::SpoutSource::label},
+    {kNetStreamId, "Stream de rede", true, true, &media::NetStreamSource::describe,
+     [](int, int) -> std::unique_ptr<media::ISource> { return std::make_unique<media::NetStreamSource>(); },
+     &media::NetStreamSource::label},
 };
 
 }

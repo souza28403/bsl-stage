@@ -2979,6 +2979,69 @@ def sc_plugins(t):
     app.key("backspace")
 
 
+def sc_stream(t):
+    """Stream de rede: a fonte na aba Fontes, a janela "Stream de rede" (abas Abrir link e Receber transmissão, campo da URL
+    mascarado com botão de mostrar, endereços para copiar), o estado no painel Clip (URL inválida, servidor fora) e o atalho
+    da Internet (.url) solto na grade. Nunca dispara o modo Receber (abriria a porta na rede e o Windows pediria o firewall).
+    Gera docs/screenshot-stream.png."""
+    app = t.app
+    ensure_mode(app, "composition")
+    menu(app, "Exibir", "Layout", "Padrão (media server)")
+    app.wait_frames(8)
+    pick_tab(app, "Fontes")
+    app.wait_frames(3)
+
+    app.drag_items(scroll_into_view(app, "Stream de rede", "cmp_geradores"), cell(app, 2, 2), steps=18)
+    app.wait_state(lambda s: any(x[0] == 1 and x[1] == 1 and x[2].startswith("Stream") for x in s["cells"]), "gerador Stream de rede arrastado")
+    app.wait_frames(8)
+    expect(app.has("##stream_url", "janela_stream"), "janela Stream de rede aberta ao soltar a fonte")
+    expect(app.has("##stream_aba_link", "janela_stream") and app.has("##stream_aba_receber", "janela_stream"), "abas Abrir link e Receber transmissão")
+    expect(app.has("##stream_exemplo_1", "janela_stream"), "exemplos de endereço")
+
+    app.click("##stream_url", "janela_stream")
+    app.type_text("foo")
+    app.wait_state(lambda s: s["selClip"]["params"].get("url") == "foo", "URL digitada chega ao clip")
+    expect(app.has("##stream_mostrar", "janela_stream"), "botão mostrar/ocultar a URL")
+    app.click("##stream_mostrar", "janela_stream")
+    app.wait_frames(4)
+    app.click("##stream_conectar", "janela_stream")
+    app.wait_state(lambda s: s["selClip"]["open"] and s["selClip"]["status"].startswith("Erro:"), "URL inválida dá erro claro", timeout=5)
+    expect("inválido" in app.state["selClip"]["status"], "mensagem em português (%r)" % app.state["selClip"]["status"])
+    t.shot("stream_erro")
+
+    app.click("##stream_url", "janela_stream")
+    app.key("a", "ctrl")
+    app.type_text("rtmp://127.0.0.1:1/live/chave")
+    app.wait_state(lambda s: s["selClip"]["params"].get("url") == "rtmp://127.0.0.1:1/live/chave", "URL trocada")
+    app.wait_state(lambda s: s["selClip"]["status"].startswith(("Sem sinal", "Conectando")), "servidor fora: sem sinal ou conectando", timeout=15)
+    app.wait_frames(6)
+    t.shot("stream_sem_sinal")
+
+    app.click("##master_limpar")
+    app.wait_state(lambda s: s["layers"][1]["activeColumn"] == -1, "para o clip antes de trocar para Receber (nunca abre a porta na rede)")
+    app.click("##stream_aba_receber", "janela_stream")
+    app.wait_state(lambda s: s["selClip"]["params"].get("mode") == "listen", "aba Receber troca o modo")
+    app.wait_frames(6)
+    expect(app.has("##stream_porta", "janela_stream") and app.has("##stream_nome", "janela_stream"), "porta e nome")
+    expect(app.has("##stream_copiar_1", "janela_stream") and app.has("##stream_endereco_1", "janela_stream"), "endereço para copiar")
+    app.click("##stream_copiar_1", "janela_stream")
+    app.wait_frames(4)
+    app.hover(5, 5)
+    app.wait_frames(4)
+    app.screenshot(os.path.join(ROOT, "docs", "screenshot-stream.png"))
+    app.click("##stream_fechar", "janela_stream")
+    app.wait_frames(4)
+    expect(not app.has("##stream_url", "janela_stream"), "janela fechou")
+
+    base = os.path.join(ROOT, "build", "qa", "stream")
+    os.makedirs(base, exist_ok=True)
+    shortcut = os.path.join(base, "camera.url")
+    with open(shortcut, "w", encoding="utf-8") as f:
+        f.write("[InternetShortcut]\r\nURL=rtsp://127.0.0.1:9/stream1\r\n")
+    app.drop_files([shortcut], cell(app, 3, 2))
+    app.wait_state(lambda s: any(x[0] == 2 and x[1] == 1 and x[2] == "Stream: 127.0.0.1:9" for x in s["cells"]), "atalho .url solto cria o clip de stream")
+
+
 OPTIONAL = {"projeto_dialogo"}
 STANDALONE = {"exibir_reinicio"}
 
@@ -2997,6 +3060,7 @@ SCENARIOS = [
     ("projeto_dialogo", sc_projeto_dialogo),
     ("ver", sc_ver),
     ("ndi", sc_ndi),
+    ("stream", sc_stream),
     ("previa", sc_previa),
     ("transform", sc_transform),
     ("layouts", sc_layouts),

@@ -150,6 +150,7 @@ const char* generatorIcon(const std::string& id)
     if (id == kWebUrlId) return ICON_GLOBE;
     if (id == kNdiId) return ICON_CIRCLE_DOT;
     if (id == kSpoutId) return ICON_LAYERS;
+    if (id == kNetStreamId) return ICON_LINK;
     return ICON_GRID;
 }
 
