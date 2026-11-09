@@ -8,6 +8,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <psapi.h>
 
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
@@ -24,6 +25,8 @@ extern "C" {
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
+#include <cstring>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -941,12 +944,160 @@ void testSourceGl(GLFWwindow* win)
     CHECK(ms < 500.0);
 }
 
+double cpuSeconds()
+{
+    FILETIME c, e, k, u;
+    if (!GetProcessTimes(GetCurrentProcess(), &c, &e, &k, &u))
+        return 0.0;
+    auto toSec = [](const FILETIME& f) {
+        return static_cast<double>((static_cast<unsigned long long>(f.dwHighDateTime) << 32) | f.dwLowDateTime) / 1e7;
+    };
+    return toSec(k) + toSec(u);
 }
 
-int main()
+void memoryMb(double& now, double& peak)
+{
+    PROCESS_MEMORY_COUNTERS c{};
+    c.cb = sizeof(c);
+    if (K32GetProcessMemoryInfo(GetCurrentProcess(), &c, sizeof(c))) {
+        now = static_cast<double>(c.WorkingSetSize) / 1048576.0;
+        peak = static_cast<double>(c.PeakWorkingSetSize) / 1048576.0;
+    }
+}
+
+double percentile(std::vector<double> v, double p)
+{
+    if (v.empty())
+        return 0.0;
+    std::sort(v.begin(), v.end());
+    const double pos = p * static_cast<double>(v.size() - 1);
+    const size_t lo = static_cast<size_t>(pos);
+    const size_t hi = std::min(lo + 1, v.size() - 1);
+    return v[lo] + (v[hi] - v[lo]) * (pos - static_cast<double>(lo));
+}
+
+int runManual(const std::string& url, int seconds, int pollMs)
+{
+    std::printf("[medição manual] %s por %d s (consulta a cada %d ms)\n", net::redactUrl(url).c_str(), seconds, pollMs);
+    net::StreamWorker w;
+    const double cpu0 = cpuSeconds();
+    double memStart = 0.0, memPeak0 = 0.0;
+    memoryMb(memStart, memPeak0);
+    const auto t0 = Clock::now();
+    w.start(pullConfig(url));
+
+    constexpr double kGraceMs = 3000.0;
+    constexpr double kFreezeMs = 200.0;
+    Frame f;
+    bool first = false;
+    Clock::time_point firstAt{}, lastAt{};
+    std::vector<double> all, steady;
+    std::vector<std::pair<double, double>> freezes;
+    unsigned long long presented = 0;
+    net::State lastState = net::State::Stopped;
+    bool variantShown = false;
+    net::Status snap;
+    double lastReport = 0.0;
+    while (msSince(t0) < seconds * 1000.0) {
+        if (w.takeFrame(f)) {
+            const auto now = Clock::now();
+            ++presented;
+            if (!first) {
+                first = true;
+                firstAt = now;
+                std::printf("  primeiro quadro apresentado após %.0f ms (%dx%d)\n", msSince(t0), f.width, f.height);
+            } else {
+                const double gap = std::chrono::duration<double, std::milli>(now - lastAt).count();
+                all.push_back(gap);
+                const double sinceFirst = std::chrono::duration<double, std::milli>(now - firstAt).count();
+                if (sinceFirst >= kGraceMs) {
+                    steady.push_back(gap);
+                    if (gap > kFreezeMs)
+                        freezes.emplace_back(msSince(t0) / 1000.0, gap);
+                }
+            }
+            lastAt = now;
+        }
+        const net::Status st = w.status();
+        if (st.state != lastState) {
+            std::printf("  [%.1f s] estado: %s\n", msSince(t0) / 1000.0, net::describeStatus(pullConfig(url), st).c_str());
+            lastState = st.state;
+        }
+        snap = st;
+        if (!variantShown && st.streamsOpened > 0) {
+            std::printf("  streams abertos: %d, usados: %d, programas/variantes: %d; %s\n", st.streamsOpened, st.streamsUsed,
+                        st.variantCount, st.variant.c_str());
+            variantShown = true;
+        }
+        if (msSince(t0) / 1000.0 - lastReport >= 10.0) {
+            lastReport = msSince(t0) / 1000.0;
+            std::printf("  [%.0f s] apresentados %llu, buffer %.0f ms (%d quadros), descartados %llu\n", lastReport, presented,
+                        st.bufferMs, st.bufferFrames, st.dropped);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(pollMs));
+    }
+    const double elapsed = msSince(t0) / 1000.0;
+    const double cpu = cpuSeconds() - cpu0;
+    double memEnd = 0.0, memPeak = 0.0;
+    memoryMb(memEnd, memPeak);
+    const auto tStop = Clock::now();
+    w.stop();
+    const double stopMs = msSince(tStop);
+
+    auto stats = [](const std::vector<double>& v, const char* label) {
+        if (v.empty()) {
+            std::printf("  %s: sem amostras\n", label);
+            return;
+        }
+        double sum = 0.0, mx = 0.0;
+        for (double x : v) {
+            sum += x;
+            mx = std::max(mx, x);
+        }
+        std::printf("  %s: n=%zu média %.1f ms, p95 %.1f ms, p99 %.1f ms, máximo %.1f ms\n", label, v.size(),
+                    sum / static_cast<double>(v.size()), percentile(v, 0.95), percentile(v, 0.99), mx);
+    };
+    std::printf("\nResultado:\n");
+    std::printf("  duração %.1f s, quadros apresentados %llu (%.2f por segundo)\n", elapsed, presented,
+                static_cast<double>(presented) / std::max(elapsed, 0.001));
+    stats(all, "intervalo apresentado (tudo)");
+    stats(steady, "intervalo apresentado (após 3 s)");
+    std::printf("  congelamentos > %.0f ms após 3 s: %zu\n", kFreezeMs, freezes.size());
+    for (const auto& [at, gap] : freezes)
+        std::printf("    em %.1f s: %.0f ms\n", at, gap);
+    std::printf("  quadros decodificados %llu, descartados %llu, fps de entrada %.2f\n", snap.decoded, snap.dropped, snap.inFps);
+    std::printf("  bytes lidos (todas as streams) %.2f MB = %.0f kbit/s; só vídeo %.2f MB\n",
+                static_cast<double>(snap.bytesRead) / 1e6, static_cast<double>(snap.bytesRead) * 8.0 / 1000.0 / elapsed,
+                static_cast<double>(snap.videoBytes) / 1e6);
+    std::printf("  decodificação por quadro: média %.2f ms, máximo %.2f ms\n", snap.decodeMsAvg, snap.decodeMsMax);
+    std::printf("  buffer no fim: %.0f ms (%d quadros); CPU do processo %.0f%% de um núcleo\n", snap.bufferMs, snap.bufferFrames,
+                100.0 * cpu / elapsed);
+    std::printf("  memória (working set): início %.0f MB, fim %.0f MB, pico %.0f MB\n", memStart, memEnd, memPeak);
+    std::printf("  parada: %.0f ms\n", stopMs);
+    std::printf("  estado final: %s\n", net::describeStatus(pullConfig(url), snap).c_str());
+    return first ? 0 : 1;
+}
+
+}
+
+int main(int argc, char** argv)
 {
     av_log_set_level(AV_LOG_ERROR);
     avformat_network_init();
+
+    std::string manualUrl;
+    int manualSeconds = 60;
+    int pollMs = 4;
+    for (int i = 1; i < argc; ++i) {
+        if (!std::strcmp(argv[i], "--url") && i + 1 < argc)
+            manualUrl = argv[++i];
+        else if (!std::strcmp(argv[i], "--seconds") && i + 1 < argc)
+            manualSeconds = std::max(1, std::atoi(argv[++i]));
+        else if (!std::strcmp(argv[i], "--poll") && i + 1 < argc)
+            pollMs = std::max(1, std::atoi(argv[++i]));
+    }
+    if (!manualUrl.empty())
+        return runManual(manualUrl, manualSeconds, pollMs);
 
     testHelpers();
     testReceiveRtmp();

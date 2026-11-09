@@ -21,6 +21,7 @@ struct Config {
     int port = 1935;
     std::string path = "/live/stream1";
     std::string bindAddress = "0.0.0.0";
+    int bufferMs = 0;
 };
 
 enum class State { Stopped, Connecting, Waiting, Live, NoSignal, Error };
@@ -37,6 +38,20 @@ struct Status {
     double kbps = 0.0;
     std::string codec;
     unsigned long long frames = 0;
+    unsigned long long decoded = 0;
+    unsigned long long dropped = 0;
+    unsigned long long bytesRead = 0;
+    unsigned long long videoBytes = 0;
+    double inFps = 0.0;
+    double decodeMsAvg = 0.0;
+    double decodeMsMax = 0.0;
+    double bufferMs = 0.0;
+    int bufferFrames = 0;
+    int streamsOpened = 0;
+    int streamsUsed = 0;
+    int variantCount = 0;
+    int variantIndex = 0;
+    std::string variant;
 };
 
 constexpr int kDefaultRtmpPort = 1935;
