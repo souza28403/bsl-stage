@@ -226,7 +226,7 @@ void testRegistry()
                            "master.opacity.set", "master.bypass", "master.blackout", "deck.next", "deck.prev", "deck.goto",
                            "bpm.tap", "bpm.half", "bpm.double", "bpm.resync", "transport.play", "transport.pause",
                            "transport.stop", "doc.next", "doc.prev", "doc.first", "doc.last", "preview.live", "effect.bypass",
-                           "ui.layoutPreset", "mode.composition", "mode.mapping", "mode.pixelmap", "output.identify",
+                           "ui.layoutPreset", "mode.composition", "mode.mapping", "mode.pixelmap", "mode.sequences", "output.identify",
                            "project.save"})
         CHECK(findAction(id) != nullptr);
     CHECK(findAction("nao.existe") == nullptr);
@@ -933,6 +933,133 @@ void testView()
     CHECK(lookups);
 }
 
+void testSequenceKeys()
+{
+    section("modo Sequencias: atalhos do editor nao conflitam com os globais");
+    CHECK(findAction("mode.sequences") != nullptr && defaultScopeFor("mode.sequences") == Scope::App);
+    CHECK(!findAction("mode.sequences")->show && !supportsHold("mode.sequences"));
+    Rig r;
+    r.app.items.push_back(bind("mode.sequences", Key::F5, ModAlt));
+    r.press(Key::F5, ModAlt);
+    CHECK(!r.calls.empty() && r.calls.back() == "mode:3");
+
+    struct Atalho
+    {
+        Key key;
+        std::uint8_t mods;
+    };
+    const Atalho editor[] = {{Key::Z, ModCtrl},      {Key::Y, ModCtrl},        {Key::Z, ModCtrl | ModShift}, {Key::A, ModCtrl},
+                             {Key::Equal, ModCtrl},  {Key::Minus, ModCtrl},    {Key::D0, ModCtrl},           {Key::Left, ModAlt},
+                             {Key::Right, ModAlt},   {Key::Left, ModNone},     {Key::Right, ModNone},        {Key::Home, ModNone},
+                             {Key::End, ModNone},    {Key::Delete, ModNone},   {Key::Backspace, ModNone},    {Key::Space, ModNone},
+                             {Key::Escape, ModNone}};
+    const KeyBindingSet app = defaultAppKeys();
+    const KeyBindingSet projeto = defaultProjectKeys();
+    KeyGate focado;
+    focado.mapEditor = true;
+    bool livre = true;
+    bool semAtalhoComMod = true;
+    for (const Atalho& a : editor) {
+        const auto m = resolveKey({a.key, a.mods}, app, projeto);
+        if (m && gateAllows(*m->binding, focado))
+            livre = false;
+        if ((a.mods & (ModCtrl | ModAlt)) != 0 && m)
+            semAtalhoComMod = false;
+    }
+    CHECK(livre);
+    CHECK(semAtalhoComMod);
+    KeyGate texto;
+    texto.textInput = true;
+    CHECK(!gateAllows(*resolveKey({Key::Space, ModNone}, app, projeto)->binding, texto));
+}
+
+void testFxEvent()
+{
+    section("evento de efeito: acao fx.event, segurar e alvo inexistente");
+    Rig r;
+    CHECK(findAction("fx.event") != nullptr && findAction("fx.event")->show && supportsHold("fx.event"));
+    r.comp.layers[0].effects.add("bsl:disparo");
+    r.comp.layers[0].effects.add("bsl:borda-neon");
+    auto counter = [&](int effect, const char* id) {
+        const media::Json* v = r.comp.layers[0].effects.items[static_cast<size_t>(effect)].params.find(id);
+        return (v && v->is_number_integer()) ? v->get<int>() : 0;
+    };
+    auto rajada = [&] {
+        const media::Json* v = r.comp.layers[0].effects.items[0].params.find("rajada");
+        return v && v->is_boolean() && v->get<bool>();
+    };
+
+    ActionArgs next;
+    next.fxScope = 1;
+    next.layer = 0;
+    next.effect = 0;
+    next.param = "proximo";
+    ActionContext c = r.ctx();
+    ActionResult res = runAction(c, "fx.event", next);
+    CHECK(res.hit == 1 && counter(0, "proximo") == 1 && res.target == Target::effectOf(1, -1, 0, -1, 0));
+    CHECK(runAction(c, "fx.event", next).hit == 1 && counter(0, "proximo") == 2);
+    ActionArgs prev = next;
+    prev.param = "anterior";
+    CHECK(runAction(c, "fx.event", prev).hit == 1 && counter(0, "anterior") == 1 && counter(0, "proximo") == 2);
+    ActionArgs reset = next;
+    reset.param = "reiniciar";
+    CHECK(runAction(c, "fx.event", reset).hit == 1 && counter(0, "reiniciar") == 1);
+    ActionArgs flash = next;
+    flash.effect = 1;
+    flash.param = "flash";
+    CHECK(runAction(c, "fx.event", flash).hit == 1 && counter(1, "flash") == 1);
+
+    ActionArgs burst = next;
+    burst.param = "rajada";
+    r.project.items.push_back(bind("fx.event", Key::J, ModNone, Mode::Hold));
+    r.project.items.back().args = burst;
+    CHECK(!rajada());
+    auto f = r.press(Key::J);
+    CHECK(f && f->hold && rajada() && r.svc.dispatcher.isHeld(Key::J));
+    auto again = r.press(Key::J);
+    CHECK(again && again->result.hit == 0 && rajada() && r.svc.dispatcher.heldCount() == 1);
+    r.release(Key::J);
+    CHECK(!rajada() && r.svc.dispatcher.heldCount() == 0);
+
+    r.project.items.push_back(bind("fx.event", Key::H, ModNone, Mode::Press));
+    r.project.items.back().args = next;
+    f = r.press(Key::H);
+    CHECK(f && f->result.hit == 1 && !f->hold && counter(0, "proximo") == 3);
+    r.release(Key::H);
+    CHECK(counter(0, "proximo") == 3 && r.svc.dispatcher.heldCount() == 0);
+
+    ActionArgs missing = next;
+    missing.effect = 9;
+    CHECK(runAction(c, "fx.event", missing).hit == 0);
+    missing = next;
+    missing.param = "nao_existe";
+    CHECK(runAction(c, "fx.event", missing).hit == 0);
+    missing.param.clear();
+    CHECK(runAction(c, "fx.event", missing).hit == 0);
+    missing = next;
+    missing.param = "velocidadeRajada";
+    CHECK(runAction(c, "fx.event", missing).hit == 0);
+    missing = next;
+    missing.layer = 50;
+    CHECK(runAction(c, "fx.event", missing).hit == 0);
+    missing = next;
+    missing.fxScope = 2;
+    CHECK(runAction(c, "fx.event", missing).hit == 0);
+    missing.fxScope = 0;
+    missing.column = 7;
+    CHECK(runAction(c, "fx.event", missing).hit == 0);
+    CHECK(setActionState(c, "fx.event", missing, true).hit == 0);
+
+    KeyBindingSet set;
+    set.items.push_back(r.project.items[r.project.items.size() - 2]);
+    const nlohmann::json j = bindingsToJson(set);
+    const KeyBindingSet back = bindingsFromJson(j);
+    CHECK(back.items.size() == 1 && back.items[0].args.param == "rajada" && back.items[0].mode == Mode::Hold
+          && back.items[0].args == set.items[0].args);
+    CHECK(describeAction(r.comp, *findAction("fx.event"), burst).find("Rajada (segurar)") != std::string::npos);
+    CHECK(describeAction(r.comp, *findAction("fx.event"), burst).find("rajada") == std::string::npos);
+}
+
 int main()
 {
     if (!glfwInit())
@@ -962,6 +1089,8 @@ int main()
     testFiles();
     testSystemHotkeys();
     testView();
+    testSequenceKeys();
+    testFxEvent();
 
     glfwDestroyWindow(win);
     glfwTerminate();

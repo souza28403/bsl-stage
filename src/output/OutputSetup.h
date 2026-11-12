@@ -72,6 +72,7 @@ struct Slice
     SoftEdge edges[4];
     int zFilter = kZoneAll;
     int zSource = kZoneSourceMaster;
+    int uid = 0;
 
     bool operator==(const Slice&) const = default;
 };
@@ -116,6 +117,7 @@ struct OutputSetup
 {
     std::vector<Screen> screens;
     int nextScreenId = 1;
+    int nextSliceUid = 1;
 
     bool operator==(const OutputSetup&) const = default;
 
@@ -145,6 +147,8 @@ struct LayerViewRequest
 std::vector<LayerViewRequest> collectLayerViews(const OutputSetup& setup, int previewScreenId);
 
 std::vector<std::string> slicesLinkedToLayer(const OutputSetup& setup, int layerId);
+
+bool ensureSliceUids(OutputSetup& setup);
 
 Slice makeFullSlice(const std::string& name, int canvasW, int canvasH, int screenW, int screenH);
 

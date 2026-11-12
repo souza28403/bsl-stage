@@ -1165,6 +1165,40 @@ bool dmxParamOwnerValid()
     return bound() && g.owner.valid;
 }
 
+control::ActionArgs dmxEffectActionArgs(const std::string& paramId)
+{
+    control::ActionArgs a;
+    a.fxScope = g.owner.scope;
+    a.deck = g.owner.deck;
+    a.column = g.owner.column;
+    a.effect = g.owner.effect;
+    a.param = paramId;
+    if (g.owner.scope != 2) {
+        a.layerId = dmxLayerIdOf(g.owner.layerIndex);
+        a.layer = a.layerId > 0 ? 0 : std::max(0, g.owner.layerIndex);
+    }
+    return a;
+}
+
+void dmxEventMenu(const control::ActionArgs& args, bool offerHold)
+{
+    if (!bound())
+        return;
+    dmx::Map proto;
+    proto.type = dmx::Map::Type::Action;
+    proto.binding.action = "fx.event";
+    proto.binding.args = args;
+    proto.binding.mode = control::Mode::Press;
+    ImGui::Separator();
+    if (!offerHold || findMapFor(proto)) {
+        assignItems(proto, "Atribuir DMX para disparar o evento (acima de 50%)…", "_evento");
+        return;
+    }
+    assignItems(proto, "Atribuir DMX (alterna ao passar de 50%)…", "_evento_alt");
+    proto.binding.mode = control::Mode::Hold;
+    assignItems(proto, "Atribuir DMX (ativo enquanto acima de 50%)…", "_evento_seg");
+}
+
 dmx::ParamRef dmxEffectRef(const std::string& paramId)
 {
     dmx::ParamRef ref;

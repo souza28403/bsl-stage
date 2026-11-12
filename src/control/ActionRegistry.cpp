@@ -340,6 +340,66 @@ int effectSet(ActionContext& c, const ActionArgs& a, bool on)
     return (chain && chain->setBypass(a.effect, !on)) ? 1 : 0;
 }
 
+enum class FxParamKind { None, Event, Toggle };
+
+fx::EffectInstance* instanceFor(ActionContext& c, const ActionArgs& a)
+{
+    fx::EffectChain* chain = chainFor(c, a);
+    if (!chain || !chain->valid(a.effect) || a.param.empty())
+        return nullptr;
+    return &chain->items[static_cast<size_t>(a.effect)];
+}
+
+FxParamKind fxParamKind(const fx::EffectInstance& inst, const std::string& id)
+{
+    for (const media::ParamDesc& d : inst.paramDescs()) {
+        if (d.id != id)
+            continue;
+        if (d.type == media::ParamType::Bool)
+            return FxParamKind::Toggle;
+        if (d.type == media::ParamType::Custom && d.custom == "event")
+            return FxParamKind::Event;
+        return FxParamKind::None;
+    }
+    return FxParamKind::None;
+}
+
+int fxEventGet(ActionContext& c, const ActionArgs& a)
+{
+    const fx::EffectInstance* inst = instanceFor(c, a);
+    if (!inst)
+        return -1;
+    switch (fxParamKind(*inst, a.param)) {
+    case FxParamKind::Event:
+        return 0;
+    case FxParamKind::Toggle:
+        return media::ParamSet(inst->paramDescs(), inst->params).b(a.param) ? 1 : 0;
+    default:
+        return -1;
+    }
+}
+int fxEventSet(ActionContext& c, const ActionArgs& a, bool on)
+{
+    fx::EffectInstance* inst = instanceFor(c, a);
+    if (!inst)
+        return 0;
+    switch (fxParamKind(*inst, a.param)) {
+    case FxParamKind::Event: {
+        if (!on)
+            return 0;
+        const media::Json* cur = inst->params.find(a.param);
+        const int n = (cur && cur->is_number_integer()) ? cur->get<int>() : 0;
+        inst->setParam(a.param, media::Json(n + 1));
+        return 1;
+    }
+    case FxParamKind::Toggle:
+        inst->setParam(a.param, media::Json(on));
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 int modeComposition(ActionContext& c, const ActionArgs&)
 {
     if (!c.app || !c.app->setMode)
@@ -359,6 +419,13 @@ int modePixelMap(ActionContext& c, const ActionArgs&)
     if (!c.app || !c.app->setMode)
         return 0;
     c.app->setMode(2);
+    return 1;
+}
+int modeSequences(ActionContext& c, const ActionArgs&)
+{
+    if (!c.app || !c.app->setMode)
+        return 0;
+    c.app->setMode(3);
     return 1;
 }
 int identifyGet(ActionContext& c, const ActionArgs&)
@@ -495,6 +562,8 @@ const ActionDef kActions[] = {
     BSL_ONCE("preview.live", "Prévia: enviar Ao vivo", "Prévia", ArgNone, true, None, previewLive),
     BSL_TOGGLE("effect.bypass", "Ligar/desligar efeito (bypass)", "Efeitos", ArgLayer | ArgColumn | ArgDeck | ArgEffect,
                true, Effect, effectGet, effectSet),
+    BSL_TOGGLE("fx.event", "Disparar evento do efeito", "Efeitos",
+               ArgLayer | ArgColumn | ArgDeck | ArgEffect | ArgParam, true, Effect, fxEventGet, fxEventSet),
     BSL_ONCE("ui.layoutPreset", "Layout: aplicar preset", "Aplicativo", ArgIndex, false, None, layoutPreset),
     BSL_TOGGLE("view.fullscreen", "Tela cheia", "Exibir", ArgNone, false, None, fullscreenGet, fullscreenSet),
     BSL_TOGGLE("view.lock", "Bloquear layout", "Exibir", ArgNone, false, None, lockGet, lockSet),
@@ -503,6 +572,7 @@ const ActionDef kActions[] = {
     BSL_ONCE("mode.composition", "Modo Composição", "Aplicativo", ArgNone, false, None, modeComposition),
     BSL_ONCE("mode.mapping", "Modo Mapeamento", "Aplicativo", ArgNone, false, None, modeMapping),
     BSL_ONCE("mode.pixelmap", "Modo Pixel Map", "Aplicativo", ArgNone, false, None, modePixelMap),
+    BSL_ONCE("mode.sequences", "Modo Sequências", "Aplicativo", ArgNone, false, None, modeSequences),
     BSL_TOGGLE("output.identify", "Identificar (saídas)", "Aplicativo", ArgNone, false, None, identifyGet, identifySet),
     BSL_ONCE("project.new", "Projeto: novo", "Aplicativo", ArgNone, false, None, projectNew),
     BSL_ONCE("project.open", "Projeto: abrir", "Aplicativo", ArgNone, false, None, projectOpen),
@@ -628,6 +698,38 @@ ActionResult setActionState(ActionContext& ctx, const std::string& id, const Act
 
 namespace {
 
+const fx::EffectChain* chainForDescribe(const Composition& comp, const ActionArgs& a)
+{
+    if (a.selected)
+        return nullptr;
+    switch (a.fxScope) {
+    case 0: {
+        const int d = a.deck < 0 ? comp.currentDeck : a.deck;
+        const int col = a.column;
+        const int l = a.layerId > 0 ? comp.findLayerById(a.layerId) : a.layer;
+        return comp.validCell(d, l, col) ? &comp.clipAt(d, l, col).effects : nullptr;
+    }
+    case 1: {
+        const int l = a.layerId > 0 ? comp.findLayerById(a.layerId) : a.layer;
+        return (l >= 0 && l < comp.layerCount()) ? &comp.layers[static_cast<size_t>(l)].effects : nullptr;
+    }
+    default:
+        return &comp.masterEffects;
+    }
+}
+
+std::string fxParamLabel(const Composition& comp, const ActionArgs& a)
+{
+    const fx::EffectChain* chain = chainForDescribe(comp, a);
+    if (!chain || !chain->valid(a.effect))
+        return a.param;
+    for (const media::ParamDesc& d : chain->items[static_cast<size_t>(a.effect)].paramDescs()) {
+        if (d.id == a.param && !d.label.empty())
+            return d.label;
+    }
+    return a.param;
+}
+
 std::string layerText(const Composition& comp, const ActionArgs& a)
 {
     if (a.selected)
@@ -691,6 +793,8 @@ std::string describeAction(const Composition& comp, const ActionDef& def, const 
     }
     if ((def.args & ArgEffect) != 0)
         parts.push_back("efeito " + std::to_string(args.effect + 1));
+    if ((def.args & ArgParam) != 0 && !args.param.empty())
+        parts.push_back("parâmetro " + fxParamLabel(comp, args));
     if ((def.args & ArgValue) != 0)
         parts.push_back(std::to_string(static_cast<int>(args.value * 100.0f + 0.5f)) + "%");
 

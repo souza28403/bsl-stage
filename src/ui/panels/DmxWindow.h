@@ -38,6 +38,8 @@ struct DmxParamOwner
 void dmxSetParamOwner(const DmxParamOwner& owner);
 bool dmxParamOwnerValid();
 dmx::ParamRef dmxEffectRef(const std::string& paramId);
+control::ActionArgs dmxEffectActionArgs(const std::string& paramId);
+void dmxEventMenu(const control::ActionArgs& args, bool offerHold);
 
 struct DmxUiInfo
 {

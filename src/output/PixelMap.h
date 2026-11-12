@@ -31,6 +31,9 @@ struct Panel
     int cabW = 128;
     int cabH = 128;
 
+    int port = 0;
+    int cableOrder = -1;
+
     bool operator==(const Panel&) const = default;
 };
 

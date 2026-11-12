@@ -437,6 +437,7 @@ void testProfiles()
     CHECK(closeTo(dmxScaleOf(32768, 65535), 1.0) && closeTo(dmxScaleOf(65535, 65535), 4.0));
     CHECK(closeTo(dmxRotationOf(255, 255), 180.0) && closeTo(dmxRotationOf(0, 255), -180.0) && closeTo(dmxRotationOf(128, 255), 0.0));
     CHECK(dmxBlendOf(0, 255) == 0 && dmxBlendOf(28, 255) == 1 && dmxBlendOf(255, 255) == 8 && dmxBlendOf(65535, 65535) == 8);
+    CHECK(kDmxBlendModeCount == 9 && kBlendModeCount == 11 && dmxBlendOf(200, 255) == 7);
     CHECK(dmxClipRange(0) == 0 && dmxClipRange(9) == 0 && dmxClipRange(10) == 1 && dmxClipRange(25) == 2 && dmxClipRange(255) == 25);
     CHECK(dmxDefaultRaw(Func::Speed, 255) == 128 && dmxDefaultRaw(Func::PosX, 65535) == 32768 && dmxDefaultRaw(Func::MasterOpacity, 255) == 255);
     CHECK(clipRanges().size() == 2 + kClipMaxColumns && clipRanges().back().to == 255);
@@ -841,6 +842,123 @@ void testThresholdActions()
     q.comp.layers[0].opacity = 0.33f;
     q.apply();
     CHECK(closeTo(q.comp.layers[0].opacity, 0.33));
+}
+
+void testFxEvents()
+{
+    section("canal aprendido: eventos de efeito (borda de subida e segurar)");
+    Rig r;
+    r.comp.layers[0].effects.add("bsl:disparo");
+    r.comp.layers[0].effects.add("bsl:borda-neon");
+    auto counter = [&](int effect, const char* id) {
+        const media::Json* v = r.comp.layers[0].effects.items[static_cast<size_t>(effect)].params.find(id);
+        return (v && v->is_number_integer()) ? v->get<int>() : 0;
+    };
+    auto rajada = [&] {
+        const media::Json* v = r.comp.layers[0].effects.items[0].params.find("rajada");
+        return v && v->is_boolean() && v->get<bool>();
+    };
+    control::ActionArgs next;
+    next.fxScope = 1;
+    next.layerId = r.layerId(0);
+    next.effect = 0;
+    next.param = "proximo";
+    control::ActionArgs burst = next;
+    burst.param = "rajada";
+    control::ActionArgs flash = next;
+    flash.effect = 1;
+    flash.param = "flash";
+    r.comp.dmx.addMap(actionMap("fx.event", next, control::Mode::Press, 1, 20));
+    r.comp.dmx.addMap(actionMap("fx.event", burst, control::Mode::Hold, 1, 21));
+    r.comp.dmx.addMap(actionMap("fx.event", flash, control::Mode::Press, 1, 22));
+    r.comp.dmx.addMap(actionMap("fx.event", {}, control::Mode::Press, 1, 23));
+    for (int ch : {20, 21, 22, 23})
+        r.fake.set(1, ch, 0);
+    r.apply();
+    CHECK(counter(0, "proximo") == 0 && !rajada());
+
+    r.fake.set(1, 20, 127);
+    r.apply();
+    CHECK(counter(0, "proximo") == 0);
+    r.fake.set(1, 20, 128);
+    r.apply();
+    CHECK(counter(0, "proximo") == 1);
+    r.fake.set(1, 20, 255);
+    r.apply();
+    CHECK(counter(0, "proximo") == 1);
+    r.fake.set(1, 20, 0);
+    r.apply();
+    CHECK(counter(0, "proximo") == 1);
+    r.fake.set(1, 20, 200);
+    r.apply();
+    CHECK(counter(0, "proximo") == 2);
+
+    r.fake.set(1, 22, 255);
+    r.apply();
+    CHECK(counter(1, "flash") == 1);
+
+    r.fake.set(1, 21, 255);
+    r.apply();
+    CHECK(rajada() && r.keys.dispatcher.heldCount() == 1);
+    r.fake.set(1, 21, 130);
+    r.apply();
+    CHECK(rajada());
+    r.fake.set(1, 21, 100);
+    r.apply();
+    CHECK(!rajada() && r.keys.dispatcher.heldCount() == 0);
+
+    r.fake.set(1, 23, 255);
+    r.apply();
+    CHECK(counter(0, "proximo") == 2);
+
+    Rig removed;
+    removed.comp.layers[0].effects.add("bsl:disparo");
+    removed.comp.dmx.addMap(actionMap("fx.event", burst, control::Mode::Hold, 1, 30));
+    removed.comp.dmx.maps[0].binding.args.layerId = removed.layerId(0);
+    removed.fake.set(1, 30, 0);
+    removed.apply();
+    removed.fake.set(1, 30, 255);
+    removed.apply();
+    CHECK(removed.keys.dispatcher.heldCount() == 1);
+    removed.comp.dmx.maps.clear();
+    removed.apply();
+    CHECK(removed.keys.dispatcher.heldCount() == 0);
+
+    nlohmann::json j = configToJson(r.comp.dmx);
+    Config back = configFromJson(j);
+    CHECK(back.maps.size() == 4 && back.maps[1].binding.args.param == "rajada" && back.maps[1].binding.mode == control::Mode::Hold
+          && back.maps[0].binding.args.param == "proximo" && back.maps[0].threshold == 128);
+
+    section("perfil exportado nao muda com mapas de evento");
+    Rig p;
+    p.layerBlock(0, LayerMode::Standard, 1, 1);
+    p.layerBlock(1, LayerMode::Full, 1, 40);
+    p.masterBlock(1, 100);
+    auto namer = [](int id) { return "Camada " + std::to_string(id); };
+    const auto before = fixtureTypes(p.comp.dmx);
+    const std::string csv0 = csvChannels(before), patch0 = csvPatch(p.comp.dmx, namer), html0 = htmlChannelTable(before, p.comp.dmx, namer);
+    std::vector<std::string> gdtf0;
+    for (const FixtureType& t : before)
+        gdtf0.push_back(gdtfDescription(t, "2025-01-01"));
+    const std::vector<ChannelRow> rows0 = layerRows(LayerMode::Full, 2);
+    control::ActionArgs a = next;
+    a.layerId = p.layerId(0);
+    p.comp.dmx.addMap(actionMap("fx.event", a, control::Mode::Press, 1, 200));
+    a.param = "rajada";
+    p.comp.dmx.addMap(actionMap("fx.event", a, control::Mode::Hold, 1, 201));
+    const auto after = fixtureTypes(p.comp.dmx);
+    CHECK(csvChannels(after) == csv0 && csvPatch(p.comp.dmx, namer).size() > 0 && html0 == htmlChannelTable(after, p.comp.dmx, namer));
+    CHECK(after.size() == before.size());
+    bool sameGdtf = after.size() == gdtf0.size();
+    for (size_t i = 0; sameGdtf && i < after.size(); ++i)
+        sameGdtf = gdtfDescription(after[i], "2025-01-01") == gdtf0[i];
+    CHECK(sameGdtf);
+    const std::vector<ChannelRow> rows1 = layerRows(LayerMode::Full, 2);
+    bool sameRows = rows0.size() == rows1.size();
+    for (size_t i = 0; sameRows && i < rows0.size(); ++i)
+        sameRows = rows0[i].name == rows1[i].name && rows0[i].range == rows1[i].range && rows0[i].offset == rows1[i].offset;
+    CHECK(sameRows);
+    CHECK(patch0.find("Master") != std::string::npos);
 }
 
 void testLearn()
@@ -1653,6 +1771,7 @@ int main(int argc, char** argv)
     testLayerIds();
     testChannelsOverlap();
     testThresholdActions();
+    testFxEvents();
     testLearn();
     testProject();
     testNetwork();

@@ -139,7 +139,7 @@ Um shader só, mas exige substituir a rasterização GDI do texto (Windows-only)
 - Saída prevista: `BSL LIGHT Slice Refiner.dll` + `control.html`
 
 **O que faz**
-Recorta o vídeo do clipe nos formatos dos slices de um XML de saída, com até 8 grupos. Cada grupo tem cantos arredondados, offset, união de slices (merge suave), borda com 12 efeitos (noise, spiral, radial, zebra, disco, chaser, dashes, rainbow, sparkle, glitch, pulse, scanner), blinker, bounce e rotação de cor. Toda a configuração é feita por um painel web (aba Slices do BSL Studio) via HTTP; o plugin serve o painel e a API, e persiste o estado em JSON. Recebe tempo e BPM do host (`SetTime`, `SetBeatInfo`).
+Recorta o vídeo do clipe nos formatos dos slices de um XML de saída, com até 8 grupos. Cada grupo tem cantos arredondados, offset, união de slices (merge suave), borda com 12 efeitos (noise, spiral, radial, zebra, disco, perseguidor, dashes, rainbow, sparkle, glitch, pulse, scanner), blinker, bounce e rotação de cor. Toda a configuração é feita por um painel web (aba Slices do BSL Studio) via HTTP; o plugin serve o painel e a API, e persiste o estado em JSON. Recebe tempo e BPM do host (`SetTime`, `SetBeatInfo`).
 
 **Parâmetros** (6, conforme `BSLSliceRefiner.cpp`, linhas 62–75)
 
@@ -420,7 +420,7 @@ Versão anterior do recorte por slices. Lê os slices de um XML de saída (ou de
 | Load Custom XML | FILE | caminho | vazio | Carrega um XML de slices próprio |
 | Sync Slices | EVENT | — | — | Relê o XML de slices |
 | S1…S8 Enable | BOOLEAN | 0 / 1 | 1 | Liga o slice |
-| S1…S8 Mode | OPTION | 0–10 | 0 | Modo: 0 Neon Solid, 1 Gradient, 2 Radar, 3 Chaser, 4 Bumper, 5 Video Mask, 6 Sparkles, 7 Glow Pulse, 8 RGB Wave, 9 Dotted, 10 Glitch (rótulos dos comentários do shader) |
+| S1…S8 Mode | OPTION | 0–10 | 0 | Modo: 0 Neon Solid, 1 Gradient, 2 Radar, 3 Perseguidor, 4 Pulsa, 5 Video Mask, 6 Sparkles, 7 Glow Pulse, 8 RGB Wave, 9 Dotted, 10 Glitch (rótulos dos comentários do shader) |
 | S1…S8 Roundness | STANDARD | 0–1 | 0 | Arredondamento |
 | S1…S8 Stroke | STANDARD | 0–1 | ver construtor | Espessura da borda |
 | S1…S8 Speed | STANDARD | 0–1 | ver construtor | Velocidade do efeito |

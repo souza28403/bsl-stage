@@ -101,6 +101,7 @@ std::vector<FeedSlice> sliceFeedFromOutput(const OutputSetup& output)
             f.screen = screen.name;
             f.sliceName = s.name;
             f.name = screen.name + " / " + s.name;
+            f.uid = s.uid;
             f.id = screen.name + "/" + s.name + "#" + std::to_string(at);
             f.x = static_cast<float>(s.input.x);
             f.y = static_cast<float>(s.input.y);

@@ -322,7 +322,21 @@ add_library(bslsources STATIC
     src/fx/bsl/ZSlice.cpp
     src/fx/bsl/SliceRefiner2.cpp
     src/fx/bsl/SliceFeed.cpp
+    src/fx/bsl/SequenceFeed.cpp
+    src/fx/bsl/SliceInstancer.cpp
+    src/fx/bsl/SeqDesenho.cpp
+    src/fx/bsl/EffectSource.cpp
+    src/fx/bsl/SeqSequencia.cpp
+    src/fx/bsl/SeqDisparo.cpp
+    src/fx/bsl/SeqAtraso.cpp
+    src/fx/bsl/SeqAleatorios.cpp
+    src/fx/bsl/SeqContorno.cpp
+    src/fx/bsl/SeqLadrilhos.cpp
+    src/fx/bsl/SeqAmostrador.cpp
+    src/fx/bsl/SeqVarredura.cpp
+    src/fx/bsl/SeqBordaNeon.cpp
     src/output/PixelMap.cpp
+    src/output/NovaScr.cpp
     src/output/PixelMapMapping.cpp
     src/output/PatternRaster.cpp
     src/fx/bsl/PixelMapSource.cpp
@@ -331,7 +345,16 @@ add_library(bslsources STATIC
     src/fx/bsl/BslPreview.cpp
     src/fx/bsl/SliceRefiner3.cpp
     src/fx/bsl/WebStudio.cpp
-    src/fx/bsl/BslWebSources.cpp)
+    src/fx/bsl/BslWebSources.cpp
+    src/seq/SeqModel.cpp
+    src/seq/SeqJson.cpp
+    src/seq/Envelope.cpp
+    src/seq/EnvelopeStore.cpp
+    src/seq/SeqFactory.cpp
+    src/seq/SeqEdit.cpp
+    src/seq/SeqHistory.cpp
+    src/seq/SeqTiming.cpp
+    src/seq/SeqView.cpp)
 target_include_directories(bslsources PUBLIC src)
 target_include_directories(bslsources SYSTEM PRIVATE "${BSL_ORT_ROOT}/build/native/include" "${BSL_DML_ROOT}/include")
 target_include_directories(bslsources PUBLIC third_party/ndi-min)
@@ -395,6 +418,10 @@ add_executable(BSLStage
     src/ui/panels/MappingPanels.cpp
     src/ui/panels/MapView.cpp
     src/ui/panels/PixelMapPanels.cpp
+    src/ui/panels/SequencePanels.cpp
+    src/ui/panels/SeqCanvas.cpp
+    src/ui/panels/SeqFactoryPanel.cpp
+    src/ui/panels/EnvelopeEditor.cpp
     src/ui/panels/ParamWidgets.cpp
     src/ui/panels/SliceEditor.cpp
     src/ui/panels/CaptureTargetChooser.cpp
@@ -611,6 +638,7 @@ target_include_directories(bslstage_maptest PRIVATE src)
 
 add_executable(bslstage_pixelmaptest tools/pixelmaptest.cpp src/output/OutputSetup.cpp)
 target_include_directories(bslstage_pixelmaptest PRIVATE src)
+target_compile_definitions(bslstage_pixelmaptest PRIVATE BSL_FIXTURES_DIR="${CMAKE_SOURCE_DIR}/tools/fixtures")
 target_link_libraries(bslstage_pixelmaptest PRIVATE bslsources glfw bslmedia_cpu)
 
 add_executable(bslstage_dmxtest tools/dmxtest.cpp
@@ -631,7 +659,19 @@ target_link_libraries(bslstage_updatetest PRIVATE bslupdate_core)
 add_dependencies(bslstage_updatetest bslstage_updater)
 target_compile_definitions(bslstage_updatetest PRIVATE BSL_FIXTURES_DIR="${CMAKE_SOURCE_DIR}/tools/fixtures")
 
-foreach(_tgt BSLStage bslstage_spouttest bslstage_ndittest bslstage_pixelmaptest bslstage_mediatest bslstage_gltest bslstage_projecttest bslstage_livetest bslstage_doctest bslstage_fxtest bslstage_ffgltest bslstage_bsltest bslstage_outputstress bslstage_aitest bslstage_keystest bslstage_transformtest bslstage_dmxtest bslstage_isfcheck bslstage_plugintest bslstage_streamtest)
+add_executable(bslstage_seqtest src/output/OutputSetup.cpp tools/seqtest.cpp tools/seqtest_model.cpp tools/seqtest_env.cpp tools/seqtest_factory.cpp
+    tools/seqtest_edit.cpp tools/seqtest_timing.cpp tools/seqtest_ui.cpp)
+target_include_directories(bslstage_seqtest PRIVATE src)
+target_link_libraries(bslstage_seqtest PRIVATE bslsources nlohmann_json::nlohmann_json shell32 ole32)
+
+add_executable(bslstage_seqfxtest tools/seqfxtest.cpp tools/seqfx_base.cpp tools/seqfx_instanciador.cpp
+    tools/seqfx_util.cpp tools/seqfx_sequencia.cpp tools/seqfx_disparo.cpp tools/seqfx_atraso.cpp
+    tools/seqfx_aleatorios.cpp tools/seqfx_fonte.cpp tools/seqfx_contorno.cpp tools/seqfx_ladrilhos.cpp
+    tools/seqfx_amostrador.cpp tools/seqfx_varredura.cpp tools/seqfx_bordaneon.cpp)
+target_include_directories(bslstage_seqfxtest PRIVATE src)
+target_link_libraries(bslstage_seqfxtest PRIVATE bslsources glfw bslmedia_cpu)
+
+foreach(_tgt BSLStage bslstage_spouttest bslstage_ndittest bslstage_pixelmaptest bslstage_mediatest bslstage_gltest bslstage_projecttest bslstage_livetest bslstage_doctest bslstage_fxtest bslstage_ffgltest bslstage_bsltest bslstage_outputstress bslstage_aitest bslstage_keystest bslstage_transformtest bslstage_dmxtest bslstage_isfcheck bslstage_plugintest bslstage_streamtest bslstage_seqfxtest bslstage_seqtest)
     add_custom_command(TARGET ${_tgt} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${BSL_FFMPEG_DLLS} ${BSL_ORT_DLLS} $<TARGET_FILE_DIR:${_tgt}>
         VERBATIM)
@@ -683,6 +723,8 @@ if(MSVC)
     target_compile_options(bslupdate_core PRIVATE /W4 /utf-8 /permissive-)
     target_compile_options(bslstage_updater PRIVATE /W4 /utf-8 /permissive-)
     target_compile_options(bslstage_updatetest PRIVATE /W4 /utf-8 /permissive-)
+    target_compile_options(bslstage_seqtest PRIVATE /W4 /utf-8 /permissive-)
+    target_compile_options(bslstage_seqfxtest PRIVATE /W4 /utf-8 /permissive-)
     target_compile_options(bslstage_worker PRIVATE /W4 /utf-8 /permissive-)
     target_compile_options(spoutgl PRIVATE /utf-8 /w)
     target_link_options(BSLStage PRIVATE

@@ -55,6 +55,55 @@ const std::vector<BslPluginInfo>& bslPlugins()
          "Mapeamento, qual zona ele mostra: a frente nos totens de LED, o fundo na parede principal. O botão "
          "\"Rotear zonas para slices…\" faz isso de uma vez. Tudo é processado neste PC. Desligado no perfil Eco.",
          false, true},
+        {kSequenciaId, "Sequência de slices", "Sequências",
+         "Acende os slices passo a passo, seguindo uma sequência criada no modo Sequências. Avança por velocidade, BPM "
+         "ou passo fixo, com direção, ecos e curva de sustentação ou envelope. A escala escolhe se o vídeo aparece no "
+         "lugar de cada slice ou esticado em cada um.",
+         false},
+        {kDisparoId, "Disparo manual", "Sequências",
+         "Avança a sequência quando você manda: botões Próximo e Anterior, rajada enquanto estiver ativa e reinício "
+         "automático depois de um tempo parado. Cada passo apaga com sustentação e liberação ou com um envelope.",
+         false},
+        {kAtrasoSlicesId, "Atraso por slice", "Sequências",
+         "Atrasa cada slice por um tempo diferente, seguindo os passos de uma sequência: o passo k atrasa k vezes a "
+         "unidade. Guarda um histórico reduzido do vídeo, com memória máxima ajustável.",
+         false},
+        {kSlicesAleatoriosId, "Slices aleatórios", "Sequências",
+         "Sorteia alguns slices de uma visão a cada passo, sem repetir os do passo anterior, com ecos, semente fixa e "
+         "curva de sustentação ou envelope.",
+         false},
+        {kContornoId, "Contorno", "Sequências",
+         "Desenha o contorno dos slices de uma visão, com cor e espessura, e pode animar um trecho de luz correndo pelo "
+         "perímetro, com leque entre os slices, direção e quantidade de trechos.",
+         false},
+        {kLadrilhosId, "Ladrilhos", "Sequências",
+         "Preenche os slices de uma visão com ladrilhos coloridos ou com a textura do vídeo, em quadrado ou círculo, "
+         "com grade, fase e velocidade.",
+         false},
+        {kAmostradorId, "Amostrador de slices", "Sequências",
+         "Lê a cor do vídeo no centro ou na média de cada slice e pinta o slice inteiro com ela, com ganho e suavização "
+         "no tempo.",
+         false},
+        {kVarreduraId, "Varredura", "Sequências",
+         "Varre cada slice de uma sequência com uma borda de luz que corre de lado a lado, com sobreposição entre "
+         "passos, voltas e envelope.",
+         false},
+        {kBordaNeonId, "Borda neon", "Sequências",
+         "Borda de neon que percorre um retângulo (ou os slices de uma visão) em segmentos, com padrões, barras "
+         "laterais, brilho e flash no compasso.",
+         false},
+        {kGeradorContornoId, "Contorno", "Sequências",
+         "Gerador: desenha o contorno dos slices de uma visão sobre fundo transparente, com cor, espessura e um trecho "
+         "de luz que corre pelo perímetro.",
+         true},
+        {kGeradorLadrilhosId, "Ladrilhos", "Sequências",
+         "Gerador: preenche os slices de uma visão com ladrilhos coloridos, em quadrado ou círculo, com grade, fase e "
+         "velocidade, sobre fundo transparente.",
+         true},
+        {kGeradorBordaNeonId, "Borda neon", "Sequências",
+         "Gerador: borda de neon que percorre um retângulo (ou os slices de uma visão) em segmentos, com padrões, barras "
+         "laterais, brilho e flash no compasso, sobre fundo transparente.",
+         true},
         {kWebBackgroundsId, "BSL WebBackgrounds", "Fundos",
          "Mais de 40 fundos generativos ao vivo (Silk, Aurora, Galaxy, Balatro...), paletas, efeitos de imagem (espelho, "
          "pixel, LED, CRT, strobo no BPM), texto e logo animados com entrada, loop e saída. Roda a página do BSL Studio "
@@ -110,6 +159,15 @@ const GeneratorInfo* bslGeneratorInfo(const std::string& id)
     } else if (id == kPixelMapPatternId) {
         node->info.describe = [](const media::ParamValues&) { return describePixelMapPattern(); };
         node->info.create = [](int w, int h) { return makePixelMapPattern(w, h); };
+    } else if (id == kGeradorContornoId) {
+        node->info.describe = [](const media::ParamValues&) { return describeGeradorContorno(); };
+        node->info.create = [](int w, int h) { return makeGeradorContorno(w, h); };
+    } else if (id == kGeradorLadrilhosId) {
+        node->info.describe = [](const media::ParamValues&) { return describeGeradorLadrilhos(); };
+        node->info.create = [](int w, int h) { return makeGeradorLadrilhos(w, h); };
+    } else if (id == kGeradorBordaNeonId) {
+        node->info.describe = [](const media::ParamValues&) { return describeGeradorBordaNeon(); };
+        node->info.create = [](int w, int h) { return makeGeradorBordaNeon(w, h); };
     } else {
         return nullptr;
     }
@@ -178,6 +236,24 @@ public:
             return bsllight::makeAura();
         if (typeId == bsllight::kZSliceId)
             return bsllight::makeZSlice();
+        if (typeId == bsllight::kSequenciaId)
+            return bsllight::makeSequencia();
+        if (typeId == bsllight::kDisparoId)
+            return bsllight::makeDisparo();
+        if (typeId == bsllight::kAtrasoSlicesId)
+            return bsllight::makeAtrasoSlices();
+        if (typeId == bsllight::kSlicesAleatoriosId)
+            return bsllight::makeSlicesAleatorios();
+        if (typeId == bsllight::kContornoId)
+            return bsllight::makeContorno();
+        if (typeId == bsllight::kLadrilhosId)
+            return bsllight::makeLadrilhos();
+        if (typeId == bsllight::kAmostradorId)
+            return bsllight::makeAmostrador();
+        if (typeId == bsllight::kVarreduraId)
+            return bsllight::makeVarredura();
+        if (typeId == bsllight::kBordaNeonId)
+            return bsllight::makeBordaNeon();
         return nullptr;
     }
 
@@ -197,6 +273,24 @@ public:
             return bsllight::describeAura();
         if (typeId == bsllight::kZSliceId)
             return bsllight::describeZSlice();
+        if (typeId == bsllight::kSequenciaId)
+            return bsllight::describeSequencia();
+        if (typeId == bsllight::kDisparoId)
+            return bsllight::describeDisparo();
+        if (typeId == bsllight::kAtrasoSlicesId)
+            return bsllight::describeAtrasoSlices();
+        if (typeId == bsllight::kSlicesAleatoriosId)
+            return bsllight::describeSlicesAleatorios();
+        if (typeId == bsllight::kContornoId)
+            return bsllight::describeContorno();
+        if (typeId == bsllight::kLadrilhosId)
+            return bsllight::describeLadrilhos();
+        if (typeId == bsllight::kAmostradorId)
+            return bsllight::describeAmostrador();
+        if (typeId == bsllight::kVarreduraId)
+            return bsllight::describeVarredura();
+        if (typeId == bsllight::kBordaNeonId)
+            return bsllight::describeBordaNeon();
         return {};
     }
 };

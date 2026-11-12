@@ -21,6 +21,71 @@ namespace {
 constexpr int kNewDeckColumns = 8;
 }
 
+namespace {
+
+constexpr const char* kParamEnvelope = "envelope";
+
+template <typename Fn>
+void paraCadaConjuntoDeParametros(Composition& comp, Fn&& fn)
+{
+    auto cadeia = [&fn](fx::EffectChain& chain) {
+        for (fx::EffectInstance& inst : chain.items)
+            fn(inst.params, &inst);
+    };
+    cadeia(comp.masterEffects);
+    for (Layer& layer : comp.layers)
+        cadeia(layer.effects);
+    for (Deck& deck : comp.decks)
+        for (auto& linha : deck.clips)
+            for (Clip& clip : linha) {
+                cadeia(clip.effects);
+                fn(clip.params, nullptr);
+            }
+}
+
+}
+
+std::vector<int> Composition::envelopesUsados() const
+{
+    std::set<int> ids;
+    auto ler = [&ids](const media::ParamValues& params) {
+        const media::Json* v = params.find(kParamEnvelope);
+        if (v && v->is_number_integer() && v->get<int>() > 0)
+            ids.insert(v->get<int>());
+    };
+    for (const fx::EffectInstance& inst : masterEffects.items)
+        ler(inst.params);
+    for (const Layer& layer : layers)
+        for (const fx::EffectInstance& inst : layer.effects.items)
+            ler(inst.params);
+    for (const Deck& deck : decks)
+        for (const auto& linha : deck.clips)
+            for (const Clip& clip : linha) {
+                for (const fx::EffectInstance& inst : clip.effects.items)
+                    ler(inst.params);
+                ler(clip.params);
+            }
+    return std::vector<int>(ids.begin(), ids.end());
+}
+
+void Composition::remapearEnvelopes(const std::map<int, int>& mapa)
+{
+    if (mapa.empty())
+        return;
+    paraCadaConjuntoDeParametros(*this, [&mapa](media::ParamValues& params, fx::EffectInstance* inst) {
+        const media::Json* v = params.find(kParamEnvelope);
+        if (!v || !v->is_number_integer())
+            return;
+        const auto it = mapa.find(v->get<int>());
+        if (it == mapa.end() || it->second == v->get<int>())
+            return;
+        if (inst)
+            inst->setParam(kParamEnvelope, media::Json(it->second));
+        else
+            params.set(kParamEnvelope, media::Json(it->second));
+    });
+}
+
 int Deck::clipCount() const
 {
     int n = 0;

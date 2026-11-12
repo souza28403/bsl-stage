@@ -5,10 +5,12 @@
 #include "control/KeyService.h"
 #include "core/Composition.h"
 #include "dmx/DmxService.h"
+#include "seq/Envelope.h"
 #include "ui/PanelContext.h"
 #include "update/Service.h"
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -34,6 +36,7 @@ struct AppOptions
     bool outputWindow = false;
     bool startInMapping = false;
     bool startInPixelMap = false;
+    bool startInSequences = false;
     std::filesystem::path screenshotOutputPath;
     double screenshotOutputSeconds = 0.0;
     int canvasWidth = 0;
@@ -93,6 +96,8 @@ private:
     void setupKeyHooks();
     void setupDmxDemo();
     void setupUpdates();
+    void absorverEnvelopesDoProjeto();
+    void publicarSequencias();
     void updateTick();
     void pollSystemHotkeys();
     std::string qaStateJson() const;
@@ -106,6 +111,8 @@ private:
 
     Settings settings_;
     Composition composition_;
+    seq::BibliotecaEnvelopes envelopes_;
+    std::uint64_t versaoSlicesAncoras_ = 0;
     Selection selection_;
     GlInfo glInfo_;
     FrameStats stats_;

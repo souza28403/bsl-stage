@@ -22,6 +22,7 @@ using view::PanelDef;
 using view::PanelMode;
 
 constexpr ImGuiID kPixelDockRoot = 0x42534C50;
+constexpr ImGuiID kSeqDockRoot = 0x42534C53;
 
 Settings* g_settings = nullptr;
 bool g_dirty = false;
@@ -48,12 +49,22 @@ std::map<std::string, Runtime> g_runtime;
 
 PanelMode modeOf(AppMode mode)
 {
-    return mode == AppMode::Mapping ? PanelMode::Mapping : mode == AppMode::PixelMap ? PanelMode::PixelMap : PanelMode::Composition;
+    switch (mode) {
+    case AppMode::Mapping: return PanelMode::Mapping;
+    case AppMode::PixelMap: return PanelMode::PixelMap;
+    case AppMode::Sequences: return PanelMode::Sequences;
+    default: return PanelMode::Composition;
+    }
 }
 
 ImGuiID rootOf(PanelMode mode)
 {
-    return mode == PanelMode::Mapping ? layout::kMapDockRoot : mode == PanelMode::PixelMap ? kPixelDockRoot : layout::kCompDockRoot;
+    switch (mode) {
+    case PanelMode::Mapping: return layout::kMapDockRoot;
+    case PanelMode::PixelMap: return kPixelDockRoot;
+    case PanelMode::Sequences: return kSeqDockRoot;
+    default: return layout::kCompDockRoot;
+    }
 }
 
 bool inMainDockspace(const ImGuiDockNode* node)

@@ -79,6 +79,7 @@ struct ActionArgs
     float value = 1.0f;
     int fxScope = 1;
     int effect = 0;
+    std::string param;
 
     bool operator==(const ActionArgs&) const = default;
 };

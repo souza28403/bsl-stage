@@ -26,6 +26,18 @@ inline constexpr const char* kRelightId = "bsl:relight-25d";
 inline constexpr const char* kBodyGlitchId = "bsl:body-glitch";
 inline constexpr const char* kAuraId = "bsl:performer-aura";
 inline constexpr const char* kZSliceId = "bsl:z-slice";
+inline constexpr const char* kSequenciaId = "bsl:sequencia";
+inline constexpr const char* kDisparoId = "bsl:disparo";
+inline constexpr const char* kAtrasoSlicesId = "bsl:atraso-slices";
+inline constexpr const char* kSlicesAleatoriosId = "bsl:slices-aleatorios";
+inline constexpr const char* kContornoId = "bsl:contorno";
+inline constexpr const char* kLadrilhosId = "bsl:ladrilhos";
+inline constexpr const char* kAmostradorId = "bsl:amostrador";
+inline constexpr const char* kVarreduraId = "bsl:varredura";
+inline constexpr const char* kBordaNeonId = "bsl:borda-neon";
+inline constexpr const char* kGeradorContornoId = "bsl:gerador-contorno";
+inline constexpr const char* kGeradorLadrilhosId = "bsl:gerador-ladrilhos";
+inline constexpr const char* kGeradorBordaNeonId = "bsl:gerador-borda-neon";
 
 class FeedbackBuffer
 {

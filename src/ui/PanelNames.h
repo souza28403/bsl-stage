@@ -20,6 +20,11 @@ inline constexpr const char* kMapProps = "Propriedades";
 inline constexpr const char* kPmConfig = "Configuração###pm_config";
 inline constexpr const char* kPmOverview = "Overview###pm_overview";
 inline constexpr const char* kPmTable = "Tabela###pm_tabela";
+inline constexpr const char* kSeqList = "Sequências###seq_lista";
+inline constexpr const char* kSeqCanvas = "Canvas###seq_canvas";
+inline constexpr const char* kSeqSteps = "Passos###seq_passos";
+inline constexpr const char* kSeqGen = "Gerador###seq_gerador";
+inline constexpr const char* kSeqEnv = "Envelopes###seq_envelopes";
 }
 
 }

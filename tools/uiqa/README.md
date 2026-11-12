@@ -64,6 +64,20 @@ Exportar…, Importar CSV…, Escolher imagem…) ficam fora do fuzz. O snapshot
 `panels` (`name`, `phys`, `comp` já arredondado como na tabela, `overlap`, `outside`), `scaleWarn`, `selected`, `snap`, `dragging`, `guides`,
 `zoom` e `status`. `tools/uiqa/pmshots.py` gera `docs/screenshot-pixelmap.png`.
 
+Sequências (modo `Sequências###modo_sequencias`; `ensure_mode(app, "sequences")`, ou `--mode sequences` na linha de comando): janelas `seq_lista`,
+`seq_canvas`, `seq_passos`, `seq_gerador` e `seq_envelopes` (as duas últimas são abas do mesmo dock). Lista: `##seq_nova`, `##seq_visao_nova`,
+`##seq_religar`; por linha `##seq_alca`, `##seq_excluir`, `##visao_olho`, `##visao_excluir`. Canvas: chips `##seq_ferr_ret` e `##seq_ferr_pincel`,
+`##seq_fantasma`, `##seq_composicao`, `##seq_nomes`, `##seq_ajustar`, `##seq_100`, `##seq_desfazer`, `##seq_refazer`, `##seq_passo_ant`,
+`##seq_passo_prox`; itens `seq:canvas`, `seq:vista`, `seq:slice:<uid>` e `seq:borda:x|y:<i>`. Passos: `##seq_passo_mais`, `##seq_passo_menos`,
+`##seq_passos_total`, `##seq_repetir`, `##seq_vaievolta`, `##seq_limpar_passo`, `##seq_limpar_tudo`; células `seq:passo:<i>`. Gerador:
+`##ger_ligado`, `##ger_direcao` (itens na janela `Combo`), `##ger_inv_x/y`, `##ger_bloco`, `##ger_modulo`, `##ger_esp_x/y`, `##ger_embaralhar`,
+`##ger_semente`, `##ger_manual`, `##ger_limiar`, `##ger_editar_grade`, `##ger_auto`. Envelopes: `##env_novo`, `##env_duplicar`, `##env_excluir`
+(modal `##env_excluir_ok`), `##env_desfazer`, `##env_refazer`, `##env_ima`, `##env_nome`, `##env_x/y`; itens `env:grafico`, `env:vista` e
+`env:ancora:<i>`. O botão `##env_editar` do parâmetro Envelope dos efeitos leva ao modo Sequências. O snapshot traz `state.sequences`: `list`
+(`id`, `name`, `steps`, `lit` = acesos por passo, `generator`, `genDirection`, `genManual`), `views`, `envelopes`, `selected`, `view`, `step`, `tool`,
+`undo`/`redo`, `gesture`, `gridEdit`, `zoom`, `fit`, `ghost`, `backdrop`, `status`, `slices` e `envelope` (`id`, `anchors`, `selected`, `undo`,
+`redo`, `dragging`, `snap`). O cenário `sequencias` gera `docs/screenshot-sequencias.png`.
+
 Mapeamento: o snapshot traz `state.mapping` com `screen`, `slice`, `corner`, `multi` (slices selecionados), `pointsMode`,
 `undo`/`redo` (passos do historico), `snap`, `grid`, `gridStep`, `inputZoom`/`outputZoom`, `dragging` e `guides` (linhas-guia do
 ima visiveis agora). Itens `entrada:imagem`/`saida:imagem` = retangulo do conteudo na tela (muda com zoom/pan; em "Ajustar à vista" e
@@ -126,6 +140,22 @@ Screenshots em `docs/qa/<config>_<estado>.png`. Codigo de saida 0 = nenhum passo
 Python 3 sem dependencias extras (so `ctypes`). Nao mexa no mouse/teclado enquanto roda.
 
 `--ui-scale <f>` e `--ui-mode window|system|fixed` tambem valem no app normal (para testes).
+
+## Execução determinística (foco, prazos e estado)
+
+- Antes de cada tecla, clique, arrasto ou roda o driver confere que a janela do app é a que tem o foco (`GetForegroundWindow`) e, nos
+  eventos de mouse, que o cursor está sobre uma janela do processo do app (`WindowFromPoint`). Se não estiver, retoma o foco
+  (`AttachThreadInput` + `SetForegroundWindow`, com `SwitchToThisWindow` de reserva) com prazo de 12 s, confirma e só então envia o
+  input; se não conseguir, o passo falha com a janela que está na frente e **nada é enviado**. Teclas e cliques nunca vão para janela
+  de outro programa (o cenário `segundo_plano` só digita na própria janela de teste, e antes de cada caractere confere o foco dela).
+- O clique por rótulo (`click`) relê o snapshot depois de mover o cursor e só clica quando o retângulo do item parou de se mexer
+  (o snapshot sai a cada 3 quadros, então o layout pode ter mudado entre a leitura e o clique).
+- Prazos com folga: abrir o app 120 s, quadros 30 s, item 6 s, estado 8 s, encerrar 20 s. Esperas por condição (janela maximizada,
+  tamanho do cliente, quadros do app) no lugar de `sleep` fixo.
+- Se o foco sair do app no meio de um passo e o passo falhar, ele é repetido (até 2 vezes) depois de soltar o mouse, fechar popups e
+  voltar ao modo Composição; a saída mostra `repetindo <passo>`.
+- No começo e no fim de `run.py` qualquer `BSLStage.exe --qa` deste repositório que tenha ficado aberto (execução anterior que caiu) é
+  encerrado; `Ctrl+C` ou erro também encerram o app. O estado do app fica em `build\qa\cfg_*` (apagado a cada execução), nunca no `%APPDATA%`.
 
 ## Transform de camada (cenário `transform`)
 

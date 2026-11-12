@@ -302,6 +302,27 @@ void testView(const fs::path& root)
         CHECK(findPanel("saida") && findPanel("saida")->mode == PanelMode::Composition);
         CHECK(findPanel("map-saida") && findPanel("map-saida")->mode == PanelMode::Mapping);
         CHECK(findPanel("status") && findPanel("status")->mode == PanelMode::Any);
+        int sequencias = 0;
+        for (const PanelDef& d : kPanels)
+            if (d.mode == PanelMode::Sequences)
+                ++sequencias;
+        CHECK(sequencias == 5);
+        for (const char* chave : {"seq-lista", "seq-canvas", "seq-passos", "seq-gerador", "seq-envelopes"})
+            CHECK(findPanel(chave) && findPanel(chave)->mode == PanelMode::Sequences);
+    }
+
+    section("exibir: paineis do modo Sequencias");
+    {
+        State s;
+        CHECK(s.setHidden("seq-gerador", true) && s.setHidden("seq-envelopes", true) && s.setHidden("map-lista", true));
+        CHECK(s.isHidden("seq-gerador") && !s.isHidden("seq-canvas"));
+        CHECK(s.showAll(PanelMode::Sequences));
+        CHECK(!s.isHidden("seq-gerador") && !s.isHidden("seq-envelopes") && s.isHidden("map-lista"));
+        CHECK(!s.showAll(PanelMode::Sequences));
+        CHECK(fromJson(toJson(s)) == s);
+        s.setHidden("seq-passos", true);
+        CHECK(fromJson(toJson(s)).isHidden("seq-passos"));
+        CHECK((sanitizeKeys({"seq-canvas", "seq-xx", "seq-canvas"}) == std::vector<std::string>{"seq-canvas"}));
     }
 
     section("exibir: ocultar, soltar e restaurar (State)");

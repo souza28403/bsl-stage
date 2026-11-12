@@ -2,7 +2,10 @@
 #include "core/Composition.h"
 #include "media/DocInfo.h"
 #include "io/ProjectFile.h"
+#include "output/NovaScr.h"
 #include "output/OutputSetup.h"
+#include "seq/Envelope.h"
+#include "seq/EnvelopeStore.h"
 
 #include <nlohmann/json.hpp>
 
@@ -644,6 +647,98 @@ int main(int argc, char** argv)
         CHECK(project::parse(weird, proj, c5, o5).ok && o5.screens[0].slices[0].source == kSliceFromComposition);
     }
 
+    section("mascara por luminancia: ida e volta");
+    {
+        Composition c = Composition::createDefault(3, 2);
+        c.layers[0].blendMode = BlendMode::LumaMask;
+        c.layers[1].blendMode = BlendMode::LumaMaskInv;
+        c.layers[2].blendMode = BlendMode::Difference;
+        OutputSetup o;
+        const std::string text = project::serialize(c, o, proj);
+        CHECK(text.find("\"luma-mask\"") != std::string::npos && text.find("\"luma-mask-inv\"") != std::string::npos);
+        Composition c2;
+        OutputSetup o2;
+        CHECK(project::parse(text, proj, c2, o2).ok);
+        CHECK(c2.layers[0].blendMode == BlendMode::LumaMask && c2.layers[1].blendMode == BlendMode::LumaMaskInv);
+        CHECK(c2.layers[2].blendMode == BlendMode::Difference);
+        CHECK(project::serialize(c2, o2, proj) == text);
+        CHECK(std::string(blendModeName(BlendMode::LumaMask)) != std::string(blendModeName(BlendMode::LumaMaskInv)));
+    }
+
+    section("uid de slice: ida e volta, migracao, duplicado, colar repetido");
+    {
+        OutputSetup o;
+        o.addScreen(640, 360);
+        o.addSlice(0, 640, 360);
+        o.addSlice(0, 640, 360);
+        o.addScreen(640, 360);
+        CHECK(o.screens[0].slices[0].uid == 1 && o.screens[0].slices[1].uid == 2);
+        CHECK(o.screens[0].slices[2].uid == 3 && o.screens[1].slices[0].uid == 4 && o.nextSliceUid == 5);
+        o.removeSlice(0, 1);
+        const int dupIndex = o.duplicateSlice(0, 0);
+        CHECK(dupIndex == 1 && o.screens[0].slices[1].uid == 5 && o.nextSliceUid == 6);
+        const int dupScreen = o.duplicateScreen(1);
+        CHECK(dupScreen == 2 && o.screens[2].slices[0].uid == 6 && o.nextSliceUid == 7);
+        CHECK(!ensureSliceUids(o));
+
+        Composition c;
+        OutputSetup back;
+        const std::string text = project::serialize(c, o, proj);
+        CHECK(text.find("\"uid\"") != std::string::npos && text.find("\"nextSliceUid\"") != std::string::npos);
+        CHECK(project::parse(text, proj, c, back).ok);
+        CHECK(back.nextSliceUid == o.nextSliceUid);
+        CHECK(back.screens.size() == o.screens.size());
+        for (size_t s = 0; s < o.screens.size(); ++s) {
+            CHECK(back.screens[s].slices.size() == o.screens[s].slices.size());
+            for (size_t i = 0; i < o.screens[s].slices.size(); ++i)
+                CHECK(back.screens[s].slices[i].uid == o.screens[s].slices[i].uid);
+        }
+        CHECK(project::serialize(c, back, proj) == project::serialize(c, o, proj));
+
+        const std::string old = "{\"format\":\"bslstage\",\"version\":1,\"composition\":{\"width\":640,\"height\":360},"
+                                "\"output\":{\"screens\":[{\"name\":\"A\",\"slices\":[{\"name\":\"S1\"},{\"name\":\"S2\"}]},"
+                                "{\"name\":\"B\",\"slices\":[{\"name\":\"S3\"}]}]}}";
+        Composition c2;
+        OutputSetup o2;
+        CHECK(project::parse(old, proj, c2, o2).ok);
+        CHECK(o2.screens[0].slices[0].uid == 1 && o2.screens[0].slices[1].uid == 2 && o2.screens[1].slices[0].uid == 3);
+        CHECK(o2.nextSliceUid == 4);
+        const std::string migrated = project::serialize(c2, o2, proj);
+        Composition c3;
+        OutputSetup o3;
+        CHECK(project::parse(migrated, proj, c3, o3).ok && o3 == o2);
+
+        const std::string repeated =
+            "{\"format\":\"bslstage\",\"version\":1,\"composition\":{\"width\":640,\"height\":360},"
+            "\"output\":{\"nextSliceUid\":8,\"screens\":[{\"name\":\"A\",\"slices\":[{\"name\":\"S1\",\"uid\":7},"
+            "{\"name\":\"S2\",\"uid\":7},{\"name\":\"S3\",\"uid\":-2}]},{\"name\":\"B\",\"slices\":[{\"name\":\"S4\",\"uid\":7},"
+            "{\"name\":\"S5\",\"uid\":9}]}]}}";
+        Composition c4;
+        OutputSetup o4;
+        CHECK(project::parse(repeated, proj, c4, o4).ok);
+        const auto& a = o4.screens[0].slices;
+        const auto& b = o4.screens[1].slices;
+        CHECK(a[0].uid == 7 && b[1].uid == 9);
+        const int ids[] = {a[0].uid, a[1].uid, a[2].uid, b[0].uid, b[1].uid};
+        bool unique = true;
+        for (int i = 0; i < 5; ++i) {
+            unique = unique && ids[i] > 0;
+            for (int j = i + 1; j < 5; ++j)
+                unique = unique && ids[i] != ids[j];
+        }
+        CHECK(unique && o4.nextSliceUid > 9);
+
+        OutputSetup pasted;
+        pasted.addScreen(640, 360);
+        pasted.screens[0].slices.push_back(pasted.screens[0].slices[0]);
+        pasted.screens[0].slices.push_back(pasted.screens[0].slices[0]);
+        pasted.screens[0].slices.push_back(makeFullSlice("Nova", 640, 360, 640, 360));
+        CHECK(ensureSliceUids(pasted));
+        const auto& ps = pasted.screens[0].slices;
+        CHECK(ps[0].uid == 1 && ps[1].uid == 2 && ps[2].uid == 3 && ps[3].uid == 4);
+        CHECK(!ensureSliceUids(pasted));
+    }
+
     section("mover a pasta do projeto");
     {
         const fs::path moved = root / u8"movido";
@@ -777,6 +872,8 @@ int main(int argc, char** argv)
         lat.rows = 4;
         lat.cabW = 128;
         lat.cabH = 128;
+        lat.port = 3;
+        lat.cableOrder = 7;
         cfg.panels.push_back(lat);
         const std::string t = project::serialize(pc, pOut, proj);
         CHECK(t.find("\"pixelMap\"") != std::string::npos && t.find("\"Testeira Palco\"") != std::string::npos);
@@ -787,6 +884,28 @@ int main(int argc, char** argv)
         CHECK(lr.ok && lr.warnings.empty());
         CHECK(back.pixelMap == pc.pixelMap);
         CHECK(back.pixelMap.panels.size() == 2 && back.pixelMap.panels[1].color == 0x123456 && back.pixelMap.panels[1].byCabinets);
+        CHECK(back.pixelMap.panels[1].port == 3 && back.pixelMap.panels[1].cableOrder == 7);
+        CHECK(back.pixelMap.panels[0].port == 0 && back.pixelMap.panels[0].cableOrder == -1);
+
+        novascr::Result scr;
+        scr.ok = true;
+        scr.hasPorts = true;
+        scr.cabinets = {{0, 312, 312, 312, 0, 0, -1, -1}, {312, 312, 312, 312, 0, 1, -1, -1}, {0, 0, 312, 312, 1, 0, -1, -1}};
+        scr.width = 624;
+        scr.height = 624;
+        Composition scrComp = Composition::createDefault(2, 3);
+        scrComp.width = 624;
+        scrComp.height = 624;
+        scrComp.pixelMap.inW = 624;
+        scrComp.pixelMap.inH = 624;
+        CHECK(novascr::applyToPixelMap(scr, scrComp.pixelMap, novascr::ImportMode::Replace));
+        const std::string st = project::serialize(scrComp, pOut, proj);
+        Composition sback;
+        OutputSetup sbackOut;
+        CHECK(project::parse(st, proj, sback, sbackOut).ok);
+        CHECK(sback.pixelMap == scrComp.pixelMap && sback.pixelMap.panels.size() == 3);
+        CHECK(sback.pixelMap.panels[1].port == 0 && sback.pixelMap.panels[1].cableOrder == 1 && sback.pixelMap.panels[2].port == 1);
+        CHECK(sback.pixelMap.panels[1].x == 312 && sback.pixelMap.panels[1].w == 312 && sback.pixelMap.physW == 624);
         CHECK(back.pixelMap.panels[1].cols == 4 && back.pixelMap.panels[1].w == 512 && back.pixelMap.panels[1].name == "Lateral \xC3\x8D");
         CHECK(back.pixelMap.watermark == pixelmap::Watermark::Image && back.pixelMap.watermarkPath == cfg.watermarkPath);
         CHECK(project::serialize(back, backOut, proj) == t);
@@ -974,6 +1093,98 @@ int main(int argc, char** argv)
         CHECK(project::parse(j.dump(), proj, bad, badOut).ok && bad.layers[1].transform.isDefault());
     }
 
+
+    {
+        section("sequencias: ida e volta, ausencia da chave e 1024 passos");
+        Composition vazia = buildComposition(mediaDir);
+        OutputSetup saidaV = buildOutput(vazia.width, vazia.height);
+        const std::string semChave = project::serialize(vazia, saidaV, proj);
+        CHECK(semChave.find("\"sequences\"") == std::string::npos);
+        Composition lida;
+        OutputSetup lidaOut;
+        CHECK(project::parse(semChave, proj, lida, lidaOut).ok && lida.sequences.vazio());
+
+        Composition& c = vazia;
+        const int s1 = seq::criarSequencia(c.sequences, "Varredura", 4);
+        seq::acharSequencia(c.sequences, s1)->passos[1] = {1, 2, 3, 7};
+        const int v1 = seq::criarVisao(c.sequences, "Palco");
+        seq::acharVisao(c.sequences, v1)->ligados = {2, 4, 5, 6};
+        const std::string t1 = project::serialize(c, saidaV, proj);
+        CHECK(t1.find("\"sequences\"") != std::string::npos);
+        CHECK(t1.find("1-3,7") != std::string::npos);
+        Composition c2;
+        OutputSetup o2;
+        const project::LoadResult rs = project::parse(t1, proj, c2, o2);
+        CHECK(rs.ok && rs.warnings.empty());
+        CHECK(c2.sequences == c.sequences);
+        CHECK(project::serialize(c2, o2, proj) == t1);
+
+        Composition grande;
+        grande.sequences = {};
+        const int sg = seq::criarSequencia(grande.sequences, "Grande", seq::kMaxPassos);
+        seq::Sequencia* g = seq::acharSequencia(grande.sequences, sg);
+        for (int i = 0; i < seq::kMaxPassos; ++i)
+            g->passos[static_cast<size_t>(i)] = {i % 128 + 1};
+        const std::string tg = project::serialize(grande, saidaV, proj);
+        Composition grande2;
+        OutputSetup og2;
+        CHECK(project::parse(tg, proj, grande2, og2).ok);
+        CHECK(grande2.sequences == grande.sequences);
+        CHECK(static_cast<int>(grande2.sequences.sequencias[0].passos.size()) == seq::kMaxPassos);
+        CHECK(tg.size() < 60000);
+
+        using OJ = nlohmann::ordered_json;
+        OJ j = OJ::parse(t1);
+        j["sequences"]["list"][0]["steps"][0] = "abc";
+        Composition ruim;
+        OutputSetup ruimOut;
+        const project::LoadResult rr = project::parse(j.dump(), proj, ruim, ruimOut);
+        CHECK(rr.ok && !rr.warnings.empty());
+        j["sequences"] = "texto";
+        Composition ruim2;
+        OutputSetup ruim2Out;
+        CHECK(project::parse(j.dump(), proj, ruim2, ruim2Out).ok && ruim2.sequences.vazio());
+    }
+
+    {
+        section("sequencias: envelopes usados no projeto");
+        Composition c = buildComposition(mediaDir);
+        OutputSetup saidaE = buildOutput(c.width, c.height);
+        CHECK(c.envelopesUsados().empty());
+        fx::EffectInstance& inst = c.layers[0].effects.add("teste:envelope");
+        inst.setParam("envelope", media::Json(7));
+        fx::EffectInstance& outro = c.masterEffects.add("teste:envelope");
+        outro.setParam("envelope", media::Json(3));
+        const std::vector<int> usados = c.envelopesUsados();
+        CHECK(usados.size() == 2 && usados[0] == 3 && usados[1] == 7);
+        c.envelopes.push_back(seq::envelopeCurvaS(3, "Suave"));
+        c.envelopes.push_back(seq::envelopeLinear(7, "Reta"));
+        const std::string t = project::serialize(c, saidaE, proj);
+        CHECK(t.find("\"envelopes\"") != std::string::npos);
+        Composition lida;
+        OutputSetup lidaOut;
+        const project::LoadResult resE = project::parse(t, proj, lida, lidaOut);
+        CHECK(resE.ok && resE.warnings.empty());
+        CHECK(lida.envelopes.size() == 2 && lida.envelopes[0].id == 3 && lida.envelopes[1].nome == "Reta");
+        CHECK(lida.envelopes[0].mesmoConteudo(c.envelopes[0]) && lida.envelopes[1].mesmoConteudo(c.envelopes[1]));
+        CHECK(project::serialize(lida, lidaOut, proj) == t);
+
+        seq::BibliotecaEnvelopes biblioteca;
+        seq::garantirBiblioteca(biblioteca);
+        const int antigo = biblioteca.lista.front().id;
+        lida.envelopes[0].id = antigo;
+        lida.envelopes[0].nome = "Diferente";
+        const std::map<int, int> mapa = seq::mesclarNaBiblioteca(biblioteca, lida.envelopes);
+        lida.layers[0].effects.items[0].setParam("envelope", media::Json(antigo));
+        lida.masterEffects.items[0].setParam("envelope", media::Json(3));
+        lida.remapearEnvelopes(mapa);
+        CHECK(lida.envelopesUsados().size() == 2);
+        CHECK(mapa.at(antigo) != antigo);
+        CHECK(seq::acharEnvelope(biblioteca, mapa.at(antigo)) != nullptr);
+
+        Composition vazia = buildComposition(mediaDir);
+        CHECK(project::serialize(vazia, saidaE, proj).find("\"sequences\"") == std::string::npos);
+    }
 
     fs::remove_all(root, ec);
     std::printf("\n%d verificacoes, %d falha(s)\n", g_checks, g_failures);

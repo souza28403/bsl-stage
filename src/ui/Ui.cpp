@@ -16,6 +16,7 @@
 #include "ui/panels/BrowserPanel.h"
 #include "ui/panels/CaptureTargetChooser.h"
 #include "ui/panels/ClipPanel.h"
+#include "ui/panels/EnvelopeEditor.h"
 #include "ui/panels/CompositionPanel.h"
 #include "ui/panels/MapView.h"
 #include "ui/panels/MappingPanels.h"
@@ -25,6 +26,9 @@
 #include "ui/panels/PluginWizard.h"
 #include "ui/panels/PreviewPanel.h"
 #include "ui/panels/ReportWindow.h"
+#include "ui/panels/SeqCanvas.h"
+#include "ui/panels/SeqFactoryPanel.h"
+#include "ui/panels/SequencePanels.h"
 #include "ui/panels/StatusBar.h"
 #include "ui/panels/TabPanels.h"
 #include "ui/panels/TransformEditor.h"
@@ -48,10 +52,13 @@ namespace {
 constexpr ImGuiID kDockSpaceId = 0x42534C43;
 constexpr ImGuiID kMappingDockSpaceId = 0x42534C4D;
 constexpr ImGuiID kPixelMapDockSpaceId = 0x42534C50;
+constexpr ImGuiID kSeqDockSpaceId = 0x42534C53;
 
 bool g_resetCompLayout = false;
 bool g_resetMapLayout = false;
 bool g_resetPixelLayout = false;
+bool g_resetSeqLayout = false;
+int g_focusSeqFrames = 0;
 bool g_resetRequested = false;
 bool g_openAbout = false;
 int g_focusFilesFrames = 0;
@@ -138,6 +145,25 @@ void buildPixelMapLayout(ImGuiID root, ImVec2 size)
     ImGui::DockBuilderDockWindow(panel::kPmConfig, left);
     ImGui::DockBuilderDockWindow(panel::kPmOverview, center);
     ImGui::DockBuilderDockWindow(panel::kPmTable, bottom);
+    ImGui::DockBuilderFinish(root);
+}
+
+void buildSequencesLayout(ImGuiID root, ImVec2 size)
+{
+    ImGui::DockBuilderRemoveNode(root);
+    ImGui::DockBuilderAddNode(root, ImGuiDockNodeFlags_DockSpace);
+    ImGui::DockBuilderSetNodeSize(root, size);
+
+    ImGuiID center = root;
+    const ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.19f, nullptr, &center);
+    const ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.27f, nullptr, &center);
+    const ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.24f, nullptr, &center);
+
+    ImGui::DockBuilderDockWindow(panel::kSeqList, left);
+    ImGui::DockBuilderDockWindow(panel::kSeqCanvas, center);
+    ImGui::DockBuilderDockWindow(panel::kSeqSteps, bottom);
+    ImGui::DockBuilderDockWindow(panel::kSeqGen, right);
+    ImGui::DockBuilderDockWindow(panel::kSeqEnv, right);
     ImGui::DockBuilderFinish(root);
 }
 
@@ -258,6 +284,8 @@ void drawMenuBar(PanelContext& ctx)
             ctx.mode = AppMode::Mapping;
         if (ImGui::MenuItem("Abrir Pixel Map"))
             ctx.mode = AppMode::PixelMap;
+        if (ImGui::MenuItem("Abrir Sequências"))
+            ctx.mode = AppMode::Sequences;
         ImGui::Separator();
         if (ImGui::MenuItem(ICON_SLIDERS "  DMX / Art-Net…##menu_dmx"))
             openDmxWindow();
@@ -349,6 +377,8 @@ void drawMenuBar(PanelContext& ctx)
         ctx.mode = AppMode::Mapping;
     if (toggleChip("Pixel Map###modo_pixelmap", ctx.mode == AppMode::PixelMap))
         ctx.mode = AppMode::PixelMap;
+    if (toggleChip("Sequências###modo_sequencias", ctx.mode == AppMode::Sequences))
+        ctx.mode = AppMode::Sequences;
     if (ctx.mode == AppMode::Mapping) {
         ImGui::Dummy(ImVec2(dp(14.0f), 1.0f));
         if (toggleChip(ICON_SCAN "  Identificar##map_identificar", ctx.outputRenderer.identify()))
@@ -431,11 +461,18 @@ void drawUi(PanelContext& ctx)
             g_resetMapLayout = true;
         } else if (ctx.mode == AppMode::PixelMap) {
             g_resetPixelLayout = true;
+        } else if (ctx.mode == AppMode::Sequences) {
+            g_resetSeqLayout = true;
         } else {
             g_resetCompLayout = true;
             clearActiveLayoutPreset(ctx);
         }
         ctx.settings.view.detached.clear();
+    }
+    if (envelopeEditorTakeOpenRequest()) {
+        ctx.mode = AppMode::Sequences;
+        setPanelVisible("seq-envelopes", true);
+        g_focusSeqFrames = 6;
     }
     if (statusBarVisible())
         drawStatusBar(ctx);
@@ -443,14 +480,17 @@ void drawUi(PanelContext& ctx)
 
     const bool mapping = ctx.mode == AppMode::Mapping;
     const bool pixelMap = ctx.mode == AppMode::PixelMap;
-    const ImGuiID dockId = mapping ? kMappingDockSpaceId : pixelMap ? kPixelMapDockSpaceId : kDockSpaceId;
-    bool& reset = mapping ? g_resetMapLayout : pixelMap ? g_resetPixelLayout : g_resetCompLayout;
+    const bool sequences = ctx.mode == AppMode::Sequences;
+    const ImGuiID dockId = mapping ? kMappingDockSpaceId : pixelMap ? kPixelMapDockSpaceId : sequences ? kSeqDockSpaceId : kDockSpaceId;
+    bool& reset = mapping ? g_resetMapLayout : pixelMap ? g_resetPixelLayout : sequences ? g_resetSeqLayout : g_resetCompLayout;
     if (!ImGui::DockBuilderGetNode(dockId) || reset) {
         reset = false;
         if (mapping)
             buildMappingLayout(dockId, viewport->WorkSize);
         else if (pixelMap)
             buildPixelMapLayout(dockId, viewport->WorkSize);
+        else if (sequences)
+            buildSequencesLayout(dockId, viewport->WorkSize);
         else
             buildDefaultLayout(dockId, viewport->WorkSize, ctx.settings.layout);
     }
@@ -469,6 +509,22 @@ void drawUi(PanelContext& ctx)
             drawMappingOutputPanel(ctx);
         if (panelVisible(panel::kMapProps))
             drawMappingPropertiesPanel(ctx);
+    } else if (sequences) {
+        sequencesPrepare(ctx);
+        if (panelVisible(panel::kSeqCanvas))
+            drawSeqCanvasPanel(ctx);
+        if (panelVisible(panel::kSeqList))
+            drawSeqListPanel(ctx);
+        if (panelVisible(panel::kSeqSteps))
+            drawSeqStepsPanel(ctx);
+        if (panelVisible(panel::kSeqGen))
+            drawSeqGeneratorPanel(ctx);
+        if (panelVisible(panel::kSeqEnv))
+            drawEnvelopePanel(ctx);
+        if (g_focusSeqFrames > 0 && ImGui::FindWindowByName(panel::kSeqEnv)) {
+            ImGui::SetWindowFocus(panel::kSeqEnv);
+            --g_focusSeqFrames;
+        }
     } else if (pixelMap) {
         validateMappingSelection(ctx);
         mapHistoryObserve(ctx);

@@ -2,6 +2,8 @@
 
 #include "app/Paths.h"
 #include "control/ActionRegistry.h"
+#include "seq/EnvelopeStore.h"
+#include "seq/SeqJson.h"
 
 #include <nlohmann/json.hpp>
 
@@ -34,7 +36,8 @@ struct BlendKey { BlendMode mode; const char* key; };
 constexpr BlendKey kBlendKeys[] = {
     {BlendMode::Normal, "normal"},     {BlendMode::Add, "add"},         {BlendMode::Subtract, "subtract"},
     {BlendMode::Multiply, "multiply"}, {BlendMode::Screen, "screen"},   {BlendMode::Overlay, "overlay"},
-    {BlendMode::Lighten, "lighten"},   {BlendMode::Darken, "darken"},   {BlendMode::Difference, "difference"}};
+    {BlendMode::Lighten, "lighten"},   {BlendMode::Darken, "darken"},   {BlendMode::Difference, "difference"},
+    {BlendMode::LumaMask, "luma-mask"}, {BlendMode::LumaMaskInv, "luma-mask-inv"}};
 
 struct LoopKey { media::LoopMode mode; const char* key; };
 constexpr LoopKey kLoopKeys[] = {{media::LoopMode::Loop, "loop"},
@@ -152,6 +155,7 @@ Json sliceToJson(const Slice& s)
     Json j = Json::object();
     j["name"] = s.name;
     j["enabled"] = s.enabled;
+    j["uid"] = s.uid;
     j["input"] = {{"x", s.input.x}, {"y", s.input.y}, {"w", s.input.w}, {"h", s.input.h}};
     Json corners = Json::array();
     for (const Point2& c : s.corners)
@@ -253,6 +257,7 @@ Slice sliceFromJson(const Json& j, int index, int canvasW, int canvasH, int scre
     Slice s = makeFullSlice("Slice " + std::to_string(index + 1), canvasW, canvasH, screenW, screenH);
     s.name = getStr(j, "name", s.name);
     s.enabled = getBool(j, "enabled", s.enabled);
+    s.uid = getInt(j, "uid", 0, 0, 1 << 30);
 
     bool hasInput = false;
     if (const Json* in = getObj(j, "input")) {
@@ -481,6 +486,10 @@ Json pixelMapToJson(const pixelmap::Config& c)
         }
         if (p.byCabinets)
             pj["cabinets"] = {{"cols", p.cols}, {"rows", p.rows}, {"w", p.cabW}, {"h", p.cabH}};
+        if (p.port != 0)
+            pj["port"] = p.port;
+        if (p.cableOrder >= 0)
+            pj["cableOrder"] = p.cableOrder;
         panels.push_back(std::move(pj));
     }
     j["panels"] = std::move(panels);
@@ -528,6 +537,8 @@ pixelmap::Config pixelMapFromJson(const Json& j, int canvasW, int canvasH)
                 p.cabW = getInt(*cab, "w", 128, 1, pixelmap::kMaxDim);
                 p.cabH = getInt(*cab, "h", 128, 1, pixelmap::kMaxDim);
             }
+            p.port = getInt(pj, "port", 0, 0, 255);
+            p.cableOrder = getInt(pj, "cableOrder", -1, -1, 65535);
             c.panels.push_back(std::move(p));
         }
     }
@@ -538,8 +549,10 @@ pixelmap::Config pixelMapFromJson(const Json& j, int canvasW, int canvasH)
 
 }
 
-std::string serialize(const Composition& comp, const OutputSetup& output, const fs::path& projectDir)
+std::string serialize(const Composition& comp, const OutputSetup& outputIn, const fs::path& projectDir)
 {
+    OutputSetup output = outputIn;
+    ensureSliceUids(output);
     const fs::path dirAbs = absoluteDir(projectDir);
 
     Json root = Json::object();
@@ -597,6 +610,7 @@ std::string serialize(const Composition& comp, const OutputSetup& output, const 
         screens.push_back(screenToJson(s));
     Json out = Json::object();
     out["screens"] = std::move(screens);
+    out["nextSliceUid"] = output.nextSliceUid;
     root["output"] = std::move(out);
 
     pixelmap::Config pm = comp.pixelMap;
@@ -606,6 +620,17 @@ std::string serialize(const Composition& comp, const OutputSetup& output, const 
 
     if (!(comp.keys == control::defaultProjectKeys()))
         root["keys"] = Json(control::bindingsToJson(comp.keys));
+
+    if (!comp.sequences.vazio() || !comp.envelopes.empty()) {
+        Json sj = Json(seq::conjuntoParaJson(comp.sequences));
+        if (!comp.envelopes.empty()) {
+            Json lista = Json::array();
+            for (const seq::Envelope& e : comp.envelopes)
+                lista.push_back(Json(seq::envelopeParaJson(e)));
+            sj["envelopes"] = std::move(lista);
+        }
+        root["sequences"] = std::move(sj);
+    }
 
     if (!comp.dmx.empty())
         root["dmx"] = Json(dmx::configToJson(comp.dmx));
@@ -730,6 +755,8 @@ LoadResult parse(const std::string& textIn, const fs::path& projectDir, Composit
             o.screens.push_back(std::move(s));
         }
         o.nextScreenId = i + 1;
+        o.nextSliceUid = getInt(*oj, "nextSliceUid", 1, 1, 1 << 30);
+        ensureSliceUids(o);
     } else {
         o = OutputSetup::createDefault(c.width, c.height, {});
     }
@@ -746,6 +773,18 @@ LoadResult parse(const std::string& textIn, const fs::path& projectDir, Composit
         for (std::string& w : keyWarnings)
             res.warnings.push_back(std::move(w));
         control::stampLayerIds(c.keys, c);
+    }
+
+    if (const Json* sj = getObj(root, "sequences")) {
+        const nlohmann::json plain = nlohmann::json::parse(sj->dump(), nullptr, false);
+        c.sequences = seq::conjuntoDeJson(plain, &res.warnings);
+        if (plain.is_object() && plain.contains("envelopes") && plain["envelopes"].is_array()) {
+            for (const nlohmann::json& ej : plain["envelopes"]) {
+                if (static_cast<int>(c.envelopes.size()) >= seq::kMaxEnvelopes)
+                    break;
+                c.envelopes.push_back(seq::envelopeDeJson(ej));
+            }
+        }
     }
 
     if (const Json* dj = getObj(root, "dmx")) {

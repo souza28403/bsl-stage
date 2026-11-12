@@ -7,15 +7,17 @@
 
 namespace bsl {
 
-enum class BlendMode { Normal, Add, Subtract, Multiply, Screen, Overlay, Lighten, Darken, Difference };
+enum class BlendMode { Normal, Add, Subtract, Multiply, Screen, Overlay, Lighten, Darken, Difference, LumaMask, LumaMaskInv };
 
-inline constexpr int kBlendModeCount = 9;
+inline constexpr int kBlendModeCount = 11;
+inline constexpr int kDmxBlendModeCount = 9;
 
 inline const char* blendModeName(BlendMode mode)
 {
     static const char* const names[kBlendModeCount] = {
         "Normal", "Adicionar", "Subtrair", "Multiplicar", "Tela",
-        "Sobrepor", "Clarear", "Escurecer", "Diferença"};
+        "Sobrepor", "Clarear", "Escurecer", "Diferença", "Máscara por luminância",
+        "Máscara por luminância invertida"};
     return names[static_cast<int>(mode)];
 }
 

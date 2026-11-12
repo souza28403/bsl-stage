@@ -29,6 +29,33 @@ std::unique_ptr<IEffect> makeAura();
 std::vector<media::ParamDesc> describeZSlice();
 std::unique_ptr<IEffect> makeZSlice();
 
+std::vector<media::ParamDesc> describeSequencia();
+std::unique_ptr<IEffect> makeSequencia();
+
+std::vector<media::ParamDesc> describeDisparo();
+std::unique_ptr<IEffect> makeDisparo();
+
+std::vector<media::ParamDesc> describeAtrasoSlices();
+std::unique_ptr<IEffect> makeAtrasoSlices();
+
+std::vector<media::ParamDesc> describeSlicesAleatorios();
+std::unique_ptr<IEffect> makeSlicesAleatorios();
+
+std::vector<media::ParamDesc> describeContorno();
+std::unique_ptr<IEffect> makeContorno();
+
+std::vector<media::ParamDesc> describeLadrilhos();
+std::unique_ptr<IEffect> makeLadrilhos();
+
+std::vector<media::ParamDesc> describeAmostrador();
+std::unique_ptr<IEffect> makeAmostrador();
+
+std::vector<media::ParamDesc> describeVarredura();
+std::unique_ptr<IEffect> makeVarredura();
+
+std::vector<media::ParamDesc> describeBordaNeon();
+std::unique_ptr<IEffect> makeBordaNeon();
+
 struct BslPluginInfo
 {
     const char* id;

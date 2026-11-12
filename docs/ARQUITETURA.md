@@ -53,7 +53,7 @@ src/
   dmx/        DMX por Art-Net e sACN: receptor Winsock (thread própria), mistura HTP/LTP, patch das camadas, DMX learn, exportação de perfis
   ui/         tema, menu Exibir (painéis ocultos, janelas soltas, trava do layout), painéis (Navegador, Grade de Clips, Camadas, Preview, Inspetor,
               Editor de Saída, Configurações)
-  io/         salvar/abrir projeto (.bslstage), import XML Advanced Output
+  io/         salvar/abrir projeto (.bslstage), import XML de saída
   update/     atualizações pelo GitHub Releases e reportes pelo GitHub Issues (núcleo sem GL nem ImGui; ver "Atualizações e reportes")
   legal/      avisos legais: versão do aviso, leitura de LICENSE / THIRD-PARTY-NOTICES.md / licenses/ (ver "Licenças, privacidade e termos")
 ```
@@ -558,6 +558,16 @@ O enquadramento da camada no canvas, Geometria pura em `core/LayerTransform.h` (
 Testes: `bslstage_transformtest` (identidade pixel a pixel, posição/escala/rotação/âncora/recorte, Grade 2×2, clip × camada, slices
 vinculados, vista da Prévia com efeitos, escala reduzida, `layerAtPoint`, histórico), `projecttest` (ida e volta e migração) e `keystest`.
 UI: cenário `transform` do uiqa (`tools/uiqa/README.md`).
+
+### Sequências de slices (`src/seq`, `fx/bsl/SequenceFeed`, `fx/bsl/Seq*`)
+
+Guia do usuário: `docs/SEQUENCIAS.md`. Sem GL nem ImGui no núcleo:
+
+- **`src/seq`**: `SeqModel` (sequências, passos de 1 a 1024, visões; a visão "Tudo" é implícita), `SeqJson` (cada passo gravado como texto de faixas, `"1-5,9"`), `Envelope` e `EnvelopeStore` (curvas com tabela de 256 valores; biblioteca em `%APPDATA%\BSL Stage\envelopes.json`, gravação atômica; até 512), `SeqFactory` (gerador automático pela grade dos centros), `SeqEdit` e `SeqHistory` (edição e desfazer, teto 32 MB), `SeqTiming` (intensidades: velocidade, BPM ou passo fixo, direções, ecos, sustentação e liberação ou envelope, disparo, aleatórios, varredura, com relógio injetado) e `SeqView` (geometria do Canvas).
+- **Slices estáveis**: cada slice tem `uid` (`ensureSliceUids` a cada quadro); as sequências guardam uids, e os uids órfãos ficam no projeto até "Religar slices". Chave `"sequences"` na `Composition`, gravada só se não estiver vazia; envelopes usados vão em `sequences.envelopes`.
+- **`SequenceFeed`** (singleton, como o `PixelMapFeed`): `shared_ptr<const SequenceSnapshot>` com o conjunto, as tabelas de envelopes e uma versão; o `App` publica só quando algo muda. Os efeitos leem o snapshot por id (`sequencia`, `visao`, `envelope`); id inexistente passa a imagem direto e avisa em `status()`.
+- **Efeitos**: `SliceInstancer` é a base (um quad por slice com retângulo, intensidade, índice e `vec4` extra; VBO por instância com `glVertexAttribDivisor`, GL 3.3; escala `w / compW` como no `SliceRefiner3`; respeita `topOrigin`). Cada efeito tem o próprio `Seq*.cpp`. `EffectSource` roda um `IEffect` sobre transparente e é o adaptador dos geradores (`bslGeneratorInfo`).
+- **Testes**: `bslstage_seqtest` (sem GL: modelo, envelopes, gerador, edição, tempo) e `bslstage_seqfxtest` (janela oculta: intensidades 1, 0,5 e 0, três escalas, `topOrigin`, clip de tamanho diferente do canvas, 2000 slices sem erro de GL).
 
 ### DMX: Art-Net e sACN (`src/dmx`, `src/ui/panels/DmxWindow.*`)
 

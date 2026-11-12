@@ -3,12 +3,16 @@
 #include "fx/bsl/PixelMapFeed.h"
 #include "output/OutputSetup.h"
 #include "output/PatternRaster.h"
+#include "output/NovaScr.h"
 #include "output/PixelMap.h"
 
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <iterator>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -178,6 +182,123 @@ void testMapping()
     CHECK(wc.panels[0].x == 0 && wc.panels[0].y == 5 && wc.panels[0].w == 210 && wc.panels[0].h == 115);
     Screen none;
     CHECK(!pm::importFromScreen(wc, none));
+}
+
+std::vector<std::uint8_t> readBytes(const char* name)
+{
+    std::ifstream in(fs::path(BSL_FIXTURES_DIR) / "novalct" / name, std::ios::binary);
+    return std::vector<std::uint8_t>((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+const novascr::Cabinet* findCab(const novascr::Result& r, int port, int order)
+{
+    for (const novascr::Cabinet& c : r.cabinets)
+        if (c.port == port && c.order == order)
+            return &c;
+    return nullptr;
+}
+
+void testNovaScr()
+{
+    section("NovaLCT .scr: gabaritos");
+    {
+        const novascr::Result r = novascr::parse(readBytes("3x2 p3.9 50x100 128x256.scr"));
+        CHECK(r.ok && r.version == 1 && r.cabinets.size() == 12 && r.width == 768 && r.height == 512);
+        CHECK(r.cols == 6 && r.rows == 2);
+        for (int i = 0; i < 6 && r.ok; ++i) {
+            const novascr::Cabinet* a = findCab(r, 0, i);
+            const novascr::Cabinet* b = findCab(r, 0, 6 + i);
+            CHECK(a && a->x == i * 128 && a->y == 256 && a->w == 128 && a->h == 256);
+            CHECK(b && b->x == (5 - i) * 128 && b->y == 0 && b->w == 128 && b->h == 256);
+        }
+    }
+    {
+        const novascr::Result r = novascr::parse(readBytes("4x2 p3.9 50x100 128x256.scr"));
+        CHECK(r.ok && r.version == 1 && r.cabinets.size() == 16 && r.width == 1024 && r.height == 512);
+        for (int i = 0; i < 8 && r.ok; ++i) {
+            const novascr::Cabinet* a = findCab(r, 0, i);
+            const novascr::Cabinet* b = findCab(r, 0, 8 + i);
+            CHECK(a && a->x == i * 128 && a->y == 0 && a->w == 128 && a->h == 256);
+            CHECK(b && b->x == (7 - i) * 128 && b->y == 256 && b->w == 128 && b->h == 256);
+        }
+    }
+    {
+        const novascr::Result r = novascr::parse(readBytes("DISPLAY AUDITORIO.scr"));
+        CHECK(r.ok && r.version == 2 && r.cabinets.size() == 12 && r.width == 1560 && r.height == 624);
+        CHECK(novascr::portCount(r) == 2);
+        const int xs[6] = {1248, 1092, 780, 468, 156, 0};
+        for (int i = 0; i < 6 && r.ok; ++i) {
+            const novascr::Cabinet* a = findCab(r, 0, i);
+            const novascr::Cabinet* b = findCab(r, 1, i);
+            CHECK(a && a->x == xs[i] && a->y == 312 && a->w == 312 && a->h == 312);
+            CHECK(b && b->x == xs[i] && b->y == 0 && b->w == 312 && b->h == 312);
+        }
+    }
+
+    section("NovaLCT .scr: arquivos ruins");
+    {
+        const std::vector<std::uint8_t> good = readBytes("DISPLAY AUDITORIO.scr");
+        CHECK(!good.empty());
+        for (const std::size_t n : {std::size_t(0), std::size_t(3), std::size_t(100), std::size_t(0x13A), std::size_t(0x145), std::size_t(0x150), std::size_t(0x145 + 12 * 16 - 1)}) {
+            const std::vector<std::uint8_t> cut(good.begin(), good.begin() + static_cast<std::ptrdiff_t>(std::min(n, good.size())));
+            const novascr::Result r = novascr::parse(cut);
+            CHECK(!r.ok && !r.error.empty() && r.cabinets.empty());
+        }
+        const std::vector<std::uint8_t> good1 = readBytes("3x2 p3.9 50x100 128x256.scr");
+        for (std::size_t n = 0; n < std::size_t(0x14A + 12 * 17); n += 7) {
+            const std::vector<std::uint8_t> cut(good1.begin(), good1.begin() + static_cast<std::ptrdiff_t>(n));
+            CHECK(!novascr::parse(cut).ok);
+        }
+        std::vector<std::uint8_t> bad = good;
+        bad[0] = 'X';
+        CHECK(!novascr::parse(bad).ok && novascr::parse(bad).error.find("DSCI") != std::string::npos);
+        bad = good;
+        bad[0x13F] = 3;
+        const novascr::Result v3 = novascr::parse(bad);
+        CHECK(!v3.ok && v3.error.find("3 do arquivo") != std::string::npos);
+        bad = good;
+        bad[0x13A] = 9;
+        CHECK(!novascr::parse(bad).ok);
+        bad = good1;
+        bad[0x144] = 0xFF;
+        bad[0x145] = 0xFF;
+        bad[0x146] = 0xFF;
+        bad[0x147] = 0xFF;
+        CHECK(!novascr::parse(bad).ok);
+        bad = good;
+        bad[0x140] = 0xFF;
+        bad[0x141] = 0xFF;
+        CHECK(!novascr::parse(bad).ok);
+        CHECK(!novascr::parseFile("C:/nao/existe.scr").ok);
+    }
+
+    section("NovaLCT .scr: conversao para o Pixel Map");
+    {
+        const novascr::Result r = novascr::parse(readBytes("DISPLAY AUDITORIO.scr"));
+        pm::Config cfg = sampleConfig();
+        std::string err;
+        CHECK(novascr::applyToPixelMap(r, cfg, novascr::ImportMode::Replace, &err));
+        CHECK(cfg.panels.size() == 12 && cfg.physW == 1560 && cfg.physH == 624);
+        for (size_t i = 0; i < r.cabinets.size() && i < cfg.panels.size(); ++i) {
+            const novascr::Cabinet& c = r.cabinets[i];
+            const pm::Panel& p = cfg.panels[i];
+            CHECK(p.x == c.x && p.y == c.y && p.w == c.w && p.h == c.h && p.port == c.port && p.cableOrder == c.order && !p.byCabinets);
+        }
+        cfg.inW = 1560;
+        cfg.inH = 624;
+        const pm::Validation v = pm::validate(cfg);
+        CHECK(v.outsideCount == 0 && !v.scaleWarn);
+
+        pm::Config add = sampleConfig();
+        CHECK(novascr::applyToPixelMap(r, add, novascr::ImportMode::AddBeside, &err));
+        CHECK(add.panels.size() == 15 && add.panels[3].x == 2048 + r.cabinets[0].x && add.panels[3].y == r.cabinets[0].y);
+        CHECK(add.physW == 2048 + 1560 && add.physH == 640);
+
+        novascr::Result tooMany = r;
+        tooMany.cabinets.assign(300, r.cabinets[0]);
+        pm::Config big;
+        CHECK(!novascr::applyToPixelMap(tooMany, big, novascr::ImportMode::Replace, &err) && !err.empty());
+    }
 }
 
 void testCsv()
@@ -460,6 +581,7 @@ int main(int argc, char** argv)
     testScale();
     testMapping();
     testCsv();
+    testNovaScr();
     testValidation();
     testPattern(tmp, docs);
     testOverview(tmp);

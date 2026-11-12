@@ -27,6 +27,8 @@ void drawKeyFlash(ImDrawList* dl, ImVec2 a, ImVec2 b, float amount, float roundi
 
 void keyAssignMenu(const control::Target& target, bool leadingSeparator = true);
 
+void keyParamMenu(const control::ActionArgs& args, bool offerHold);
+
 std::string actionShortcut(const std::string& actionId, const control::ActionArgs& args = {});
 
 struct KeysUiInfo

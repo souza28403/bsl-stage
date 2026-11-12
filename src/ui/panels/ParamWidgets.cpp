@@ -1,10 +1,13 @@
 #include "ui/panels/ParamWidgets.h"
 
+#include "fx/bsl/SequenceFeed.h"
 #include "io/FileDialogs.h"
 #include "media/FontCatalog.h"
+#include "ui/KeysUi.h"
 #include "ui/Theme.h"
 #include "ui/Widgets.h"
 #include "ui/panels/DmxWindow.h"
+#include "ui/panels/EnvelopeEditor.h"
 #include "ui/panels/SliceEditor.h"
 
 #include <imgui.h>
@@ -25,6 +28,63 @@ using media::Json;
 using media::ParamDesc;
 using media::ParamSet;
 using media::ParamType;
+
+struct OpcaoRef
+{
+    int id = 0;
+    std::string nome;
+};
+
+bool desenharReferencia(const std::string& tipo, const Json& atual, Json& saida)
+{
+    const auto snap = fx::bsllight::SequenceFeed::instance().snapshot();
+    std::vector<OpcaoRef> opcoes;
+    if (tipo == "seq-ref") {
+        opcoes.push_back({0, "(nenhuma)"});
+        for (const seq::Sequencia& s : snap->conjunto.sequencias)
+            opcoes.push_back({s.id, s.nome});
+    } else if (tipo == "view-ref") {
+        opcoes.push_back({seq::kVisaoTudo, "Tudo"});
+        for (const seq::Visao& v : snap->conjunto.visoes)
+            opcoes.push_back({v.id, v.nome});
+    } else {
+        opcoes.push_back({0, "(nenhum)"});
+        for (const seq::Envelope& e : snap->envelopes)
+            opcoes.push_back({e.id, e.nome});
+    }
+    const int id = atual.is_number_integer() ? atual.get<int>() : 0;
+    std::string previa = "(inexistente #" + std::to_string(id) + ")";
+    for (const OpcaoRef& o : opcoes)
+        if (o.id == id)
+            previa = o.nome.empty() ? "(sem nome)" : o.nome;
+    bool mudou = false;
+    const bool comEditar = tipo == "env-ref";
+    if (comEditar) {
+        const float larguraBotao = ImGui::CalcTextSize("Editar…").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+        ImGui::SetNextItemWidth(
+            std::max(dp(40.0f), ImGui::GetContentRegionAvail().x - larguraBotao - ImGui::GetStyle().ItemSpacing.x));
+    }
+    if (beginCombo("##v", previa.c_str())) {
+        for (const OpcaoRef& o : opcoes) {
+            ImGui::PushID(o.id);
+            const std::string rotulo = o.nome.empty() ? "(sem nome)" : o.nome;
+            if (ImGui::Selectable(rotulo.c_str(), o.id == id)) {
+                saida = Json(o.id);
+                mudou = true;
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    if (comEditar) {
+        ImGui::SameLine();
+        if (ImGui::Button("Editar…##env_editar"))
+            openEnvelopeEditor(id);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Abre o editor de envelopes no modo Sequências");
+    }
+    return mudou;
+}
 
 struct StringBuffer
 {
@@ -179,6 +239,9 @@ std::vector<ParamEdit> drawParams(const std::vector<ParamDesc>& descs, const med
                 edits.push_back({d.id, Json(v)});
             if (dmxParamOwnerValid() && ImGui::BeginPopupContextItem("##dmx_ctx")) {
                 dmxParamMenu(dmxEffectRef(d.id));
+                const control::ActionArgs fxArgs = dmxEffectActionArgs(d.id);
+                keyParamMenu(fxArgs, true);
+                dmxEventMenu(fxArgs, true);
                 ImGui::EndPopup();
             }
             break;
@@ -296,6 +359,18 @@ std::vector<ParamEdit> drawParams(const std::vector<ParamDesc>& descs, const med
                     const Json cur = set.raw(d.id);
                     edits.push_back({d.id, Json((cur.is_number() ? cur.get<int>() : 0) + 1)});
                 }
+                if (dmxParamOwnerValid() && ImGui::BeginPopupContextItem("##evento_ctx")) {
+                    const control::ActionArgs fxArgs = dmxEffectActionArgs(d.id);
+                    keyParamMenu(fxArgs, false);
+                    dmxEventMenu(fxArgs, false);
+                    ImGui::EndPopup();
+                }
+                break;
+            }
+            if (d.custom == "seq-ref" || d.custom == "view-ref" || d.custom == "env-ref") {
+                Json escolhido;
+                if (desenharReferencia(d.custom, set.raw(d.id), escolhido))
+                    edits.push_back({d.id, std::move(escolhido)});
                 break;
             }
             Json out;

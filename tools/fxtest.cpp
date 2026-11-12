@@ -675,6 +675,51 @@ void testCompositor()
         }
     }
 
+    section("compositor: mascara por luminancia");
+    {
+        auto build = [](BlendMode mode, float opacity) {
+            auto t = std::make_unique<Scene>(32, 32, 32, 32, [](int, int) { return Px{255, 0, 0, 255}; });
+            t->comp.addLayer();
+            Clip& mask = t->comp.clip(1, 0);
+            mask.type = Clip::Type::File;
+            mask.name = "mascara";
+            mask.fit = FitMode::Stretch;
+            mask.source = std::make_unique<TestSource>(32, 32, [](int x, int) {
+                return x < 16 ? Px{255, 255, 255, 255} : Px{0, 0, 0, 255};
+            });
+            t->comp.layers[1].activeDeck = 0;
+            t->comp.layers[1].activeColumn = 0;
+            t->comp.layers[1].blendMode = mode;
+            t->comp.layers[1].opacity = opacity;
+            return t;
+        };
+        {
+            auto t = build(BlendMode::LumaMask, 1.0f);
+            const Img o = t->frame();
+            CHECK(isRed(t->visual(o, 4, 16, 32)) && isBlack(t->visual(o, 28, 16, 32)));
+        }
+        {
+            auto t = build(BlendMode::LumaMaskInv, 1.0f);
+            const Img o = t->frame();
+            CHECK(isBlack(t->visual(o, 4, 16, 32)) && isRed(t->visual(o, 28, 16, 32)));
+        }
+        {
+            auto t = build(BlendMode::LumaMask, 0.5f);
+            const Img o = t->frame();
+            CHECK(isRed(t->visual(o, 4, 16, 32)) && closeTo(t->visual(o, 28, 16, 32), {128, 0, 0, 255}, 4));
+        }
+        {
+            auto t = build(BlendMode::LumaMask, 0.0f);
+            const Img o = t->frame();
+            CHECK(isRed(t->visual(o, 4, 16, 32)) && isRed(t->visual(o, 28, 16, 32)));
+        }
+        {
+            auto t = build(BlendMode::Normal, 1.0f);
+            const Img o = t->frame();
+            CHECK(closeTo(t->visual(o, 4, 16, 32), {255, 255, 255, 255}, 3) && isBlack(t->visual(o, 28, 16, 32)));
+        }
+    }
+
     section("compositor: encaixe com efeitos na camada");
     {
         Scene t(32, 32, 32, 16, [](int, int) { return Px{255, 0, 0, 255}; });

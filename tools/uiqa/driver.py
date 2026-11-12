@@ -22,6 +22,32 @@ try:
 except Exception:
     pass
 
+user32.GetForegroundWindow.restype = wintypes.HWND
+user32.GetForegroundWindow.argtypes = []
+user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+user32.BringWindowToTop.argtypes = [wintypes.HWND]
+user32.IsIconic.argtypes = [wintypes.HWND]
+user32.IsWindow.argtypes = [wintypes.HWND]
+user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+user32.SwitchToThisWindow.argtypes = [wintypes.HWND, wintypes.BOOL]
+user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
+user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+user32.WindowFromPoint.argtypes = [wintypes.POINT]
+user32.WindowFromPoint.restype = wintypes.HWND
+user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+user32.GetAncestor.restype = wintypes.HWND
+user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+
+GA_ROOT = 2
+FOCUS_DEADLINE = 12.0
+START_DEADLINE = 120.0
+FRAME_DEADLINE = 30.0
+FIND_DEADLINE = 6.0
+STATE_DEADLINE = 8.0
+QUIT_DEADLINE = 20.0
+
 INPUT_MOUSE, INPUT_KEYBOARD = 0, 1
 MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP = 0x0002, 0x0004
 MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP = 0x0008, 0x0010
@@ -90,6 +116,102 @@ class QaFailure(Exception):
     pass
 
 
+def pid_of(hwnd):
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return pid.value
+
+
+def window_text(hwnd, size=128):
+    buf = ctypes.create_unicode_buffer(size)
+    user32.GetWindowTextW(hwnd, buf, size)
+    return buf.value
+
+
+def window_class(hwnd):
+    buf = ctypes.create_unicode_buffer(64)
+    user32.GetClassNameW(hwnd, buf, 64)
+    return buf.value
+
+
+def input_desktop_available():
+    user32.OpenInputDesktop.restype = ctypes.c_void_p
+    user32.OpenInputDesktop.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    user32.CloseDesktop.argtypes = [ctypes.c_void_p]
+    handle = user32.OpenInputDesktop(0, False, 0x0100)
+    if not handle:
+        return False
+    user32.CloseDesktop(handle)
+    return True
+
+
+def describe_foreground():
+    fg = user32.GetForegroundWindow()
+    if not fg:
+        return "nenhuma"
+    return "%r (pid %d)" % (window_text(fg), pid_of(fg))
+
+
+def grab_foreground(hwnd, attempt=0):
+    if not user32.IsWindow(hwnd):
+        return
+    if user32.IsIconic(hwnd):
+        user32.ShowWindow(hwnd, SW_RESTORE)
+    cur = kernel32.GetCurrentThreadId()
+    fg = user32.GetForegroundWindow()
+    threads = []
+    for th in ((user32.GetWindowThreadProcessId(fg, None) if fg else 0), user32.GetWindowThreadProcessId(hwnd, None)):
+        if th and th != cur and th not in threads and user32.AttachThreadInput(cur, th, True):
+            threads.append(th)
+    user32.BringWindowToTop(hwnd)
+    user32.SetForegroundWindow(hwnd)
+    for th in threads:
+        user32.AttachThreadInput(cur, th, False)
+    if attempt % 2 == 1 and user32.GetForegroundWindow() != hwnd:
+        user32.SwitchToThisWindow(hwnd, True)
+
+
+def take_foreground(hwnd, timeout=FOCUS_DEADLINE, pump=None):
+    t0 = time.time()
+    attempt = 0
+    while True:
+        if user32.GetForegroundWindow() == hwnd:
+            time.sleep(0.05)
+            if user32.GetForegroundWindow() == hwnd:
+                return True
+        if time.time() - t0 > timeout or not user32.IsWindow(hwnd):
+            return False
+        grab_foreground(hwnd, attempt)
+        attempt += 1
+        if pump:
+            pump()
+        time.sleep(min(0.4, 0.05 * attempt))
+
+
+def kill_stale(qa_root):
+    root = qa_root.replace("'", "''")
+    script = ("$n = 0; Get-CimInstance Win32_Process -Filter \"Name='BSLStage.exe'\" | "
+              "Where-Object { $_.CommandLine -like '*--qa*' -and $_.CommandLine -like '*%s*' } | "
+              "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; $n++ }; $n" % root)
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script], capture_output=True,
+                             timeout=60, text=True).stdout.strip()
+        return int(out.splitlines()[-1]) if out else 0
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        return 0
+
+
+RUNNING = []
+
+
+def stop_all():
+    for app in list(RUNNING):
+        try:
+            app.quit()
+        except Exception:
+            pass
+
+
 class ForeignWindow:
     WS_OVERLAPPEDWINDOW, WS_VISIBLE, ES_MULTILINE, ES_AUTOVSCROLL = 0x00CF0000, 0x10000000, 0x0004, 0x0040
     WM_NULL, SMTO_ABORTIFHUNG, SMTO_BLOCK = 0x0000, 0x0002, 0x0001
@@ -117,22 +239,8 @@ class ForeignWindow:
             user32.TranslateMessage(ctypes.byref(msg))
             user32.DispatchMessageW(ctypes.byref(msg))
 
-    def activate(self, timeout=3.0):
-        t0 = time.time()
-        while time.time() - t0 < timeout:
-            fg = user32.GetForegroundWindow()
-            cur = kernel32.GetCurrentThreadId()
-            fg_thread = user32.GetWindowThreadProcessId(fg, None) if fg else 0
-            if fg_thread and fg_thread != cur:
-                user32.AttachThreadInput(cur, fg_thread, True)
-            user32.SetForegroundWindow(self.hwnd)
-            if fg_thread and fg_thread != cur:
-                user32.AttachThreadInput(cur, fg_thread, False)
-            self.pump()
-            time.sleep(0.1)
-            if user32.GetForegroundWindow() == self.hwnd:
-                return True
-        return False
+    def activate(self, timeout=FOCUS_DEADLINE):
+        return take_foreground(self.hwnd, timeout, self.pump)
 
     def is_foreground(self):
         return user32.GetForegroundWindow() == self.hwnd
@@ -211,6 +319,8 @@ class App:
     def __init__(self, exe, qa_dir, args=(), size=(1600, 900), pos=(40, 40), keep=False):
         self.exe = exe
         self.dir = qa_dir
+        self.focus_losses = 0
+        self.last_move = "-"
         if not keep:
             shutil.rmtree(qa_dir, ignore_errors=True)
         else:
@@ -219,14 +329,24 @@ class App:
                     os.remove(os.path.join(qa_dir, f))
                 except OSError:
                     pass
+        for _ in range(20):
+            if not os.path.exists(os.path.join(qa_dir, "snapshot.json")):
+                break
+            time.sleep(0.25)
+            try:
+                os.remove(os.path.join(qa_dir, "snapshot.json"))
+            except OSError:
+                pass
         os.makedirs(qa_dir, exist_ok=True)
         cmd = [exe, "--qa", qa_dir, "--window-size", str(size[0]), str(size[1])] + list(args)
         self.proc = subprocess.Popen(cmd, cwd=os.path.dirname(exe))
+        RUNNING.append(self)
         self.hwnd = 0
         self.snapshot = None
+        self.items = []
         self._cmd_serial = 0
         t0 = time.time()
-        while time.time() - t0 < 30:
+        while time.time() - t0 < START_DEADLINE:
             self.hwnd = self._find_window()
             if self.hwnd and os.path.exists(os.path.join(qa_dir, "snapshot.json")):
                 break
@@ -235,6 +355,7 @@ class App:
             time.sleep(0.1)
         if not self.hwnd:
             raise QaFailure("janela do app nao apareceu")
+        self.wait_frames(30)
         self.move_window(pos[0], pos[1])
         self.wait_frames(10)
 
@@ -275,50 +396,130 @@ class App:
         user32.SetWindowPos(self.hwnd, 0, x, y, 0, 0, 0x0001 | 0x0004)
         self.focus()
 
+    def wait_client_size(self, w, h, timeout=5.0):
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            if self.client_size() == (w, h):
+                return True
+            time.sleep(0.02)
+        return False
+
     def resize_client(self, w, h):
         """Redimensiona a janela (restaurada) para que a area cliente tenha w x h px."""
         user32.ShowWindow(self.hwnd, SW_RESTORE)
-        time.sleep(0.3)
+        t0 = time.time()
+        while time.time() - t0 < 3.0 and (user32.IsZoomed(self.hwnd) or user32.IsIconic(self.hwnd)):
+            time.sleep(0.02)
+        self.wait_frames(3)
         wr, cr = wintypes.RECT(), wintypes.RECT()
         user32.GetWindowRect(self.hwnd, ctypes.byref(wr))
         user32.GetClientRect(self.hwnd, ctypes.byref(cr))
         dw = (wr.right - wr.left) - (cr.right - cr.left)
         dh = (wr.bottom - wr.top) - (cr.bottom - cr.top)
         user32.SetWindowPos(self.hwnd, 0, wr.left, wr.top, w + dw, h + dh, 0x0004)
+        self.wait_client_size(w, h)
         self.wait_frames(8)
 
     def maximize(self):
         user32.ShowWindow(self.hwnd, SW_MAXIMIZE)
+        t0 = time.time()
+        while time.time() - t0 < 3.0 and not user32.IsZoomed(self.hwnd):
+            time.sleep(0.02)
         self.wait_frames(10)
 
     def restore(self):
         user32.ShowWindow(self.hwnd, SW_RESTORE)
+        t0 = time.time()
+        while time.time() - t0 < 3.0 and user32.IsZoomed(self.hwnd):
+            time.sleep(0.02)
         self.wait_frames(10)
 
     def drag_resize_border(self, dx, dy, steps=12):
         """Arrasta o canto inferior direito da janela com o mouse (resize continuo, como o usuario)."""
+        self.ensure_focus()
         wr = wintypes.RECT()
         user32.GetWindowRect(self.hwnd, ctypes.byref(wr))
         x, y = wr.right - 3, wr.bottom - 3
         self.mouse_move(x, y)
         time.sleep(0.15)
+        self.ensure_cursor_target()
         _mouse(MOUSEEVENTF_LEFTDOWN)
-        for i in range(1, steps + 1):
-            self.mouse_move(x + dx * i / steps, y + dy * i / steps)
-            time.sleep(0.03)
-        _mouse(MOUSEEVENTF_LEFTUP)
+        try:
+            for i in range(1, steps + 1):
+                self.mouse_move(x + dx * i / steps, y + dy * i / steps)
+                time.sleep(0.03)
+        finally:
+            _mouse(MOUSEEVENTF_LEFTUP)
         self.wait_frames(8)
 
-    def focus(self):
+    def focus(self, timeout=FOCUS_DEADLINE):
+        ok = take_foreground(self.hwnd, timeout)
+        if ok:
+            self.wait_app_focused()
+        return ok
+
+    def wait_app_focused(self, timeout=2.0):
+        try:
+            d = self.read()
+            target = (d["frame"] if d else 0) + 4
+            t0 = time.time()
+            while time.time() - t0 < timeout:
+                d = self.read()
+                if d and d["frame"] >= target and d["state"].get("focused"):
+                    return True
+                time.sleep(0.01)
+        except (KeyError, TypeError):
+            pass
+        return False
+
+    def is_dialog(self, hwnd):
+        return pid_of(hwnd) == self.proc.pid and hwnd != self.hwnd and window_class(hwnd) == "#32770"
+
+    def ensure_focus(self):
         fg = user32.GetForegroundWindow()
-        cur = kernel32.GetCurrentThreadId()
-        fg_thread = user32.GetWindowThreadProcessId(fg, None) if fg else 0
-        if fg_thread and fg_thread != cur:
-            user32.AttachThreadInput(cur, fg_thread, True)
-        user32.SetForegroundWindow(self.hwnd)
-        if fg_thread and fg_thread != cur:
-            user32.AttachThreadInput(cur, fg_thread, False)
-        time.sleep(0.1)
+        if fg == self.hwnd:
+            return
+        if fg and self.is_dialog(fg):
+            return
+        if not self.alive():
+            raise QaFailure("o app encerrou (codigo %s)" % self.proc.returncode)
+        if not input_desktop_available():
+            raise QaFailure("a sessao do Windows esta bloqueada ou sem area de trabalho de entrada; nenhum input enviado")
+        self.focus_losses += 1
+        if self.focus():
+            return
+        fg = user32.GetForegroundWindow()
+        if fg and pid_of(fg) == self.proc.pid:
+            return
+        raise QaFailure("o app nao recebeu o foco; em primeiro plano: %s" % describe_foreground())
+
+    def cursor_target_ok(self):
+        pt = wintypes.POINT()
+        user32.GetCursorPos(ctypes.byref(pt))
+        h = user32.WindowFromPoint(pt)
+        if not h:
+            return False
+        root = user32.GetAncestor(h, GA_ROOT) or h
+        return pid_of(root) == self.proc.pid
+
+    def ensure_cursor_target(self):
+        for attempt in range(4):
+            if self.cursor_target_ok():
+                return
+            if not input_desktop_available():
+                raise QaFailure("a sessao do Windows esta bloqueada ou sem area de trabalho de entrada; nenhum input enviado")
+            self.focus_losses += 1
+            self.focus(3.0)
+            time.sleep(0.05 * (attempt + 1))
+        pt = wintypes.POINT()
+        user32.GetCursorPos(ctypes.byref(pt))
+        wr = wintypes.RECT()
+        user32.GetWindowRect(self.hwnd, ctypes.byref(wr))
+        under = user32.WindowFromPoint(pt)
+        raise QaFailure("o cursor em (%d, %d) nao esta sobre uma janela do app (pedido %s; janela do app %d,%d,%d,%d minimizada=%s; "
+                        "sob o cursor: %r pid %s); nenhum clique enviado" % (
+                            pt.x, pt.y, self.last_move, wr.left, wr.top, wr.right, wr.bottom, bool(user32.IsIconic(self.hwnd)),
+                            window_text(under) if under else "", pid_of(under) if under else "-"))
 
     def read(self):
         path = os.path.join(self.dir, "snapshot.json")
@@ -333,7 +534,8 @@ class App:
                 time.sleep(0.02)
         return self.snapshot
 
-    def wait_frames(self, n=6, timeout=8.0):
+    def wait_frames(self, n=6, timeout=FRAME_DEADLINE):
+        timeout = max(timeout, FRAME_DEADLINE)
         d = self.read()
         target = (d["frame"] if d else 0) + n
         t0 = time.time()
@@ -345,6 +547,15 @@ class App:
                 raise QaFailure("o app encerrou (codigo %s)" % self.proc.returncode)
             time.sleep(0.01)
         raise QaFailure("o app parou de desenhar frames (travado?)")
+
+    def wait_new_snapshot(self, frame, timeout=3.0):
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            d = self.read()
+            if d and d["frame"] > frame:
+                return d
+            time.sleep(0.005)
+        return self.snapshot
 
     @property
     def state(self):
@@ -366,7 +577,8 @@ class App:
             out.append(it)
         return out
 
-    def find(self, label, window=None, nth=0, timeout=3.0, visible=True):
+    def find(self, label, window=None, nth=0, timeout=FIND_DEADLINE, visible=True):
+        timeout = max(timeout, FIND_DEADLINE) if timeout >= 3.0 else timeout
         t0 = time.time()
         while True:
             self.read()
@@ -388,11 +600,16 @@ class App:
                 return it.rect
         return None
 
-    def wait_state(self, pred, what, timeout=5.0):
+    def wait_state(self, pred, what, timeout=STATE_DEADLINE):
+        timeout = max(timeout, STATE_DEADLINE)
         t0 = time.time()
         while time.time() - t0 < timeout:
             d = self.read()
-            if d and pred(d["state"]):
+            try:
+                done = bool(d and pred(d["state"]))
+            except (KeyError, IndexError, TypeError):
+                done = False
+            if done:
                 return d["state"]
             if not self.alive():
                 raise QaFailure("o app encerrou (codigo %s)" % self.proc.returncode)
@@ -409,17 +626,19 @@ class App:
         return int(round(ox + x * kx)), int(round(oy + y * ky))
 
     def mouse_move(self, x, y, client=False):
+        want = (x, y)
         if client:
             x, y = self.to_screen(x, y)
+        self.last_move = "cliente %s -> tela (%d, %d)" % (("%.1f,%.1f" % want) if client else "-", int(round(x)), int(round(y)))
         user32.SetCursorPos(int(round(x)), int(round(y)))
 
     def hover(self, x, y):
         self.mouse_move(x, y, client=True)
         time.sleep(0.06)
 
-    def click_at(self, x, y, button="left", double=False):
+    def press(self, button="left", double=False):
         self.ensure_focus()
-        self.hover(x, y)
+        self.ensure_cursor_target()
         down, up = (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP) if button == "left" else (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP)
         for _ in range(2 if double else 1):
             _mouse(down)
@@ -428,11 +647,33 @@ class App:
             time.sleep(0.05)
         time.sleep(0.08)
 
+    def click_at(self, x, y, button="left", double=False):
+        self.ensure_focus()
+        self.hover(x, y)
+        self.press(button, double)
+
     def click(self, label, window=None, nth=0, button="left", double=False, dx=0.5, dy=0.5):
         it = self.find(label, window, nth)
-        x = it.rect.x0 + it.rect.w * dx
-        y = it.rect.y0 + it.rect.h * dy
-        self.click_at(x, y, button, double)
+        deadline = time.time() + 5.0
+        while True:
+            x = it.rect.x0 + it.rect.w * dx
+            y = it.rect.y0 + it.rect.h * dy
+            frame = (self.snapshot or {}).get("frame", 0)
+            self.ensure_focus()
+            self.hover(x, y)
+            self.wait_new_snapshot(frame)
+            try:
+                cur = self.find(label, window, nth, timeout=1.0)
+            except QaFailure:
+                cur = self.find(label, window, nth)
+            moved = abs(cur.rect.x0 - it.rect.x0) + abs(cur.rect.y0 - it.rect.y0) + abs(cur.rect.x1 - it.rect.x1) + abs(cur.rect.y1 - it.rect.y1)
+            it = cur
+            if moved <= 1.5 and self.cursor_target_ok():
+                break
+            if time.time() > deadline:
+                self.hover(it.rect.x0 + it.rect.w * dx, it.rect.y0 + it.rect.h * dy)
+                break
+        self.press(button, double)
         self.wait_frames(3)
         return it
 
@@ -441,26 +682,35 @@ class App:
         'mods' = teclas seguradas durante o arrasto ("shift", "ctrl", "alt", "space"); 'button' = left | right | middle.
         'probe' = funcao chamada com o botao AINDA apertado, depois do ultimo passo (le o estado ou tira screenshot no
         meio do arrasto, por exemplo as linhas-guia do ima); o resultado dela e devolvido."""
+        self.ensure_focus()
         self.hover(x0, y0)
+        self.ensure_cursor_target()
         down, up = {"left": (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP), "right": (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
                     "middle": (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP)}[button]
-        for m in mods:
-            _key(VK[m])
-        time.sleep(0.05 if mods else 0)
-        _mouse(down)
-        time.sleep(0.08)
-        for i in range(1, steps + 1):
-            self.mouse_move(x0 + (x1 - x0) * i / steps, y0 + (y1 - y0) * i / steps, client=True)
-            time.sleep(0.03)
-        time.sleep(0.08 + hold)
-        result = None
-        if probe:
-            self.wait_frames(4)
-            result = probe()
-        _mouse(up)
-        time.sleep(0.08)
-        for m in reversed(mods):
-            _key(VK[m], up=True)
+        held = []
+        pressed = False
+        try:
+            for m in mods:
+                _key(VK[m])
+                held.append(m)
+            time.sleep(0.05 if mods else 0)
+            _mouse(down)
+            pressed = True
+            time.sleep(0.08)
+            for i in range(1, steps + 1):
+                self.mouse_move(x0 + (x1 - x0) * i / steps, y0 + (y1 - y0) * i / steps, client=True)
+                time.sleep(0.03)
+            time.sleep(0.08 + hold)
+            result = None
+            if probe:
+                self.wait_frames(4)
+                result = probe()
+        finally:
+            if pressed:
+                _mouse(up)
+            time.sleep(0.08)
+            for m in reversed(held):
+                _key(VK[m], up=True)
         self.wait_frames(3)
         return result
 
@@ -469,26 +719,31 @@ class App:
 
     def wheel(self, x, y, clicks, shift=False):
         """Roda do mouse sobre (x, y) do cliente (clicks > 0 = para cima). Shift = rolagem horizontal."""
+        self.ensure_focus()
         self.hover(x, y)
+        self.ensure_cursor_target()
         if shift:
             _key(VK["shift"])
-        for _ in range(abs(clicks)):
-            _mouse(MOUSEEVENTF_WHEEL, (120 if clicks > 0 else -120) & 0xFFFFFFFF)
-            time.sleep(0.05)
-        if shift:
-            _key(VK["shift"], up=True)
+        try:
+            for _ in range(abs(clicks)):
+                _mouse(MOUSEEVENTF_WHEEL, (120 if clicks > 0 else -120) & 0xFFFFFFFF)
+                time.sleep(0.05)
+        finally:
+            if shift:
+                _key(VK["shift"], up=True)
         self.wait_frames(3)
 
     def reset_input(self):
         """Solta botoes do mouse e fecha popups/modais abertos (limpeza depois de uma falha)."""
-        _mouse(MOUSEEVENTF_LEFTUP)
-        _mouse(MOUSEEVENTF_RIGHTUP)
+        if self.cursor_target_ok():
+            _mouse(MOUSEEVENTF_LEFTUP)
+            _mouse(MOUSEEVENTF_RIGHTUP)
+        fg = user32.GetForegroundWindow()
+        if fg and pid_of(fg) == self.proc.pid:
+            for mod in ("shift", "ctrl", "alt"):
+                _key(VK[mod], up=True)
         for _ in range(2):
             self.key("esc")
-
-    def ensure_focus(self):
-        if user32.GetForegroundWindow() != self.hwnd:
-            self.focus()
 
     def key(self, name, *mods, wait=True):
         self.ensure_focus()
@@ -520,6 +775,7 @@ class App:
     def type_text_nowait(self, text):
         self.ensure_focus()
         for ch in text:
+            self.ensure_focus()
             _key(0, unicode_char=ch)
             _key(0, up=True, unicode_char=ch)
             time.sleep(0.02)
@@ -544,14 +800,29 @@ class App:
             os.remove(path)
         self.command("shot " + path)
         t0 = time.time()
-        while not os.path.exists(path) and time.time() - t0 < 5:
+        while not os.path.exists(path) and time.time() - t0 < 15:
             time.sleep(0.05)
         self.wait_frames(2)
         return path
 
     def drop_files(self, files, at_item):
         """Simula soltar arquivos do Explorer sobre um item: cursor real sobre ele + WM_DROPFILES na janela."""
-        self.hover(at_item.rect.cx, at_item.rect.cy)
+        it = at_item
+        deadline = time.time() + 5.0
+        while True:
+            frame = (self.snapshot or {}).get("frame", 0)
+            self.hover(it.rect.cx, it.rect.cy)
+            self.wait_new_snapshot(frame)
+            try:
+                cur = self.find(it.label, it.window, timeout=1.0)
+            except QaFailure:
+                cur = it
+            moved = abs(cur.rect.x0 - it.rect.x0) + abs(cur.rect.y0 - it.rect.y0) + abs(cur.rect.x1 - it.rect.x1) + abs(cur.rect.y1 - it.rect.y1)
+            it = cur
+            if moved <= 1.5 or time.time() > deadline:
+                break
+        self.hover(it.rect.cx, it.rect.cy)
+        self.wait_frames(4)
         self.command("drop " + "|".join(os.path.abspath(f) for f in files))
 
     def find_dialog(self, timeout=6.0):
@@ -586,12 +857,17 @@ class App:
                 self.command("quit")
             except QaFailure:
                 pass
-            for _ in range(60):
-                if not self.alive():
-                    break
+            t0 = time.time()
+            while self.alive() and time.time() - t0 < QUIT_DEADLINE:
                 time.sleep(0.1)
         if self.alive():
             self.proc.kill()
+            try:
+                self.proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass
+        if self in RUNNING:
+            RUNNING.remove(self)
         return self.proc.returncode
 
     def summary(self):

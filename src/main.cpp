@@ -33,6 +33,7 @@ bsl::AppOptions parseArgs()
             const wchar_t* mode = argv[++i];
             options.startInMapping = std::wcscmp(mode, L"mapping") == 0;
             options.startInPixelMap = std::wcscmp(mode, L"pixelmap") == 0;
+            options.startInSequences = std::wcscmp(mode, L"sequences") == 0;
         } else if (argv[i][0] != L'-' && options.projectPath.empty()) {
             const std::filesystem::path file(argv[i]);
             if (_wcsicmp(file.extension().c_str(), L".bslstage") == 0)
@@ -84,6 +85,7 @@ bsl::AppOptions parseArgs()
             const wchar_t* mode = argv[++i];
             options.startInMapping = std::wcscmp(mode, L"mapping") == 0;
             options.startInPixelMap = std::wcscmp(mode, L"pixelmap") == 0;
+            options.startInSequences = std::wcscmp(mode, L"sequences") == 0;
         }
     }
     LocalFree(argv);

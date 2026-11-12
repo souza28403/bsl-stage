@@ -164,6 +164,8 @@ nlohmann::json bindingsToJson(const KeyBindingSet& set)
             a["fxScope"] = b.args.fxScope;
         if (b.args.effect != def.effect)
             a["effect"] = b.args.effect;
+        if (!b.args.param.empty())
+            a["param"] = b.args.param;
         if (!a.empty())
             j["args"] = std::move(a);
         arr.push_back(std::move(j));
@@ -222,6 +224,8 @@ KeyBindingSet bindingsFromJson(const nlohmann::json& j, std::vector<std::string>
                 b.args.value = std::clamp(a["value"].get<float>(), 0.0f, 1.0f);
             b.args.fxScope = intField(a, "fxScope", b.args.fxScope, 0, 2);
             b.args.effect = intField(a, "effect", b.args.effect, 0, 4096);
+            if (a.contains("param") && a["param"].is_string() && a["param"].get<std::string>().size() <= 64)
+                b.args.param = a["param"].get<std::string>();
         }
         set.items.push_back(std::move(b));
     }

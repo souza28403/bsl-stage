@@ -234,7 +234,7 @@ std::vector<media::ParamDesc> describeSliceRefiner()
 
     static const std::vector<media::ParamOption> kModes = {
         {"neon", "Neon sólido"},     {"gradient", "Gradiente"},   {"radar", "Radar"},
-        {"chaser", "Perseguidor"},   {"bumper", "Bumper (pulsa)"}, {"video", "Máscara de vídeo"},
+        {"chaser", "Perseguidor"},   {"bumper", "Pulsa"}, {"video", "Máscara de vídeo"},
         {"sparkles", "Brilhos"},     {"glow", "Glow pulsante"},   {"rgbwave", "Onda RGB"},
         {"dotted", "Pontilhado"},    {"glitch", "Glitch"}};
     for (int i = 1; i <= kMaxSlices; ++i) {

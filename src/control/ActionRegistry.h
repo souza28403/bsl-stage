@@ -68,6 +68,7 @@ enum ArgUse : unsigned {
     ArgIndex = 1u << 3,
     ArgValue = 1u << 4,
     ArgEffect = 1u << 5,
+    ArgParam = 1u << 6,
 };
 
 struct ActionDef

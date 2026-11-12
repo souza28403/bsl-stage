@@ -20,7 +20,7 @@ constexpr const char* kManufacturer = "BSL Light";
 constexpr const char* kLayerGuid = "5B6C4B8E-2D8A-4C1E-9A44-0B5A57A0E101";
 constexpr const char* kMasterGuid = "5B6C4B8E-2D8A-4C1E-9A44-0B5A57A0E102";
 
-constexpr const char* kBlendNamesAscii[kBlendModeCount] = {"Normal", "Add",   "Subtract", "Multiply", "Screen",
+constexpr const char* kBlendNamesAscii[kDmxBlendModeCount] = {"Normal", "Add",   "Subtract", "Multiply", "Screen",
                                                            "Overlay", "Lighten", "Darken", "Difference"};
 
 std::string xmlEscape(const std::string& s)
@@ -142,7 +142,7 @@ std::string channelSets(const ChannelRow& row, int bytes)
         }
         break;
     case Func::Blend:
-        for (int i = 0; i < kBlendModeCount; ++i)
+        for (int i = 0; i < kDmxBlendModeCount; ++i)
             set(kBlendNamesAscii[i], i * 28);
         break;
     case Func::Blackout:

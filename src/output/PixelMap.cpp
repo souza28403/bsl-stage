@@ -86,6 +86,8 @@ void normalize(Config& c)
         p.rows = std::clamp(p.rows, 1, 256);
         p.cabW = std::clamp(p.cabW, 1, kMaxDim);
         p.cabH = std::clamp(p.cabH, 1, kMaxDim);
+        p.port = std::clamp(p.port, 0, 255);
+        p.cableOrder = std::clamp(p.cableOrder, -1, 65535);
         p.color &= 0xFFFFFFu;
         applyCabinets(p);
     }

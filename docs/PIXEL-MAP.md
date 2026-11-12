@@ -40,6 +40,23 @@ Exemplo (input 1920×1080, físico 2048×640): "Testeira Palco" 2048×128 em (0,
   inteiro (½, ⅓…).
 - **Persistência**: a configuração vai no `.bslstage` (chave `pixelMap`, aditiva: só é gravada quando algo foi mexido).
 
+## Importar mapa do NovaLCT (.scr)
+
+Botão **Importar mapa do NovaLCT (.scr)…** na coluna de configuração. Abre o diálogo de arquivo e, antes de aplicar, mostra
+uma prévia: tamanho total, quantidade de gabinetes, portas e o desenho dos gabinetes numerados (ordem do cabo) com a linha
+do cabo por porta (ponto verde = início). Opções: **Substituir mapa atual**, **Adicionar ao lado** (à direita dos painéis
+existentes, ampliando o físico total) e **Cancelar**. **Desfazer última importação** volta ao mapa anterior (um nível).
+
+Cada gabinete vira um painel em pixels exatos (x, y, largura, altura) com `porta` e `cableOrder` (campos novos do painel,
+gravados no `.bslstage` só quando diferentes do padrão; projetos antigos abrem normalmente). Sobreposições do arquivo são
+mantidas e apenas avisadas. O parser fica em `src/output/NovaScr.{h,cpp}` (puro, sem GL); arquivo truncado, assinatura
+errada, versão desconhecida, contagem absurda ou gabinete com tamanho zero geram erro em português.
+
+Limitações: só as versões 1 e 2 do formato; a v1 não traz porta (tudo na porta 0); máximo de 256 painéis e 16384 px no
+Pixel Map; a conversão não lê brilho, cor nem outros blocos do arquivo. Testados: `3x2 p3.9 50x100 128x256.scr` (v1,
+768x512), `4x2 p3.9 50x100 128x256.scr` (v1, 1024x512) e `DISPLAY AUDITORIO.scr` (v2, 1560x624, duas portas); cópias em
+`tools/fixtures/novalct/`.
+
 ## Padrão HD
 
 Mesmo desenho do HTML, na resolução física do painel: fundo radial escuro, grade de 10 e 50 px, círculos (sólido e
@@ -53,6 +70,7 @@ monograma BSL (`assets/brand`) ou a imagem escolhida.
 | Arquivo | Papel |
 |---|---|
 | `src/output/PixelMap.{h,cpp}` | modelo, escala, validação, CSV (sem ImGui nem GL) |
+| `src/output/NovaScr.{h,cpp}` | parser do .scr e conversão para painéis |
 | `src/output/PixelMapMapping.cpp` | Criar mapeamento / Importar do mapeamento (OutputSetup) |
 | `src/output/PatternRaster.{h,cpp}` | desenho em CPU: padrão HD e overview, PNG |
 | `src/fx/bsl/PixelMapSource.cpp`, `PixelMapFeed.h` | fonte ao vivo "Padrão de calibração BSL" |

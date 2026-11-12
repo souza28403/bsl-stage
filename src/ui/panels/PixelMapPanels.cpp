@@ -4,6 +4,7 @@
 #include "app/Paths.h"
 #include "app/Qa.h"
 #include "io/FileDialogs.h"
+#include "output/NovaScr.h"
 #include "output/PatternRaster.h"
 #include "output/PixelMap.h"
 #include "output/Snap.h"
@@ -25,6 +26,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -91,6 +93,11 @@ struct State
     bool openCreate = false;
     bool openImport = false;
     bool layerPerPanel = false;
+
+    bool openScr = false;
+    novascr::Result scr;
+    std::string scrName;
+    std::optional<pm::Config> undo;
 };
 State g;
 
@@ -249,6 +256,67 @@ void actionImportCsv(pm::Config& cfg)
     setStatus(std::to_string(cfg.panels.size()) + " painéis importados de " + utf8(file->filename()));
 }
 
+void actionImportScr()
+{
+    const auto file = dialogs::openFile(GetActiveWindow(), L"Mapa de tela NovaLCT (*.scr)", L"*.scr");
+    if (!file)
+        return;
+    novascr::Result r = novascr::parseFile(utf8(*file));
+    if (!r.ok) {
+        setStatus("Mapa .scr não importado: " + r.error, true);
+        return;
+    }
+    g.scr = std::move(r);
+    g.scrName = utf8(file->filename());
+    g.openScr = true;
+}
+
+void drawScrPreview(const novascr::Result& r)
+{
+    const float maxW = dp(560.0f);
+    const float maxH = dp(240.0f);
+    const float sc = std::min(maxW / static_cast<float>(r.width), maxH / static_cast<float>(r.height));
+    const float cw = static_cast<float>(r.width) * sc;
+    const float ch = static_cast<float>(r.height) * sc;
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(maxW, ch + dp(8.0f)));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 o(origin.x + (maxW - cw) * 0.5f, origin.y + dp(4.0f));
+    dl->AddRectFilled(o, ImVec2(o.x + cw, o.y + ch), colv(theme::kBorder, 0.35f));
+
+    std::vector<ImVec2> centers(r.cabinets.size());
+    for (size_t i = 0; i < r.cabinets.size(); ++i) {
+        const novascr::Cabinet& c = r.cabinets[i];
+        const ImVec2 a(o.x + static_cast<float>(c.x) * sc, o.y + static_cast<float>(c.y) * sc);
+        const ImVec2 b(a.x + static_cast<float>(c.w) * sc, a.y + static_cast<float>(c.h) * sc);
+        const std::uint32_t rgb = pm::kPaletteRgb[static_cast<size_t>(c.port) % 4];
+        dl->AddRectFilled(a, b, col32(rgb, 0.22f));
+        dl->AddRect(a, b, col32(rgb, 0.95f), 0.0f, 0, 1.5f);
+        centers[i] = ImVec2((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
+        char buf[16];
+        std::snprintf(buf, sizeof(buf), "%d", c.order + 1);
+        const ImVec2 ts = ImGui::CalcTextSize(buf);
+        if (ts.x < b.x - a.x && ts.y < b.y - a.y)
+            dl->AddText(ImVec2(centers[i].x - ts.x * 0.5f, a.y + dp(2.0f)), IM_COL32(255, 255, 255, 230), buf);
+    }
+
+    std::set<int> ports;
+    for (const novascr::Cabinet& c : r.cabinets)
+        ports.insert(c.port);
+    for (const int port : ports) {
+        std::vector<size_t> idx;
+        for (size_t i = 0; i < r.cabinets.size(); ++i)
+            if (r.cabinets[i].port == port)
+                idx.push_back(i);
+        std::sort(idx.begin(), idx.end(), [&](size_t a, size_t b) { return r.cabinets[a].order < r.cabinets[b].order; });
+        const ImU32 line = col32(0xFFFFFF, 0.9f);
+        for (size_t k = 1; k < idx.size(); ++k)
+            dl->AddLine(centers[idx[k - 1]], centers[idx[k]], line, 2.0f);
+        if (!idx.empty())
+            dl->AddCircleFilled(centers[idx.front()], dp(5.0f), IM_COL32(60, 220, 100, 255));
+    }
+}
+
 void dim(const char* text)
 {
     ImGui::TextColored(theme::kTextDim, "%s", text);
@@ -405,6 +473,47 @@ void drawMappingModals(PanelContext& ctx)
             ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
+
+    const char* scrPopup = "Importar mapa do NovaLCT (.scr)##pm_modal_scr";
+    if (g.openScr) {
+        ImGui::OpenPopup(scrPopup);
+        g.openScr = false;
+    }
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal(scrPopup, nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        const novascr::Result& r = g.scr;
+        ImGui::TextColored(theme::kTextDim, "%s", g.scrName.c_str());
+        ImGui::Text("Tamanho total %dx%d px   |   %d gabinete(s)   |   %d porta(s)   |   formato v%d", r.width, r.height,
+                    static_cast<int>(r.cabinets.size()), novascr::portCount(r), r.version);
+        ImGui::TextColored(theme::kTextDim, "Os números são a ordem do cabo em cada porta; o ponto verde marca o início.");
+        drawScrPreview(r);
+        for (const std::string& w : r.warnings)
+            ImGui::TextColored(theme::kWarning, "%s", w.c_str());
+        ImGui::Spacing();
+        auto apply = [&](novascr::ImportMode mode) {
+            pm::Config before = cfg;
+            std::string err;
+            if (novascr::applyToPixelMap(r, cfg, mode, &err)) {
+                g.undo = std::move(before);
+                g.selected = -1;
+                g.autoFit = true;
+                setStatus(std::to_string(r.cabinets.size()) + " gabinetes importados de " + g.scrName + " ("
+                          + std::to_string(r.width) + "x" + std::to_string(r.height) + ").");
+            } else {
+                setStatus("Mapa .scr não importado: " + err, true);
+            }
+            ImGui::CloseCurrentPopup();
+        };
+        if (primaryButton("Substituir mapa atual##pm_scr_substituir", ImVec2(dp(220.0f), 0.0f)))
+            apply(novascr::ImportMode::Replace);
+        ImGui::SameLine();
+        if (ImGui::Button("Adicionar ao lado##pm_scr_adicionar", ImVec2(dp(180.0f), 0.0f)))
+            apply(novascr::ImportMode::AddBeside);
+        ImGui::SameLine();
+        if (ImGui::Button("Cancelar##pm_scr_cancelar", ImVec2(dp(140.0f), 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
 }
 
 }
@@ -427,6 +536,8 @@ void pixelMapReset()
     g.lastW = g.lastH = 0;
     g.draft = Draft{};
     g.status.clear();
+    g.undo.reset();
+    g.scr = novascr::Result{};
     g.wmKey.clear();
     g.wmTex.reset();
 }
@@ -647,6 +758,18 @@ void drawPixelMapConfigPanel(PanelContext& ctx)
         actionImportCsv(cfg);
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Mesmo formato do Exportar tabela: nome;fisico_x;fisico_y;fisico_w;fisico_h;... (as colunas da composição são recalculadas)");
+    if (ImGui::Button("Importar mapa do NovaLCT (.scr)…##pm_importar_scr", ImVec2(-FLT_MIN, 0.0f)))
+        actionImportScr();
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Lê o mapa de tela salvo pelo NovaLCT: cada gabinete vira um painel com posição, tamanho, porta e ordem do cabo");
+    ImGui::BeginDisabled(!g.undo.has_value());
+    if (ImGui::Button("Desfazer última importação##pm_desfazer_scr", ImVec2(-FLT_MIN, 0.0f)) && g.undo) {
+        cfg = std::move(*g.undo);
+        g.undo.reset();
+        g.selected = -1;
+        setStatus("Importação desfeita.");
+    }
+    ImGui::EndDisabled();
 
     if (!g.status.empty()) {
         ImGui::Spacing();

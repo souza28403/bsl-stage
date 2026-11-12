@@ -15,6 +15,7 @@
 #include "fx/bsl/BslCommon.h"
 #include "fx/bsl/BslSources.h"
 #include "fx/bsl/PixelMapFeed.h"
+#include "fx/bsl/SequenceFeed.h"
 #include "fx/bsl/SliceFeed.h"
 #include "media/DocThumb.h"
 #include "media/SpoutSource.h"
@@ -22,6 +23,8 @@
 #include "ndi/NdiFinder.h"
 #include "ndi/NdiRuntime.h"
 #include "output/OutputRenderer.h"
+#include "seq/EnvelopeStore.h"
+#include "seq/SeqModel.h"
 #include "render/Compositor.h"
 #include "render/LiveThumb.h"
 #include "render/TextureLoader.h"
@@ -38,6 +41,8 @@
 #include "ui/panels/PluginWizard.h"
 #include "ui/panels/MapView.h"
 #include "ui/panels/PixelMapPanels.h"
+#include "ui/panels/EnvelopeEditor.h"
+#include "ui/panels/SequencePanels.h"
 #include "ui/panels/PreviewPanel.h"
 #include "ui/panels/ReportWindow.h"
 #include "ui/panels/UpdateUi.h"
@@ -232,6 +237,7 @@ bool App::init()
         qaOn_ = true;
     }
     settings_ = Settings::load();
+    envelopes_ = seq::carregarBiblioteca(seq::caminhoBiblioteca());
     if (options_.uiMode == "window")
         settings_.uiScaleMode = UiScaleMode::Window;
     else if (options_.uiMode == "system")
@@ -334,7 +340,8 @@ bool App::init()
         return false;
     }
     output_ = OutputSetup::createDefault(composition_.width, composition_.height, outputs_->monitors());
-    mode_ = options_.startInMapping ? AppMode::Mapping : options_.startInPixelMap ? AppMode::PixelMap : AppMode::Composition;
+    mode_ = options_.startInMapping ? AppMode::Mapping : options_.startInPixelMap ? AppMode::PixelMap
+            : options_.startInSequences ? AppMode::Sequences : AppMode::Composition;
     if (options_.outputWindow)
         setupOutputTest();
     if (options_.testMissingMonitor && !output_.screens.empty()) {
@@ -532,7 +539,42 @@ void App::afterProjectLoaded()
     ui::mapEditorReset(output_);
     ui::transformEditorReset(composition_);
     ui::pixelMapReset();
+    ui::seqUiReset();
+    ui::envelopeEditorReset();
     dmx_.engine().reset();
+    absorverEnvelopesDoProjeto();
+    versaoSlicesAncoras_ = 0;
+}
+
+void App::absorverEnvelopesDoProjeto()
+{
+    if (composition_.envelopes.empty())
+        return;
+    const seq::BibliotecaEnvelopes antes = envelopes_;
+    const std::map<int, int> mapa = seq::mesclarNaBiblioteca(envelopes_, composition_.envelopes);
+    composition_.remapearEnvelopes(mapa);
+    composition_.envelopes.clear();
+    if (envelopes_.lista.size() != antes.lista.size() || envelopes_.proximoId != antes.proximoId)
+        seq::salvarBiblioteca(envelopes_, seq::caminhoBiblioteca());
+}
+
+void App::publicarSequencias()
+{
+    std::vector<seq::Envelope> usados;
+    for (int id : composition_.envelopesUsados())
+        if (const seq::Envelope* e = seq::acharEnvelope(envelopes_, id))
+            usados.push_back(*e);
+    if (usados != composition_.envelopes)
+        composition_.envelopes = std::move(usados);
+
+    auto& feed = fx::bsllight::SequenceFeed::instance();
+    const std::uint64_t versaoSlices = fx::bsllight::SliceFeed::instance().version();
+    bool mudou = feed.set(composition_.sequences, envelopes_.lista);
+    if (!composition_.sequences.vazio() && (mudou || versaoSlices != versaoSlicesAncoras_)) {
+        seq::atualizarAncoras(composition_.sequences, output_);
+        feed.set(composition_.sequences, envelopes_.lista);
+    }
+    versaoSlicesAncoras_ = versaoSlices;
 }
 
 void App::applyDecoderOptions()
@@ -849,7 +891,7 @@ void App::setupKeyHooks()
         }
     };
     hooks.setMode = [this](int mode) {
-        mode_ = mode == 1 ? AppMode::Mapping : mode == 2 ? AppMode::PixelMap : AppMode::Composition;
+        mode_ = mode == 1 ? AppMode::Mapping : mode == 2 ? AppMode::PixelMap : mode == 3 ? AppMode::Sequences : AppMode::Composition;
     };
     hooks.identify = [this] { return outputs_ && outputs_->identify(); };
     hooks.setIdentify = [this](bool on) {
@@ -1012,8 +1054,10 @@ void App::frame()
     composition_.update(dt);
     updateLiveThumbs();
     syncCanvasSize();
+    ensureSliceUids(output_);
     fx::bsllight::SliceFeed::instance().set(fx::bsllight::sliceFeedFromOutput(output_), composition_.width,
                                             composition_.height);
+    publicarSequencias();
 
     {
         ai::AiEngine& aiEngine = ai::AiEngine::instance();
@@ -1068,7 +1112,7 @@ void App::frame()
 
     PanelContext ctx{composition_, selection_, *compositor_, settings_.profile, stats_, glInfo_,
                      compositor_->uvMax(), settings_, *thumbs_, drop_,
-                     quitRequested_, output_, *outputs_, mapping_, mode_, *project_, keyService_, dmx_, updates_};
+                     quitRequested_, output_, *outputs_, mapping_, mode_, *project_, keyService_, dmx_, updates_, envelopes_};
     ui::drawUi(ctx);
     if (qaOn_) {
         int fw = 0, fh = 0, ww = 0, wh = 0;
@@ -1240,7 +1284,7 @@ std::string App::qaStateJson() const
     using nlohmann::json;
     json j;
     const Composition& c = composition_;
-    j["mode"] = mode_ == AppMode::Mapping ? "mapping" : mode_ == AppMode::PixelMap ? "pixelmap" : "composition";
+    j["mode"] = mode_ == AppMode::Mapping ? "mapping" : mode_ == AppMode::PixelMap ? "pixelmap" : mode_ == AppMode::Sequences ? "sequences" : "composition";
     j["layout"] = uiLayoutKey(settings_.layout);
     j["scaleMode"] = settings_.uiScaleMode == UiScaleMode::Window   ? "window"
                      : settings_.uiScaleMode == UiScaleMode::System ? "system"
@@ -1389,6 +1433,59 @@ std::string App::qaStateJson() const
                          {"guides", pmi.guides},
                          {"zoom", pmi.zoom},
                          {"status", pmi.status}};
+    }
+    {
+        const ui::SeqUiInfo si = ui::seqUiInfo();
+        const ui::EnvelopeUiInfo ei = ui::envelopeUiInfo(envelopes_);
+        json sequencias = json::array();
+        for (const seq::Sequencia& s : c.sequences.sequencias) {
+            json acesos = json::array();
+            for (const seq::Passo& p : s.passos)
+                acesos.push_back(static_cast<int>(p.size()));
+            sequencias.push_back({{"id", s.id},
+                                  {"name", s.nome},
+                                  {"steps", static_cast<int>(s.passos.size())},
+                                  {"lit", acesos},
+                                  {"generator", s.temGerador},
+                                  {"genDirection", static_cast<int>(s.gerador.direcao)},
+                                  {"genManual", s.gerador.bordasManuais},
+                                  {"genBordersX", s.gerador.bordasX.size()},
+                                  {"genBordersY", s.gerador.bordasY.size()}});
+        }
+        json visoes = json::array();
+        for (const seq::Visao& v : c.sequences.visoes)
+            visoes.push_back({{"id", v.id}, {"name", v.nome}, {"count", static_cast<int>(v.ligados.size())}, {"preview", v.previaVisivel}});
+        json envs = json::array();
+        for (const seq::Envelope& e : envelopes_.lista)
+            envs.push_back({{"id", e.id}, {"name", e.nome}, {"anchors", static_cast<int>(e.ancoras.size())}});
+        int slicesTotal = 0;
+        for (const Screen& s : output_.screens)
+            slicesTotal += static_cast<int>(s.slices.size());
+        j["sequences"] = {{"list", sequencias},
+                          {"views", visoes},
+                          {"envelopes", envs},
+                          {"selected", si.sequenceId},
+                          {"view", si.viewId},
+                          {"step", si.step},
+                          {"tool", si.tool},
+                          {"undo", si.canUndo},
+                          {"redo", si.canRedo},
+                          {"gesture", si.gestureOpen},
+                          {"gridEdit", si.gridEdit},
+                          {"zoom", si.zoom},
+                          {"fit", si.fit},
+                          {"ghost", si.ghost},
+                          {"backdrop", si.backdrop},
+                          {"status", si.status},
+                          {"slices", slicesTotal},
+                          {"envelope", {{"id", ei.envelopeId},
+                                        {"anchors", ei.anchors},
+                                        {"selected", ei.selected},
+                                        {"undo", ei.canUndo},
+                                        {"redo", ei.canRedo},
+                                        {"dragging", ei.dragging},
+                                        {"snap", ei.snap},
+                                        {"status", ei.status}}}};
     }
     {
         const control::KeyService::Info& ki = keyService_.info();

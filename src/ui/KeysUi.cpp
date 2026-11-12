@@ -99,6 +99,7 @@ struct Capture
     std::string action;
     ActionArgs args;
     std::string title;
+    control::Mode mode = control::Mode::Press;
     int frames = 0;
 };
 
@@ -166,7 +167,8 @@ bool mapEditorFocused(AppMode mode)
     if (mode == AppMode::Composition || !GImGui || !GImGui->NavWindow)
         return false;
     const ImGuiWindow* nav = GImGui->NavWindow;
-    for (const char* name : {panel::kMapInput, panel::kMapOutput, panel::kPmOverview}) {
+    for (const char* name : {panel::kMapInput, panel::kMapOutput, panel::kPmOverview, panel::kSeqList, panel::kSeqCanvas,
+                             panel::kSeqSteps, panel::kSeqGen, panel::kSeqEnv}) {
         const ImGuiWindow* w = ImGui::FindWindowByName(name);
         if (w && (nav == w || nav->RootWindow == w))
             return true;
@@ -225,6 +227,7 @@ void commitChord(const Capture& cap, int ownScope, int ownIndex, Chord chord)
         b.action = cap.action;
         b.args = cap.args;
         b.chord = chord;
+        b.mode = cap.mode;
         setFor(cap.scope).items.push_back(std::move(b));
         touch(cap.scope);
     }
@@ -425,6 +428,15 @@ bool editArgs(const ActionDef& def, ActionArgs& a)
         ImGui::SetNextItemWidth(dp(130.0f));
         if (ImGui::InputInt("Efeito nº (1 = o primeiro)##atalho_efeito", &v)) {
             a.effect = std::max(0, v - 1);
+            changed = true;
+        }
+    }
+    if ((def.args & control::ArgParam) != 0) {
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "%s", a.param.c_str());
+        ImGui::SetNextItemWidth(dp(160.0f));
+        if (ImGui::InputText("Parâmetro (nome interno)##atalho_param", buf, sizeof(buf))) {
+            a.param = buf;
             changed = true;
         }
     }
@@ -884,6 +896,51 @@ void keyAssignMenu(const control::Target& target, bool leadingSeparator)
         setFor(scope).items.erase(setFor(scope).items.begin() + own);
         touch(scope);
     }
+}
+
+void keyParamMenu(const control::ActionArgs& argsIn, bool offerHold)
+{
+    if (!g.settings || !g.comp)
+        return;
+    const std::string id = "fx.event";
+    const control::ActionDef* def = control::findAction(id);
+    if (!def)
+        return;
+    ActionArgs args = argsIn;
+    control::stampLayerId(*def, args, *g.comp);
+    const Scope scope = control::defaultScopeFor(id);
+    const int own = setFor(scope).find(id, args);
+    const bool hasKey = own >= 0 && setFor(scope).items[static_cast<size_t>(own)].chord.valid();
+
+    auto start = [&](control::Mode mode) {
+        Capture cap;
+        cap.scope = scope;
+        cap.action = id;
+        cap.args = args;
+        cap.mode = mode;
+        cap.title = control::describeAction(*g.comp, *def, args);
+        beginCapture(cap);
+    };
+
+    if (hasKey) {
+        const std::string label = "Trocar tecla (" + control::chordLabel(setFor(scope).items[static_cast<size_t>(own)].chord) + ")…";
+        if (ImGui::MenuItem((label + "##key_param_trocar").c_str()))
+            start(setFor(scope).items[static_cast<size_t>(own)].mode);
+        if (ImGui::MenuItem("Remover tecla##key_param_remover")) {
+            setFor(scope).items.erase(setFor(scope).items.begin() + own);
+            touch(scope);
+        }
+        return;
+    }
+    if (!offerHold) {
+        if (ImGui::MenuItem("Atribuir atalho para disparar…##key_param_disparar"))
+            start(control::Mode::Press);
+        return;
+    }
+    if (ImGui::MenuItem("Atribuir atalho (alterna a cada toque)…##key_param_alternar"))
+        start(control::Mode::Press);
+    if (ImGui::MenuItem("Atribuir atalho (ativo enquanto segurar)…##key_param_segurar"))
+        start(control::Mode::Hold);
 }
 
 std::string actionShortcut(const std::string& actionId, const control::ActionArgs& args)

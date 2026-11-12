@@ -138,7 +138,7 @@ double dmxRotationOf(int raw, int max)
 int dmxBlendOf(int raw, int max)
 {
     const int raw8 = max == 255 ? raw : static_cast<int>(std::lround(dmxNormalized(raw, max) * 255.0));
-    return std::clamp(raw8 / 28, 0, kBlendModeCount - 1);
+    return std::clamp(raw8 / 28, 0, kDmxBlendModeCount - 1);
 }
 
 int dmxClipRange(int raw8)
@@ -243,7 +243,7 @@ std::vector<ChannelRow> layerRows(LayerMode mode, int fxCount)
     if (std8) {
         add(Func::Speed, 1, "Velocidade", "BSL_Speed", "0 = parado | 128 = 1x | 255 = 4x", 128, "Velocidade do clip que toca na camada");
         std::string blend = "faixas de 28: ";
-        for (int i = 0; i < kBlendModeCount; ++i)
+        for (int i = 0; i < kDmxBlendModeCount; ++i)
             blend += std::string(i ? " | " : "") + std::to_string(i * 28) + "+ " + blendModeName(static_cast<BlendMode>(i));
         add(Func::Blend, 1, "Blend", "BSL_Blend", blend, 0, "Modo de mistura da camada");
     }

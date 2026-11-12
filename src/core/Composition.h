@@ -6,7 +6,10 @@
 #include "dmx/DmxMap.h"
 #include "media/VideoDecoder.h"
 #include "output/PixelMap.h"
+#include "seq/Envelope.h"
+#include "seq/SeqModel.h"
 
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -44,6 +47,9 @@ struct Composition
     int currentDeck = 0;
 
     pixelmap::Config pixelMap;
+
+    seq::SequenceSet sequences;
+    std::vector<seq::Envelope> envelopes;
 
     control::KeyBindingSet keys = control::defaultProjectKeys();
 
@@ -115,6 +121,9 @@ struct Composition
     void clearClip(int layer, int column);
     int expandPages(int layer, int column);
     void swapClips(int layerA, int columnA, int layerB, int columnB);
+
+    std::vector<int> envelopesUsados() const;
+    void remapearEnvelopes(const std::map<int, int>& mapa);
 
     void update(double dt);
 

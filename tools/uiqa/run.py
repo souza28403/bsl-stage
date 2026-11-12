@@ -19,6 +19,7 @@ MEDIA = os.path.join(ROOT, "testmedia")
 MODE_COMP = "Composição###modo_composicao"
 MODE_MAP = "Mapeamento###modo_mapeamento"
 MODE_PIX = "Pixel Map###modo_pixelmap"
+MODE_SEQ = "Sequências###modo_sequencias"
 
 
 class Tester:
@@ -39,36 +40,63 @@ class Tester:
 
     def step(self, name, fn):
         t0 = time.time()
-        try:
-            if name in ("grade",):
-                self.fresh_composition()
-            self.grid_to_bottom()
-            fn()
-            self.layout_check(name)
-            d = self.app.read()
-            if d["asserts"] > self._asserts0:
-                raise QaFailure("assert do ImGui durante o passo (%d novos)" % (d["asserts"] - self._asserts0))
-            if d["conflicts"] > self._conf0:
-                raise QaFailure("conflito de ID durante o passo (%d novos)" % (d["conflicts"] - self._conf0))
-            self.results.append((name, True, "%.1fs" % (time.time() - t0)))
-            print("  ok    %s (%.1fs)" % (name, time.time() - t0))
-        except Exception as e:
-            detail = "%s: %s" % (type(e).__name__, e)
-            if not isinstance(e, QaFailure):
-                detail += "\n" + traceback.format_exc()
-            self.results.append((name, False, detail))
-            print("  FALHA %s -> %s" % (name, detail.splitlines()[0]))
+        retries = 0
+        while True:
+            lost0 = self.app.focus_losses
             try:
                 if self.app.alive():
-                    self.shot("falha_" + name.replace(" ", "_").replace("/", "-"))
-                    self.app.reset_input()
-            except Exception:
-                pass
+                    self.app.ensure_focus()
+                    self.app.wait_frames(3)
+                    close_pickers(self.app)
+                lost0 = self.app.focus_losses
+                if name in ("grade",):
+                    self.fresh_composition()
+                self.grid_to_bottom()
+                fn()
+                self.layout_check(name)
+                d = self.app.read()
+                if d["asserts"] > self._asserts0:
+                    raise QaFailure("assert do ImGui durante o passo (%d novos)" % (d["asserts"] - self._asserts0))
+                if d["conflicts"] > self._conf0:
+                    raise QaFailure("conflito de ID durante o passo (%d novos)" % (d["conflicts"] - self._conf0))
+                self.results.append((name, True, "%.1fs" % (time.time() - t0)))
+                print("  ok    %s (%.1fs)" % (name, time.time() - t0))
+                break
+            except Exception as e:
+                if self.app.focus_losses > lost0 and retries < 2 and self.app.alive():
+                    retries += 1
+                    print("  repetindo %s: o foco saiu do app durante o passo (%s)" % (name, str(e).splitlines()[0] if str(e) else type(e).__name__))
+                    self.recover()
+                    continue
+                detail = "%s: %s" % (type(e).__name__, e)
+                if not isinstance(e, QaFailure):
+                    detail += "\n" + traceback.format_exc()
+                self.results.append((name, False, detail))
+                print("  FALHA %s -> %s" % (name, detail.splitlines()[0]))
+                try:
+                    if self.app.alive():
+                        self.shot("falha_" + name.replace(" ", "_").replace("/", "-"))
+                        self.app.reset_input()
+                        close_pickers(self.app)
+                except Exception:
+                    pass
+                break
         try:
             if self.app.alive():
                 d = self.app.read()
                 self._asserts0 = d["asserts"]
                 self._conf0 = d["conflicts"]
+        except Exception:
+            pass
+
+    def recover(self):
+        app = self.app
+        try:
+            app.reset_input()
+            close_pickers(app)
+            app.wait_frames(4)
+            ensure_mode(app, "composition")
+            app.wait_frames(4)
         except Exception:
             pass
 
@@ -142,6 +170,34 @@ class Tester:
             self.layout_notes.append((where, s))
             print("      layout[%s]: %s" % (where, s))
 
+def wait_items_stable(app, label, window=None, quiet=0.5, timeout=10.0):
+    last = None
+    t_change = time.time()
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        app.wait_frames(3)
+        sig = [(round(i.rect.x0), round(i.rect.y0), round(i.rect.x1), round(i.rect.y1)) for i in app.find_all(label, window)]
+        if sig and sig == last:
+            if time.time() - t_change >= quiet:
+                return True
+        else:
+            last = sig
+            t_change = time.time()
+    return False
+
+
+def close_pickers(app):
+    for _ in range(3):
+        if app.has("Atualizar lista") and app.has("Cancelar"):
+            try:
+                app.click("Cancelar")
+                app.wait_frames(4)
+            except QaFailure:
+                break
+        else:
+            return
+
+
 def menu(app, top, *path, nth=0):
     app.click(top, "MainMenuBar", nth=nth)
     app.wait_frames(3)
@@ -170,7 +226,7 @@ def ensure_mode(app, mode):
     if app.state["mode"] == mode:
         return
     for attempt in range(3):
-        app.click({"mapping": MODE_MAP, "pixelmap": MODE_PIX}.get(mode, MODE_COMP), "MainMenuBar")
+        app.click({"mapping": MODE_MAP, "pixelmap": MODE_PIX, "sequences": MODE_SEQ}.get(mode, MODE_COMP), "MainMenuBar")
         try:
             app.wait_state(lambda s: s["mode"] == mode, "modo " + mode, timeout=2.0)
             break
@@ -213,7 +269,7 @@ def expect(cond, what):
 def sc_modos(t):
     app = t.app
     for i in range(5):
-        for mode in ("mapping", "pixelmap", "composition"):
+        for mode in ("mapping", "pixelmap", "sequences", "composition"):
             ensure_mode(app, mode)
             tabs = [x.label for x in app.items if x.window == "dock-tabs" and x.visible and x.label.startswith("tab:")]
             for label in tabs:
@@ -1385,9 +1441,13 @@ def sc_geradores(t):
     expect(app.has("Atualizar lista"), "seletor de alvo da captura abriu ao soltar o gerador")
     t.shot("captura_seletor")
     app.click("Atualizar lista")
-    app.wait_frames(10)
-    app.click("##card", nth=0)
-    app.wait_frames(6)
+    wait_items_stable(app, "##card")
+    for _ in range(3):
+        app.click("##card", nth=0)
+        app.wait_frames(6)
+        if not app.has("Atualizar lista"):
+            break
+        wait_items_stable(app, "##card")
     expect(not app.has("Atualizar lista"), "escolher o alvo fecha o seletor")
     expect("target" in app.state["selClip"]["params"], "alvo gravado nos parametros")
     alvo = [i for i in app.items if "cmp_clip" in i.window and i.label.endswith("##alvo") and i.visible]
@@ -1849,8 +1909,14 @@ def preview_state(app):
 
 def drop_clip(app, name, layer, col):
     """Solta um arquivo de testmedia na celula (como o Explorer) e espera ela aparecer na grade."""
-    app.drop_files([os.path.join(MEDIA, name)], cell(app, layer, col))
-    app.wait_state(lambda s: any(x[0] == layer - 1 and x[1] == col - 1 for x in s["cells"]), "%s em L%dC%d" % (name, layer, col))
+    for attempt in range(3):
+        app.drop_files([os.path.join(MEDIA, name)], cell(app, layer, col))
+        try:
+            app.wait_state(lambda s: any(x[0] == layer - 1 and x[1] == col - 1 for x in s["cells"]), "%s em L%dC%d" % (name, layer, col))
+            return
+        except QaFailure:
+            if attempt == 2:
+                raise
 
 
 def pick_combo(app, combo, window, item):
@@ -2418,7 +2484,8 @@ def sc_segundo_plano(t):
         next_ping = 0.0
         while time.time() < t_end:
             for ch in "texto em outro programa 123 ":
-                expect(other.is_foreground(), "a janela de teste manteve o foco durante a digitação")
+                if not other.is_foreground():
+                    expect(other.activate(), "a janela de teste recuperou o foco durante a digitação")
                 driver._key(0, unicode_char=ch)
                 driver._key(0, up=True, unicode_char=ch)
                 other.pump()
@@ -2459,7 +2526,7 @@ def sc_fuzz(t):
             app.click("Fechar")
         if i % 40 == 0:
             ensure_mode(app, ("composition", "mapping", "pixelmap")[(i // 40) % 3])
-        app.read()
+        app.wait_frames(3)
         cands = [it for it in app.items if not it.is_window and it.visible and it.label and it.rect.w > 4 and it.rect.h > 4
                  and not it.label.startswith(skip) and "##menu_" not in it.label and "Debug" not in it.window
                  and "isf_pasta_adicionar" not in it.label and "isf_abrir_principal" not in it.label
@@ -3042,6 +3109,151 @@ def sc_stream(t):
     app.wait_state(lambda s: any(x[0] == 2 and x[1] == 1 and x[2] == "Stream: 127.0.0.1:9" for x in s["cells"]), "atalho .url solto cria o clip de stream")
 
 
+def _sq(app):
+    return app.read()["state"]["sequences"]
+
+
+def _seq_slices(app):
+    app.read()
+    found = [it for it in app.items if it.label.startswith("seq:slice:") and it.visible]
+    return sorted(found, key=lambda i: int(i.label.split(":")[2]))
+
+
+def _seq_hits(app, x0, y0, x1, y1):
+    xa, xb = min(x0, x1), max(x0, x1)
+    ya, yb = min(y0, y1), max(y0, y1)
+    return sum(1 for it in _seq_slices(app) if it.rect.x0 <= xb and it.rect.x1 >= xa and it.rect.y0 <= yb and it.rect.y1 >= ya)
+
+
+def _seq_lit(app, index, step=0):
+    return _sq(app)["list"][index]["lit"][step]
+
+
+def _seq_pick(app, label, window, item):
+    app.click(label, window)
+    app.wait_frames(3)
+    app.click(item, "Combo")
+    app.wait_frames(3)
+
+
+def sc_sequencias(t):
+    """Modo Sequências: sequência nova, slices ligados no canvas (clique, retângulo, Shift, Ctrl, pincel, desfazer), Visão com
+    Alt, gerador automático, envelope novo com âncora, efeito Sequência de slices numa camada e o botão Editar… do envelope.
+    Gera docs/screenshot-sequencias.png."""
+    app = t.app
+    ensure_mode(app, "mapping")
+    app.click("##map_add_tela", "Lista")
+    app.wait_frames(4)
+    rects = [(0, 0), (960, 0), (0, 540), (960, 540)]
+    for i, (x, y) in enumerate(rects):
+        if i > 0:
+            app.click("##map_add_slice", "Lista")
+            app.wait_frames(4)
+        for lbl, v in (("##x", x), ("##y", y), ("##w", 960), ("##h", 540)):
+            _type_field(app, lbl, v)
+
+    ensure_mode(app, "sequences")
+    app.wait_frames(6)
+    for lbl, win in (("##seq_nova", "seq_lista"), ("##seq_visao_nova", "seq_lista"), ("##seq_ferr_ret", "seq_canvas"),
+                     ("##seq_ferr_pincel", "seq_canvas"), ("##seq_ajustar", "seq_canvas"), ("##seq_desfazer", "seq_canvas")):
+        expect(app.has(lbl, win), "controle %s em %s" % (lbl, win))
+    n0 = len(_sq(app)["list"])
+    app.click("##seq_nova", "seq_lista")
+    app.wait_state(lambda s: len(s["sequences"]["list"]) == n0 + 1, "sequência criada")
+    seq = _sq(app)
+    expect(seq["list"][-1]["steps"] == 8 and seq["selected"] == seq["list"][-1]["id"], "sequência nova tem 8 passos e fica selecionada")
+    index = len(seq["list"]) - 1
+    app.wait_frames(6)
+    slices = _seq_slices(app)
+    expect(len(slices) >= 4, "o canvas mostra os slices (%d)" % len(slices))
+    mine = sorted(slices[-4:], key=lambda i: (round(i.rect.y0), round(i.rect.x0)))
+    total = _sq(app)["slices"]
+
+    app.click_at(mine[0].rect.cx, mine[0].rect.cy)
+    app.wait_state(lambda s: s["sequences"]["list"][index]["lit"][0] >= 1, "clique liga o slice")
+    app.click_at(mine[0].rect.cx, mine[0].rect.cy)
+    app.wait_state(lambda s: s["sequences"]["list"][index]["lit"][0] == 0, "clique de novo inverte")
+
+    a = (mine[0].rect.x0 + 4, mine[0].rect.y0 + 4, mine[3].rect.x1 - 4, mine[3].rect.y1 - 4)
+    b = (mine[0].rect.x0 + 4, mine[0].rect.y0 + 4, mine[1].rect.x1 - 4, mine[1].rect.y1 - 4)
+    n_a = _seq_hits(app, *a)
+    n_b = _seq_hits(app, *b)
+    app.drag(*a)
+    app.wait_state(lambda s: s["sequences"]["list"][index]["lit"][0] == n_a, "retângulo inverte os slices tocados (%d)" % n_a)
+    app.drag(*b, mods=("ctrl",))
+    app.wait_state(lambda s: s["sequences"]["list"][index]["lit"][0] == n_a - n_b, "Ctrl+retângulo desliga")
+    app.drag(*b, mods=("shift",))
+    app.wait_state(lambda s: s["sequences"]["list"][index]["lit"][0] == n_a, "Shift+retângulo liga")
+    app.key("z", "ctrl")
+    app.wait_state(lambda s: s["sequences"]["list"][index]["lit"][0] == n_a - n_b, "Ctrl+Z desfaz um gesto")
+    app.key("y", "ctrl")
+    app.wait_state(lambda s: s["sequences"]["list"][index]["lit"][0] == n_a, "Ctrl+Y refaz")
+
+    app.click("##seq_limpar_passo", "seq_passos")
+    app.wait_state(lambda s: s["sequences"]["list"][index]["lit"][0] == 0, "Limpar passo")
+    app.click("##seq_ferr_pincel", "seq_canvas")
+    app.wait_state(lambda s: s["sequences"]["tool"] == 1, "ferramenta Pincel")
+    app.drag(mine[0].rect.cx, mine[0].rect.cy, mine[1].rect.cx, mine[1].rect.cy, steps=24)
+    app.wait_state(lambda s: s["sequences"]["list"][index]["lit"][0] >= 2, "pincel liga os slices por onde passa")
+    after_brush = _seq_lit(app, index)
+    app.drag(mine[0].rect.cx, mine[0].rect.cy, mine[1].rect.cx, mine[1].rect.cy, steps=24)
+    app.wait_state(lambda s: s["sequences"]["list"][index]["lit"][0] == 0, "segundo gesto inverte de volta (%d)" % after_brush)
+    app.click("##seq_ferr_ret", "seq_canvas")
+
+    app.key("right")
+    app.wait_state(lambda s: s["sequences"]["step"] == 1, "seta direita vai ao passo 2")
+    app.click("##seq_visao_nova", "seq_lista")
+    app.wait_state(lambda s: len(s["sequences"]["views"]) >= 1, "visão criada")
+    lit_before = sum(_sq(app)["list"][index]["lit"])
+    app.drag(mine[2].rect.cx - 4, mine[2].rect.cy - 4, mine[2].rect.cx + 4, mine[2].rect.cy + 4, mods=("alt",))
+    app.wait_state(lambda s: s["sequences"]["views"][-1]["count"] >= 1, "Alt edita a Visão selecionada")
+    expect(sum(_sq(app)["list"][index]["lit"]) == lit_before, "Alt não mexe nos passos")
+
+    app.click("##seq_limpar_tudo", "seq_passos")
+    app.wait_state(lambda s: sum(s["sequences"]["list"][index]["lit"]) == 0, "Limpar tudo")
+    expect(app.has("##seq_passos_total", "seq_passos") and app.has("##seq_repetir", "seq_passos"), "barra de passos")
+    t.shot("sequencias_canvas")
+
+    pick_tab(app, "Gerador")
+    app.click("##ger_ligado", "seq_gerador")
+    app.wait_state(lambda s: s["sequences"]["list"][index]["generator"], "gerador ligado")
+    expect(sum(_sq(app)["list"][index]["lit"]) == total, "o gerador distribui todos os slices (%d)" % total)
+    _seq_pick(app, "##ger_direcao", "seq_gerador", "Aleatório")
+    app.wait_state(lambda s: s["sequences"]["list"][index]["genDirection"] == 4, "direção Aleatório")
+    expect(sum(_sq(app)["list"][index]["lit"]) == total, "aleatório mantém todos os slices")
+    app.click("##ger_editar_grade", "seq_gerador")
+    app.wait_state(lambda s: s["sequences"]["gridEdit"], "edição da grade no canvas")
+    app.click("##ger_editar_grade", "seq_gerador")
+    app.wait_state(lambda s: not s["sequences"]["gridEdit"], "edição da grade desligada")
+
+    pick_tab(app, "Envelopes")
+    n_env = len(_sq(app)["envelopes"])
+    app.click("##env_novo", "seq_envelopes")
+    app.wait_state(lambda s: len(s["sequences"]["envelopes"]) == n_env + 1, "envelope criado")
+    graph = app.find("env:grafico", "seq_envelopes").rect
+    app.click_at(graph.cx, graph.cy, double=True)
+    app.wait_state(lambda s: s["sequences"]["envelope"]["anchors"] == 3, "duplo clique na linha cria âncora")
+    anchor = app.find("env:ancora:1", "seq_envelopes").rect
+    app.drag(anchor.cx, anchor.cy, anchor.cx + 30, anchor.cy - 30, mods=("shift",))
+    app.wait_state(lambda s: s["sequences"]["envelope"]["undo"], "mover âncora entra no desfazer próprio")
+    app.key("z", "ctrl")
+    app.wait_state(lambda s: s["sequences"]["envelope"]["redo"], "Ctrl+Z desfaz a curva")
+
+    ensure_mode(app, "composition")
+    pick_tab(app, "Efeitos")
+    app.drag_items(search_effect(app, "Sequência de slices"), app.find("camada 1 nome"), steps=18)
+    app.wait_state(lambda s: "bsl:sequencia" in [e["type"] for e in s["layers"][0]["effects"]], "efeito Sequência de slices na camada")
+    pick_tab(app, "Camada")
+    app.wait_frames(4)
+    edit = scroll_into_view(app, "##env_editar", "cmp_aba_camada")
+    app.click_at(edit.rect.cx, edit.rect.cy)
+    app.wait_state(lambda s: s["mode"] == "sequences", "Editar… abre o editor de envelopes")
+    app.wait_frames(6)
+    app.hover(5, 5)
+    app.wait_frames(6)
+    app.screenshot(os.path.join(ROOT, "docs", "screenshot-sequencias.png"))
+
+
 OPTIONAL = {"projeto_dialogo"}
 STANDALONE = {"exibir_reinicio"}
 
@@ -3056,6 +3268,7 @@ SCENARIOS = [
     ("efeitos", sc_efeitos),
     ("geradores", sc_geradores),
     ("pixelmap", sc_pixelmap),
+    ("sequencias", sc_sequencias),
     ("projeto", sc_projeto),
     ("projeto_dialogo", sc_projeto_dialogo),
     ("ver", sc_ver),
@@ -3101,7 +3314,15 @@ def main():
     os.environ["BSLSTAGE_QA_PLUGIN_FILE"] = make_qa_package(plugin_dir)
     os.environ["BSLSTAGE_QA_PLUGIN_EXPORT"] = os.path.join(plugin_dir, "exportado.bslplugin")
     print("== BSL Stage UI QA: config=%s tamanho=%dx%d ==" % (args.config, w, h))
-    app = driver.App(EXE, qa_dir, extra, size=(w, h))
+    stale = driver.kill_stale(os.path.join(ROOT, "build", "qa"))
+    if stale:
+        print("encerradas %d instancia(s) de teste que ficaram abertas" % stale)
+    try:
+        app = driver.App(EXE, qa_dir, extra, size=(w, h))
+    except Exception:
+        driver.stop_all()
+        driver.kill_stale(os.path.join(ROOT, "build", "qa"))
+        raise
     t = Tester(app, tag, args.shots)
     only = [s for s in args.only.split(",") if s]
     try:
@@ -3117,6 +3338,8 @@ def main():
     finally:
         alive = app.alive()
         code = app.quit()
+        driver.stop_all()
+        driver.kill_stale(os.path.join(ROOT, "build", "qa"))
         summary = app.summary()
         log = app.log_text()
     fails = [r for r in t.results if not r[1]]

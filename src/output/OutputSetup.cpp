@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
 
 namespace bsl {
 
@@ -39,6 +40,31 @@ std::string uniqueSliceName(const Screen& screen, const std::string& base)
     return uniqueName(screen.slices, base, [](const Slice& s) -> const std::string& { return s.name; });
 }
 
+}
+
+bool ensureSliceUids(OutputSetup& setup)
+{
+    int highest = 0;
+    for (const Screen& screen : setup.screens)
+        for (const Slice& s : screen.slices)
+            highest = std::max(highest, s.uid);
+    if (setup.nextSliceUid <= highest)
+        setup.nextSliceUid = highest + 1;
+    if (setup.nextSliceUid < 1)
+        setup.nextSliceUid = 1;
+
+    bool changed = false;
+    std::unordered_set<int> seen;
+    for (Screen& screen : setup.screens) {
+        for (Slice& s : screen.slices) {
+            if (s.uid <= 0 || !seen.insert(s.uid).second) {
+                s.uid = setup.nextSliceUid++;
+                seen.insert(s.uid);
+                changed = true;
+            }
+        }
+    }
+    return changed;
 }
 
 Slice makeFullSlice(const std::string& name, int canvasW, int canvasH, int screenW, int screenH)
@@ -154,6 +180,7 @@ int OutputSetup::addScreen(int canvasW, int canvasH)
     s.width = canvasW;
     s.height = canvasH;
     s.slices.push_back(makeFullSlice("Slice 1", canvasW, canvasH, s.width, s.height));
+    s.slices.back().uid = nextSliceUid++;
     screens.push_back(std::move(s));
     return static_cast<int>(screens.size()) - 1;
 }
@@ -165,6 +192,7 @@ int OutputSetup::addSlice(int screenIndex, int canvasW, int canvasH)
     Screen& s = screens[static_cast<size_t>(screenIndex)];
     s.slices.push_back(makeFullSlice(uniqueSliceName(s, "Slice " + std::to_string(s.slices.size() + 1)),
                                      canvasW, canvasH, s.width, s.height));
+    s.slices.back().uid = nextSliceUid++;
     return static_cast<int>(s.slices.size()) - 1;
 }
 
@@ -178,6 +206,8 @@ int OutputSetup::duplicateScreen(int screenIndex)
     copy.spoutName = "BSL Stage - " + copy.name;
     copy.ndiName = copy.spoutName;
     copy.kind = OutputKind::Disabled;
+    for (Slice& sl : copy.slices)
+        sl.uid = nextSliceUid++;
     screens.insert(screens.begin() + screenIndex + 1, std::move(copy));
     return screenIndex + 1;
 }
@@ -188,6 +218,7 @@ int OutputSetup::duplicateSlice(int screenIndex, int sliceIndex)
         return -1;
     Screen& s = screens[static_cast<size_t>(screenIndex)];
     Slice copy = s.slices[static_cast<size_t>(sliceIndex)];
+    copy.uid = nextSliceUid++;
     copy.name = uniqueSliceName(s, copy.name + " cópia");
     s.slices.insert(s.slices.begin() + sliceIndex + 1, std::move(copy));
     return sliceIndex + 1;

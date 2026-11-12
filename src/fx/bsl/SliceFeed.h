@@ -14,6 +14,7 @@ struct FeedSlice
     std::string name;
     float x = 0.0f, y = 0.0f, w = 0.0f, h = 0.0f;
 
+    int uid = 0;
     std::string id;
     std::string screen;
     std::string sliceName;
@@ -21,7 +22,7 @@ struct FeedSlice
 
     bool operator==(const FeedSlice& o) const
     {
-        return name == o.name && x == o.x && y == o.y && w == o.w && h == o.h && id == o.id && cx == o.cx && cy == o.cy &&
+        return name == o.name && x == o.x && y == o.y && w == o.w && h == o.h && uid == o.uid && id == o.id && cx == o.cx && cy == o.cy &&
                hw == o.hw && hh == o.hh && angle == o.angle;
     }
 };

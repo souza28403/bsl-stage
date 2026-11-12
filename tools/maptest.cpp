@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <utility>
 
 using namespace bsl;
 using namespace bsl::snap;
@@ -449,6 +450,45 @@ void testHistoryGesture()
     CHECK(!h.canUndo() && !h.canRedo());
 }
 
+void testSliceUid()
+{
+    section("uid estavel de slice");
+    OutputSetup setup;
+    setup.addScreen(1920, 1080);
+    setup.addSlice(0, 1920, 1080);
+    setup.addSlice(0, 1920, 1080);
+    const int u0 = setup.screens[0].slices[0].uid;
+    const int u1 = setup.screens[0].slices[1].uid;
+    const int u2 = setup.screens[0].slices[2].uid;
+    CHECK(u0 > 0 && u1 > 0 && u2 > 0 && u0 != u1 && u1 != u2 && u0 != u2);
+
+    setup.screens[0].slices[1].name = "Renomeado";
+    std::swap(setup.screens[0].slices[0], setup.screens[0].slices[2]);
+    CHECK(setup.screens[0].slices[0].uid == u2 && setup.screens[0].slices[2].uid == u0);
+    CHECK(setup.screens[0].slices[1].uid == u1);
+    CHECK(!ensureSliceUids(setup));
+
+    const int dup = setup.duplicateSlice(0, 1);
+    CHECK(dup == 2 && setup.screens[0].slices[2].uid != u1 && setup.screens[0].slices[2].uid > 0);
+
+    setup.screens[0].slices.push_back(setup.screens[0].slices[0]);
+    CHECK(ensureSliceUids(setup));
+    CHECK(setup.screens[0].slices[0].uid == u2 && setup.screens[0].slices[4].uid != u2);
+
+    setup.removeSlice(0, 4);
+    const int added = setup.addSlice(0, 1920, 1080);
+    CHECK(setup.screens[0].slices[static_cast<size_t>(added)].uid > setup.screens[0].slices[3].uid);
+
+    OutputHistory h(10);
+    h.reset(setup);
+    OutputSetup live = setup;
+    live.screens[0].slices.push_back(live.screens[0].slices[0]);
+    ensureSliceUids(live);
+    CHECK(h.observe(live, false));
+    CHECK(!h.observe(live, false));
+    CHECK(h.undoCount() == 1);
+}
+
 }
 
 int main()
@@ -464,6 +504,7 @@ int main()
     testHistory();
     testHistoryGesture();
     testSliceSource();
+    testSliceUid();
     std::printf("\n%d verificacoes, %d falha(s)\n", g_checks, g_failures);
     std::printf(g_failures == 0 ? "MAPTEST OK\n" : "MAPTEST FALHOU\n");
     return g_failures == 0 ? 0 : 1;

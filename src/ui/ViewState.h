@@ -12,7 +12,7 @@
 
 namespace bsl::ui::view {
 
-enum class PanelMode { Composition, Mapping, PixelMap, Any };
+enum class PanelMode { Composition, Mapping, PixelMap, Sequences, Any };
 
 struct PanelDef
 {
@@ -43,6 +43,11 @@ inline constexpr PanelDef kPanels[] = {
     {"pm-config", "Configuração", panel::kPmConfig, PanelMode::PixelMap, "pixelmap"},
     {"pm-overview", "Overview", panel::kPmOverview, PanelMode::PixelMap, "pixelmap"},
     {"pm-tabela", "Tabela", panel::kPmTable, PanelMode::PixelMap, "pixelmap"},
+    {"seq-lista", "Sequências e Visões", panel::kSeqList, PanelMode::Sequences, "sequencias"},
+    {"seq-canvas", "Canvas", panel::kSeqCanvas, PanelMode::Sequences, "sequencias"},
+    {"seq-passos", "Passos", panel::kSeqSteps, PanelMode::Sequences, "sequencias"},
+    {"seq-gerador", "Gerador", panel::kSeqGen, PanelMode::Sequences, "sequencias"},
+    {"seq-envelopes", "Envelopes", panel::kSeqEnv, PanelMode::Sequences, "sequencias"},
     {"status", "Barra de status", kStatusWindow, PanelMode::Any, "status"},
 };
 inline constexpr int kPanelCount = static_cast<int>(sizeof(kPanels) / sizeof(kPanels[0]));

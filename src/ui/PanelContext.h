@@ -4,6 +4,7 @@
 #include "app/Settings.h"
 #include "core/Composition.h"
 #include "output/OutputSetup.h"
+#include "seq/Envelope.h"
 
 #include <filesystem>
 #include <string>
@@ -28,7 +29,7 @@ class OutputRenderer;
 class ProjectSession;
 class ThumbnailCache;
 
-enum class AppMode { Composition, Mapping, PixelMap };
+enum class AppMode { Composition, Mapping, PixelMap, Sequences };
 
 struct MappingSelection
 {
@@ -93,6 +94,7 @@ struct PanelContext
     control::KeyService& keys;
     dmx::Service& dmx;
     update::Service& updates;
+    seq::BibliotecaEnvelopes& envelopes;
 };
 
 }

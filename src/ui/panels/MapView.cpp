@@ -525,6 +525,7 @@ void normalizeSelection(MappingSelection& sel, int sliceCount)
 
 void mapHistoryObserve(PanelContext& ctx)
 {
+    ensureSliceUids(ctx.output);
     const ImGuiIO& io = ImGui::GetIO();
     bool gesture = io.MouseDown[0] || io.MouseDown[1] || io.MouseDown[2] || io.WantTextInput;
     for (const ViewState& v : g_views)
@@ -534,6 +535,7 @@ void mapHistoryObserve(PanelContext& ctx)
 
 void mapHistoryCommit(PanelContext& ctx)
 {
+    ensureSliceUids(ctx.output);
     g_shared.history.observe(ctx.output, false);
 }
 

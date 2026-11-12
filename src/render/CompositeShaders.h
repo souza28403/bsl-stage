@@ -72,7 +72,15 @@ void main()
         cuv = transformedUv(cuv, coverage);
     vec4 src = sampleSource(uSrc, cuv, uSize, uSrcTop);
     float a = src.a * uOpacity * coverage;
-    vec3 rgb = mix(base.rgb, blendColors(base.rgb, src.rgb), a);
+    vec3 rgb;
+    if (uBlend >= 9) {
+        float m = dot(src.rgb, vec3(0.2126, 0.7152, 0.0722)) * src.a;
+        if (uBlend == 10)
+            m = 1.0 - m;
+        rgb = mix(base.rgb, base.rgb * m, uOpacity * coverage);
+    } else {
+        rgb = mix(base.rgb, blendColors(base.rgb, src.rgb), a);
+    }
     fragColor = vec4(rgb, 1.0);
 }
 )";
