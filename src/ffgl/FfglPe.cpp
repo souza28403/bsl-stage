@@ -1,5 +1,4 @@
 #include "ffgl/FfglPe.h"
-
 #include <windows.h>
 
 #include <cstdint>

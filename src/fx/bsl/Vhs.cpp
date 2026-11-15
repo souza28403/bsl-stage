@@ -1,4 +1,5 @@
 #include "fx/bsl/BslCommon.h"
+#include "platform/TimeUtil.h"
 #include "fx/bsl/BslEffects.h"
 
 #include <algorithm>
@@ -279,7 +280,7 @@ private:
         if (stamp) {
             const std::time_t t = std::time(nullptr);
             std::tm tm{};
-            localtime_s(&tm, &t);
+            bslplat::localTime(t, tm);
             char buf[32];
             std::snprintf(buf, sizeof(buf), "%02d.%02d.%04d", tm.tm_mday, tm.tm_mon + 1, tm.tm_year + 1900);
             date = buf;

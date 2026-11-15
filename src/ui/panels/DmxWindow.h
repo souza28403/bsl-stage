@@ -4,8 +4,6 @@
 #include "dmx/DmxEngine.h"
 #include "ui/PanelContext.h"
 
-#include <windows.h>
-
 #include <imgui.h>
 
 #include <string>
@@ -17,7 +15,7 @@ void openDmxWindowTab(int tab);
 void drawDmxWindow(PanelContext& ctx);
 
 void dmxFrame(PanelContext& ctx);
-void runDmxDialogs(HWND owner);
+void runDmxDialogs(void* owner);
 
 bool dmxIndicator(const char* id, ImVec2 size);
 

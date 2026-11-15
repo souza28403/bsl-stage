@@ -1,22 +1,12 @@
 #include "app/Paths.h"
 
-#include <windows.h>
-#include <shellapi.h>
-#include <shlobj.h>
+#include "platform/ExePath.h"
+#include "platform/OpenUrl.h"
+#include "platform/Paths.h"
 
 namespace bsl::paths {
 
 namespace {
-
-std::filesystem::path knownFolder(const KNOWNFOLDERID& id)
-{
-    PWSTR raw = nullptr;
-    std::filesystem::path result;
-    if (SUCCEEDED(SHGetKnownFolderPath(id, 0, nullptr, &raw)) && raw)
-        result = raw;
-    CoTaskMemFree(raw);
-    return result;
-}
 
 std::filesystem::path g_appDataOverride;
 
@@ -29,8 +19,7 @@ void setAppDataOverride(const std::filesystem::path& dir)
 
 std::filesystem::path appDataDir()
 {
-    std::filesystem::path dir = g_appDataOverride.empty() ? knownFolder(FOLDERID_RoamingAppData) / L"BSL Stage"
-                                                          : g_appDataOverride;
+    std::filesystem::path dir = g_appDataOverride.empty() ? bslplat::configDir() : g_appDataOverride;
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
     return dir;
@@ -38,12 +27,12 @@ std::filesystem::path appDataDir()
 
 std::filesystem::path desktopDir()
 {
-    return knownFolder(FOLDERID_Desktop);
+    return bslplat::desktopDir();
 }
 
 std::filesystem::path documentsDir()
 {
-    return knownFolder(FOLDERID_Documents) / L"BSL Stage";
+    return bslplat::documentsDir();
 }
 
 std::filesystem::path isfDir()
@@ -55,8 +44,7 @@ std::filesystem::path isfDir()
 
 std::filesystem::path localDataDir()
 {
-    std::filesystem::path dir = g_appDataOverride.empty() ? knownFolder(FOLDERID_LocalAppData) / L"BSL Stage"
-                                                          : g_appDataOverride;
+    std::filesystem::path dir = g_appDataOverride.empty() ? bslplat::dataDir() : g_appDataOverride;
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
     return dir;
@@ -72,9 +60,7 @@ std::filesystem::path pluginsDir()
 std::filesystem::path assetsDir()
 {
     static const std::filesystem::path cached = [] {
-        wchar_t buf[MAX_PATH];
-        const DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
-        std::filesystem::path dir = std::filesystem::path(std::wstring(buf, n)).parent_path();
+        std::filesystem::path dir = bslplat::exeDir();
         std::error_code ec;
         for (int i = 0; i < 4 && !dir.empty(); ++i) {
             if (std::filesystem::is_directory(dir / L"assets" / L"fonts", ec))
@@ -88,10 +74,7 @@ std::filesystem::path assetsDir()
 
 void revealInExplorer(const std::filesystem::path& file)
 {
-    std::filesystem::path native = file;
-    native.make_preferred();
-    const std::wstring args = L"/select,\"" + native.wstring() + L"\"";
-    ShellExecuteW(nullptr, L"open", L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
+    bslplat::revealFile(file);
 }
 
 std::string toUtf8(const std::filesystem::path& p)

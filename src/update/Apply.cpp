@@ -2,7 +2,11 @@
 
 #include "update/Zip.h"
 
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <cctype>
@@ -62,7 +66,19 @@ bool moveOver(const fs::path& from, const fs::path& to)
 {
     std::error_code ec;
     fs::create_directories(to.parent_path(), ec);
+#ifdef _WIN32
     return MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED) != 0;
+#else
+    fs::rename(from, to, ec);
+    if (!ec)
+        return true;
+    ec.clear();
+    fs::copy_file(from, to, fs::copy_options::overwrite_existing, ec);
+    if (ec)
+        return false;
+    fs::remove(from, ec);
+    return true;
+#endif
 }
 
 struct JournalEntry
@@ -97,12 +113,16 @@ bool isDirectoryWritable(const fs::path& dir)
     std::error_code ec;
     if (!fs::is_directory(dir, ec))
         return false;
+#ifdef _WIN32
     const fs::path probe = dir / (L".bslstage-write-test-" + std::to_wstring(GetCurrentProcessId()));
     HANDLE h = CreateFileW(probe.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE,
                            nullptr);
     if (h == INVALID_HANDLE_VALUE)
         return false;
     CloseHandle(h);
+#else
+    return access(dir.c_str(), W_OK) == 0;
+#endif
     return true;
 }
 

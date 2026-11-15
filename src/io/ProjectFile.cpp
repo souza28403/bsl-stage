@@ -7,7 +7,9 @@
 
 #include <nlohmann/json.hpp>
 
+#ifdef _WIN32
 #include <windows.h>
+#endif
 
 #include <algorithm>
 #include <charconv>
@@ -815,7 +817,7 @@ bool saveFile(const fs::path& file, const std::string& text, std::string* error)
         fs::create_directories(file.parent_path(), ec);
 
     fs::path tmp = file;
-    tmp += L".tmp";
+    tmp += ".tmp";
     {
         std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
         if (!out)
@@ -829,6 +831,15 @@ bool saveFile(const fs::path& file, const std::string& text, std::string* error)
         }
     }
 
+#ifndef _WIN32
+    fs::rename(tmp, file, ec);
+    if (ec) {
+        const std::string detail = ec.message();
+        fs::remove(tmp, ec);
+        return fail("não foi possível substituir " + paths::toUtf8(file.filename()) + " (" + detail + ")");
+    }
+    return true;
+#else
     bool ok = false;
     DWORD code = 0;
     if (fs::exists(file, ec)) {
@@ -847,6 +858,7 @@ bool saveFile(const fs::path& file, const std::string& text, std::string* error)
                     + std::to_string(code) + ")");
     }
     return true;
+#endif
 }
 
 LoadResult loadFile(const fs::path& file, Composition& comp, OutputSetup& output)

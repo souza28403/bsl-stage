@@ -2,9 +2,7 @@
 
 #include "app/Log.h"
 
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <windows.h>
+#include "platform/Socket.h"
 
 #include <algorithm>
 #include <cctype>
@@ -27,8 +25,7 @@ bool wsaAcquire()
 {
     std::lock_guard lk(g_wsaMutex);
     if (g_wsaUsers == 0) {
-        WSADATA data;
-        if (WSAStartup(MAKEWORD(2, 2), &data) != 0)
+        if (!sock::startup())
             return false;
     }
     ++g_wsaUsers;
@@ -39,14 +36,14 @@ void wsaRelease()
 {
     std::lock_guard lk(g_wsaMutex);
     if (g_wsaUsers > 0 && --g_wsaUsers == 0)
-        WSACleanup();
+        sock::cleanup();
 }
 
-void sendAll(SOCKET s, const char* data, size_t len)
+void sendAll(sock::Handle s, const char* data, size_t len)
 {
     size_t sent = 0;
     while (sent < len) {
-        const int n = send(s, data + sent, static_cast<int>(std::min<size_t>(len - sent, 1u << 20)), 0);
+        const int n = send(s, data + sent, static_cast<int>(std::min<size_t>(len - sent, 1u << 20)), sock::kSendFlags);
         if (n <= 0)
             return;
         sent += static_cast<size_t>(n);
@@ -74,7 +71,7 @@ std::string lower(std::string s)
     return s;
 }
 
-void respond(SOCKET s, const HttpResponse& r)
+void respond(sock::Handle s, const HttpResponse& r)
 {
     std::string h = "HTTP/1.1 " + std::to_string(r.status) + " " + reason(r.status) + "\r\n";
     if (r.status != 204 && !r.contentType.empty())
@@ -109,8 +106,8 @@ bool HttpServer::start(int port, HttpHandler handler, std::string* error, bool l
             *error = "Winsock indisponível";
         return false;
     }
-    SOCKET ls = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (ls == INVALID_SOCKET) {
+    sock::Handle ls = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (ls == sock::kInvalid) {
         wsaRelease();
         if (error)
             *error = "não foi possível criar o socket";
@@ -119,13 +116,13 @@ bool HttpServer::start(int port, HttpHandler handler, std::string* error, bool l
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(loopbackOnly ? INADDR_LOOPBACK : INADDR_ANY);
-    addr.sin_port = htons(static_cast<u_short>(port));
-    if (bind(ls, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR || listen(ls, 16) == SOCKET_ERROR) {
-        const int code = WSAGetLastError();
-        closesocket(ls);
+    addr.sin_port = htons(static_cast<std::uint16_t>(port));
+    if (bind(ls, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0 || listen(ls, 16) != 0) {
+        const int code = sock::lastError();
+        sock::close(ls);
         wsaRelease();
         if (error)
-            *error = code == WSAEADDRINUSE ? "porta " + std::to_string(port) + " ocupada"
+            *error = sock::isAddrInUse(code) ? "porta " + std::to_string(port) + " ocupada"
                                            : "não foi possível escutar na porta " + std::to_string(port);
         return false;
     }
@@ -148,7 +145,7 @@ void HttpServer::stop()
         thread_.join();
     const unsigned long long ls = listen_.exchange(~0ull);
     if (ls != ~0ull)
-        closesocket(static_cast<SOCKET>(ls));
+        sock::close(static_cast<sock::Handle>(ls));
     {
         std::unique_lock lk(activeMutex_);
         activeCv_.wait_for(lk, std::chrono::seconds(6), [this] { return active_ == 0; });
@@ -159,17 +156,17 @@ void HttpServer::stop()
 
 void HttpServer::acceptLoop()
 {
-    const SOCKET ls = static_cast<SOCKET>(listen_.load());
+    const sock::Handle ls = static_cast<sock::Handle>(listen_.load());
     while (running_.load()) {
         fd_set rd;
         FD_ZERO(&rd);
         FD_SET(ls, &rd);
         timeval tv{0, 100000};
-        const int r = select(0, &rd, nullptr, nullptr, &tv);
+        const int r = select(sock::selectArg(ls), &rd, nullptr, nullptr, &tv);
         if (r <= 0)
             continue;
-        SOCKET c = accept(ls, nullptr, nullptr);
-        if (c == INVALID_SOCKET)
+        sock::Handle c = accept(ls, nullptr, nullptr);
+        if (c == sock::kInvalid)
             continue;
         {
             std::lock_guard lk(activeMutex_);
@@ -186,14 +183,12 @@ void HttpServer::acceptLoop()
 
 void HttpServer::serve(unsigned long long socketValue)
 {
-    SOCKET s = static_cast<SOCKET>(socketValue);
-    const DWORD rt = 3000, st = 8000;
-    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&rt), sizeof(rt));
-    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&st), sizeof(st));
+    sock::Handle s = static_cast<sock::Handle>(socketValue);
+    sock::setTimeoutsMs(s, 3000, 8000);
 
     auto finish = [&] {
-        shutdown(s, SD_SEND);
-        closesocket(s);
+        sock::shutdownSend(s);
+        sock::close(s);
     };
 
     std::string req;

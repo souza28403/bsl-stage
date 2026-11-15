@@ -1436,6 +1436,12 @@ def sc_geradores(t):
     pick_tab(app, "Fontes")
     app.click("Cor sólida", "cmp_geradores", double=True)
     app.wait_state(lambda s: any(x[0] == 2 and x[1] == 3 and "Cor" in x[2] for x in s["cells"]), "duplo clique carrega gerador")
+    app.click("celula L3 C3")
+    pick_tab(app, "Fontes")
+    app.click("Padrão de calibração BSL", "cmp_geradores", double=True)
+    app.wait_state(lambda s: any(x[0] == 2 and x[1] == 2 for x in s["cells"]), "duplo clique carrega o padrao de calibracao")
+    app.wait_frames(10)
+    t.shot("clip_padrao_calibracao")
     app.drag_items(app.find("Captura de tela", "cmp_geradores"), cell(app, 3, 5), steps=18)
     app.wait_frames(10)
     expect(app.has("Atualizar lista"), "seletor de alvo da captura abriu ao soltar o gerador")
@@ -2469,6 +2475,38 @@ def sc_dmx(t):
     app.wait_state(lambda s: not s["dmx"]["windowOpen"], "janela DMX fechada", timeout=3)
 
 
+def _beat(app):
+    app.read()
+    return app.state["beat"]
+
+
+def sc_minimizado(t):
+    app = t.app
+    ensure_mode(app, "composition")
+    app.wait_frames(10)
+    b0 = _beat(app)
+    t0 = time.time()
+    time.sleep(2.0)
+    b1 = _beat(app)
+    tb1 = time.time()
+    visible_rate = (b1 - b0) / (tb1 - t0)
+    expect(visible_rate > 0.1, "o relogio da composicao anda com a janela visivel (%.2f batidas/s)" % visible_rate)
+    driver.user32.ShowWindow(app.hwnd, 6)
+    try:
+        time.sleep(0.5)
+        expect(driver.user32.IsIconic(app.hwnd), "a janela principal minimizou")
+        time.sleep(3.0)
+    finally:
+        driver.user32.ShowWindow(app.hwnd, 9)
+    app.ensure_focus()
+    app.wait_frames(4)
+    b2 = _beat(app)
+    rate = (b2 - b1) / (time.time() - tb1)
+    expect(rate >= visible_rate * 0.7,
+           "a composicao continua rodando minimizada (%.2f batidas/s minimizada x %.2f visivel)" % (rate, visible_rate))
+    expect(app.alive(), "o app segue vivo depois de restaurar")
+
+
 def sc_segundo_plano(t):
     app = t.app
     ensure_mode(app, "composition")
@@ -3149,7 +3187,7 @@ def sc_sequencias(t):
         if i > 0:
             app.click("##map_add_slice", "Lista")
             app.wait_frames(4)
-        for lbl, v in (("##x", x), ("##y", y), ("##w", 960), ("##h", 540)):
+        for lbl, v in (("##w", 960), ("##h", 540), ("##x", x), ("##y", y)):
             _type_field(app, lbl, v)
 
     ensure_mode(app, "sequences")
@@ -3246,6 +3284,14 @@ def sc_sequencias(t):
     pick_tab(app, "Camada")
     app.wait_frames(4)
     edit = scroll_into_view(app, "##env_editar", "cmp_aba_camada")
+    combos = [i for i in app.find_all("##v", "cmp_aba_camada") if i.visible and i.rect.x1 - i.rect.x0 > 300 and i.rect.y0 < edit.rect.y0 - 4]
+    expect(combos, "combo Curva do passo na camada")
+    curva = max(combos, key=lambda i: i.rect.y0)
+    app.click_at(curva.rect.cx, curva.rect.cy)
+    app.wait_frames(3)
+    app.click("Envelope", "Combo")
+    app.wait_frames(6)
+    edit = scroll_into_view(app, "##env_editar", "cmp_aba_camada")
     app.click_at(edit.rect.cx, edit.rect.cy)
     app.wait_state(lambda s: s["mode"] == "sequences", "Editar… abre o editor de envelopes")
     app.wait_frames(6)
@@ -3284,6 +3330,7 @@ SCENARIOS = [
     ("licencas", sc_licencas),
     ("plugins", sc_plugins),
     ("janela", sc_janela),
+    ("minimizado", sc_minimizado),
     ("segundo_plano", sc_segundo_plano),
     ("fuzz", sc_fuzz),
     ("fechar", sc_fechar),

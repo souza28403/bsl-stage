@@ -1,4 +1,5 @@
 #include "update/Policy.h"
+#include "platform/TimeUtil.h"
 
 #include <cstdio>
 #include <ctime>
@@ -72,7 +73,7 @@ std::string formatLocalDateTime(int64_t unixSeconds)
         return "nunca";
     const std::time_t t = static_cast<std::time_t>(unixSeconds);
     std::tm local{};
-    if (localtime_s(&local, &t) != 0)
+    if (!bslplat::localTime(t, local))
         return "nunca";
     char buf[32];
     std::strftime(buf, sizeof(buf), "%d/%m/%Y %H:%M", &local);

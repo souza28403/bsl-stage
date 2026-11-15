@@ -1,7 +1,9 @@
 #include "update/Http.h"
 
+#if BSL_WITH_UPDATER
 #include <windows.h>
 #include <winhttp.h>
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -10,6 +12,8 @@
 #include <thread>
 
 namespace bsl::update {
+
+#if BSL_WITH_UPDATER
 
 namespace {
 
@@ -255,6 +259,34 @@ std::unique_ptr<IHttp> makeWinHttp(const std::string& userAgent)
 {
     return std::make_unique<WinHttpClient>(userAgent);
 }
+
+#else
+
+namespace {
+
+class UnavailableHttp : public IHttp
+{
+public:
+    HttpResponse get(const std::string&, int, size_t) override { return unavailable(); }
+    HttpResponse download(const std::string&, const std::filesystem::path&, const ProgressFn&) override { return unavailable(); }
+
+private:
+    static HttpResponse unavailable()
+    {
+        HttpResponse r;
+        r.error = "Não há atualização automática nesta plataforma.";
+        return r;
+    }
+};
+
+}
+
+std::unique_ptr<IHttp> makeWinHttp(const std::string&)
+{
+    return std::make_unique<UnavailableHttp>();
+}
+
+#endif
 
 void FakeHttp::addBody(const std::string& url, std::string body, int status)
 {

@@ -1,6 +1,7 @@
 #include "worker/FrameSink.h"
 
 #include "media/WorkerProtocol.h"
+#include "worker/PixelOps.h"
 #include "worker/WorkerUtil.h"
 
 #include <d3d11_1.h>
@@ -24,25 +25,6 @@ std::uint64_t duplicateToApp(HANDLE appProcess, HANDLE local)
     if (!DuplicateHandle(GetCurrentProcess(), local, appProcess, &remote, 0, FALSE, DUPLICATE_SAME_ACCESS))
         return 0;
     return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(remote));
-}
-
-void unpremultiplyRow(const std::uint8_t* src, std::uint8_t* dst, int pixels)
-{
-    for (int x = 0; x < pixels; ++x) {
-        const std::uint8_t* s = src + x * 4;
-        std::uint8_t* d = dst + x * 4;
-        const unsigned a = s[3];
-        if (a == 0 || a == 255) {
-            d[0] = s[0];
-            d[1] = s[1];
-            d[2] = s[2];
-        } else {
-            d[0] = static_cast<std::uint8_t>(std::min(255u, (s[0] * 255u + a / 2) / a));
-            d[1] = static_cast<std::uint8_t>(std::min(255u, (s[1] * 255u + a / 2) / a));
-            d[2] = static_cast<std::uint8_t>(std::min(255u, (s[2] * 255u + a / 2) / a));
-        }
-        d[3] = static_cast<std::uint8_t>(a);
-    }
 }
 
 class ShmSink final : public FrameSink

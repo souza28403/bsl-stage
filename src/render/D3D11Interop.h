@@ -2,16 +2,79 @@
 
 #include <glad/gl.h>
 
+#include <memory>
+#include <string>
+
+#if BSL_WITH_D3D
 #include <d3d11.h>
 #include <dxgi.h>
 #include <wrl/client.h>
-
-#include <memory>
-#include <string>
+#else
+struct ID3D11Device;
+struct ID3D11DeviceContext;
+struct ID3D11Texture2D;
+struct ID3D11RenderTargetView;
+struct IDXGIAdapter1;
+#endif
 
 namespace bsl::render {
 
 class D3D11Interop;
+
+#if !BSL_WITH_D3D
+
+class InteropTexture
+{
+public:
+    ~InteropTexture();
+    InteropTexture(const InteropTexture&) = delete;
+    InteropTexture& operator=(const InteropTexture&) = delete;
+
+    ID3D11Texture2D* d3d() const { return nullptr; }
+    ID3D11RenderTargetView* rtv() const { return nullptr; }
+    GLuint gl() const { return 0; }
+    int width() const { return 0; }
+    int height() const { return 0; }
+    bool usesInterop() const { return false; }
+
+    void beginD3D() {}
+    void endD3D() {}
+    void clear(float, float, float, float) {}
+
+private:
+    InteropTexture() = default;
+};
+
+class D3D11Interop
+{
+public:
+    static std::shared_ptr<D3D11Interop> create(std::string* error = nullptr);
+    static std::shared_ptr<D3D11Interop> shared(std::string* error = nullptr);
+
+    ~D3D11Interop();
+    D3D11Interop(const D3D11Interop&) = delete;
+    D3D11Interop& operator=(const D3D11Interop&) = delete;
+
+    ID3D11Device* device() const { return nullptr; }
+    ID3D11DeviceContext* context() const { return nullptr; }
+    IDXGIAdapter1* adapter() const { return nullptr; }
+    bool interopAvailable() const { return false; }
+    const std::string& adapterName() const { return adapterName_; }
+    const std::string& glRenderer() const { return glRenderer_; }
+    std::string describe() const;
+
+    std::unique_ptr<InteropTexture> createTexture(int width, int height, bool forceCpu = false, int format = 0,
+                                                  bool keepAlpha = false);
+
+private:
+    D3D11Interop() = default;
+
+    std::string adapterName_;
+    std::string glRenderer_;
+};
+
+#else
+
 
 class InteropTexture
 {
@@ -82,5 +145,7 @@ private:
     std::string adapterName_;
     std::string glRenderer_;
 };
+
+#endif
 
 }

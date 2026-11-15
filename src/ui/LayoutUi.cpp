@@ -439,7 +439,7 @@ void drawLayoutWindows(PanelContext& ctx)
     drawManageWindow(ctx);
 }
 
-void runLayoutDialogs(HWND owner)
+void runLayoutDialogs(void* owner)
 {
     if (g_exportRequest >= 0) {
         const int index = g_exportRequest;

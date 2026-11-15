@@ -11,8 +11,14 @@ RgbaImage loadImageFile(const std::filesystem::path& path)
 {
     RgbaImage out;
     FILE* file = nullptr;
+#ifdef _WIN32
     if (_wfopen_s(&file, path.c_str(), L"rb") != 0 || !file)
         return out;
+#else
+    file = std::fopen(path.c_str(), "rb");
+    if (!file)
+        return out;
+#endif
 
     int w = 0, h = 0, n = 0;
     unsigned char* data = stbi_load_from_file(file, &w, &h, &n, 4);

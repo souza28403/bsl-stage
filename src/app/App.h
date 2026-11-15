@@ -76,9 +76,9 @@ private:
 
     bool init();
     void shutdown();
-    void frame();
+    void frame(bool minimized);
     void updateStats(Clock::time_point frameStart);
-    void limitFrameRate(Clock::time_point frameStart) const;
+    void limitFrameRate(Clock::time_point frameStart, bool minimized) const;
     void applyProfile();
     void applyDecoderOptions();
     void setWindowIcon();
@@ -118,6 +118,7 @@ private:
     FrameStats stats_;
     DropRequest drop_;
     bool quitRequested_ = false;
+    bool ativado_ = true;
     OutputSetup output_;
     MappingSelection mapping_;
     AppMode mode_ = AppMode::Composition;

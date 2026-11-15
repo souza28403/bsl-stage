@@ -2,9 +2,7 @@
 
 #include "media/FrameConverter.h"
 
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <iphlpapi.h>
+#include "platform/Socket.h"
 
 #include <algorithm>
 #include <atomic>
@@ -109,15 +107,11 @@ std::string describeError(int r, const Config& cfg, bool deadlineHit)
 }
 
 struct WsaScope {
-    WsaScope()
-    {
-        WSADATA d{};
-        ok = WSAStartup(MAKEWORD(2, 2), &d) == 0;
-    }
+    WsaScope() { ok = bsl::sock::startup(); }
     ~WsaScope()
     {
         if (ok)
-            WSACleanup();
+            bsl::sock::cleanup();
     }
     bool ok = false;
 };
@@ -127,32 +121,19 @@ struct WsaScope {
 std::vector<std::string> localIPv4Addresses()
 {
     std::vector<std::string> out;
-    ULONG size = 16 * 1024;
-    std::vector<unsigned char> buf(size);
-    const ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
-    ULONG r = GetAdaptersAddresses(AF_INET, flags, nullptr, reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()), &size);
-    if (r == ERROR_BUFFER_OVERFLOW) {
-        buf.resize(size);
-        r = GetAdaptersAddresses(AF_INET, flags, nullptr, reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()), &size);
-    }
-    if (r != NO_ERROR)
-        return out;
-    for (const IP_ADAPTER_ADDRESSES* a = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()); a; a = a->Next) {
-        if (a->OperStatus != IfOperStatusUp || a->IfType == IF_TYPE_SOFTWARE_LOOPBACK)
+    for (const bsl::sock::LocalInterface& li : bsl::sock::localInterfaces()) {
+        if (li.loopback)
             continue;
-        for (const IP_ADAPTER_UNICAST_ADDRESS* u = a->FirstUnicastAddress; u; u = u->Next) {
-            if (!u->Address.lpSockaddr || u->Address.lpSockaddr->sa_family != AF_INET)
-                continue;
-            const auto* sin = reinterpret_cast<const sockaddr_in*>(u->Address.lpSockaddr);
-            char text[INET_ADDRSTRLEN] = {};
-            if (!InetNtopA(AF_INET, const_cast<IN_ADDR*>(&sin->sin_addr), text, sizeof(text)))
-                continue;
-            const std::string ip = text;
-            if (ip.rfind("169.254.", 0) == 0 || ip.rfind("127.", 0) == 0 || ip == "0.0.0.0")
-                continue;
-            if (std::find(out.begin(), out.end(), ip) == out.end())
-                out.push_back(ip);
-        }
+        in_addr ia{};
+        ia.s_addr = htonl(li.ipHost);
+        char text[INET_ADDRSTRLEN] = {};
+        if (!inet_ntop(AF_INET, &ia, text, sizeof(text)))
+            continue;
+        const std::string ip = text;
+        if (ip.rfind("169.254.", 0) == 0 || ip.rfind("127.", 0) == 0 || ip == "0.0.0.0")
+            continue;
+        if (std::find(out.begin(), out.end(), ip) == out.end())
+            out.push_back(ip);
     }
     return out;
 }
@@ -343,28 +324,28 @@ bool portAvailable(const std::string& bindAddress, int port, bool udp, std::stri
     WsaScope wsa;
     if (!wsa.ok)
         return true;
-    SOCKET s = socket(AF_INET, udp ? SOCK_DGRAM : SOCK_STREAM, udp ? IPPROTO_UDP : IPPROTO_TCP);
-    if (s == INVALID_SOCKET)
+    bsl::sock::Handle s = socket(AF_INET, udp ? SOCK_DGRAM : SOCK_STREAM, udp ? IPPROTO_UDP : IPPROTO_TCP);
+    if (s == bsl::sock::kInvalid)
         return true;
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(static_cast<u_short>(port));
-    if (InetPtonA(AF_INET, bindAddress.c_str(), &addr.sin_addr) != 1)
+    addr.sin_port = htons(static_cast<std::uint16_t>(port));
+    if (inet_pton(AF_INET, bindAddress.c_str(), &addr.sin_addr) != 1)
         addr.sin_addr.s_addr = htonl(INADDR_ANY);
     bool ok = true;
     if (bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
-        const int code = WSAGetLastError();
+        const int code = bsl::sock::lastError();
         ok = false;
         if (error) {
-            if (code == WSAEADDRINUSE)
+            if (bsl::sock::isAddrInUse(code))
                 *error = "Porta " + std::to_string(port) + " em uso por outro programa (ou por outro clip). Escolha outra porta.";
-            else if (code == WSAEACCES)
+            else if (bsl::sock::isAccessDenied(code))
                 *error = "Sem permissão para usar a porta " + std::to_string(port) + ".";
             else
                 *error = "Não foi possível abrir a porta " + std::to_string(port) + " (erro " + std::to_string(code) + ").";
         }
     }
-    closesocket(s);
+    bsl::sock::close(s);
     return ok;
 }
 

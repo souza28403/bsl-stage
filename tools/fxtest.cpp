@@ -6,6 +6,7 @@
 #include "fx/IsfLibrary.h"
 #include "fx/IsfRenderer.h"
 #include "media/ISource.h"
+#include "platform/ExePath.h"
 #include "render/Compositor.h"
 #include "render/FboPool.h"
 
@@ -13,8 +14,6 @@
 #include <GLFW/glfw3.h>
 
 #include <stb_image_write.h>
-
-#include <windows.h>
 
 #include <algorithm>
 #include <cmath>
@@ -768,9 +767,7 @@ fs::path findIsfDir(int argc, char** argv)
     std::error_code ec;
     if (argc > 1 && fs::is_directory(argv[1], ec))
         return fs::absolute(argv[1], ec);
-    wchar_t buf[MAX_PATH];
-    const DWORD len = GetModuleFileNameW(nullptr, buf, MAX_PATH);
-    fs::path dir = fs::path(std::wstring(buf, len)).parent_path();
+    fs::path dir = bslplat::exeDir();
     for (int i = 0; i < 6 && !dir.empty(); ++i) {
         if (fs::is_directory(dir / "assets" / "isf", ec))
             return dir / "assets" / "isf";
@@ -1052,7 +1049,13 @@ void main(){ gl_FragColor = go ? vec4(1.0, 0.0, 0.0, 1.0) : vec4(0.0, 1.0, 0.0, 
         fs::create_directories(dir, ec);
         const unsigned char px[16] = {255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255};
         FILE* f = nullptr;
-        if (_wfopen_s(&f, (dir / "tex.png").c_str(), L"wb") == 0 && f) {
+#ifdef _WIN32
+        if (_wfopen_s(&f, (dir / "tex.png").c_str(), L"wb") != 0)
+            f = nullptr;
+#else
+        f = std::fopen((dir / "tex.png").c_str(), "wb");
+#endif
+        if (f) {
             stbi_write_png_to_func([](void* ctx, void* data, int size) { std::fwrite(data, 1, static_cast<size_t>(size), static_cast<FILE*>(ctx)); },
                                    f, 2, 2, 4, px, 8);
             std::fclose(f);

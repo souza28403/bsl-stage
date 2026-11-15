@@ -11,8 +11,7 @@
 
 #include <imgui.h>
 
-#include <windows.h>
-#include <shellapi.h>
+#include "platform/OpenUrl.h"
 
 #include <algorithm>
 #include <cfloat>
@@ -71,7 +70,7 @@ void drawNdiRuntimeNotice()
     qa::note("ndi:link");
     if (ImGui::Button("Abrir a página##ndi_link_abrir")) {
         if (!qa::enabled())
-            ShellExecuteA(nullptr, "open", ndi::kDownloadUrl, nullptr, nullptr, SW_SHOWNORMAL);
+            bslplat::openUrl(ndi::kDownloadUrl);
     }
     ImGui::SameLine();
     if (ImGui::Button("Copiar o link##ndi_link_copiar"))

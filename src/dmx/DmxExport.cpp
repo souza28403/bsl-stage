@@ -1,4 +1,5 @@
 #include "dmx/DmxExport.h"
+#include "platform/TimeUtil.h"
 
 #include "core/Layer.h"
 
@@ -64,7 +65,7 @@ std::string isoNow()
 {
     const std::time_t t = std::time(nullptr);
     std::tm local{};
-    localtime_s(&local, &t);
+    bslplat::localTime(t, local);
     char buf[32];
     std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", &local);
     return buf;
@@ -331,7 +332,7 @@ std::vector<std::uint8_t> zipStore(const std::vector<ZipFile>& files)
     std::vector<std::uint8_t> out;
     const std::time_t t = std::time(nullptr);
     std::tm lt{};
-    localtime_s(&lt, &t);
+    bslplat::localTime(t, lt);
     const std::uint32_t dosTime = static_cast<std::uint32_t>((lt.tm_hour << 11) | (lt.tm_min << 5) | (lt.tm_sec / 2));
     const std::uint32_t dosDate = static_cast<std::uint32_t>(((std::max(lt.tm_year, 80) - 80) << 9) | ((lt.tm_mon + 1) << 5) | lt.tm_mday);
 

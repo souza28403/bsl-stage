@@ -65,6 +65,30 @@ Este documento não é aconselhamento jurídico. Os itens **PENDENTE** pedem uma
 - **Texto da licença:** `licenses/Spout2-BSD-2-Clause.txt`
 - **Uso:** entrada e saída Spout (compartilhamento de texturas entre programas no mesmo PC). Só o código de `SPOUTSDK/SpoutGL`, compilado como biblioteca estática.
 
+### Monocypher
+- **Versão:** 4.0.2
+- **Licença:** BSD-2-Clause ou CC0-1.0 (domínio público), à escolha
+- **Copyright:** Copyright (c) 2017-2023, Loup Vaillant; Copyright (c) 2017-2019, Michael Savage; Copyright (c) 2017-2023, Fabio Scotoni
+- **URL:** https://monocypher.org/ (código: https://github.com/LoupVaillant/Monocypher)
+- **Texto da licença:** `licenses/Monocypher-BSD-2-ou-CC0.txt`
+- **Uso:** verificação offline da chave de ativação do instalador (assinatura Ed25519). Baixado pelo CMake e compilado como biblioteca estática; também linkado na ação personalizada do instalador.
+
+### Native File Dialog Extended
+- **Versão:** 1.2.1
+- **Licença:** zlib/libpng
+- **Copyright:** Bernard Teo, Michael Labbe e colaboradores
+- **URL:** https://github.com/btzy/nativefiledialog-extended
+- **Texto da licença:** `licenses/NFD-zlib.txt`
+- **Uso:** diálogos de abrir e salvar arquivo no Linux e no macOS (não é usado no Windows). Baixado pelo CMake (FetchContent) e compilado como biblioteca estática.
+
+### miniaudio
+- **Versão:** 0.11.26
+- **Licença:** domínio público (Unlicense) ou MIT-0, à escolha
+- **Copyright:** Copyright 2026 David Reid
+- **URL:** https://github.com/mackron/miniaudio
+- **Texto da licença:** `licenses/miniaudio-dominio-publico-ou-MIT-0.txt`
+- **Uso:** captura de áudio (entrada e "som do PC") no Linux. Biblioteca de um único cabeçalho, baixada pelo CMake e compilada só fora do Windows.
+
 ### FFGL (cabeçalhos do SDK de plugins)
 - **Versão:** FFGL 2.x (`FFGL.h` e `FFGLPlatform.h`, sem modificação; `GL/glew.h` é um arquivo próprio que só redireciona para o glad)
 - **Licença:** BSD-3-Clause
@@ -82,7 +106,24 @@ Este documento não é aconselhamento jurídico. Os itens **PENDENTE** pedem uma
 - **URL:** https://ffmpeg.org/ (código-fonte e como obtê-lo); build: https://github.com/BtbN/FFmpeg-Builds
 - **Texto da licença:** `licenses/FFmpeg-LGPL-3.0.txt`
 - **Uso:** decodificação de vídeo e imagens e captura de dispositivos. Vinculado dinamicamente (DLLs): o usuário pode trocá-las por outra build compatível da LGPL.
+- **Linux (AppImage):** FFmpeg 9.0.2 compilado a partir do código-fonte oficial (https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz, SHA-256 e assinatura conferidos por `tools/package/build-ffmpeg-linux.sh`), bibliotecas compartilhadas (libavcodec.so.63, libavformat.so.63, libavutil.so.61, libavdevice.so.63, libswscale.so.10, libswresample.so.7), licença LGPL-2.1-ou-posterior (`licenses/FFmpeg-LGPL-2.1.txt`; sem `--enable-gpl`, `--enable-version3` nem `--enable-nonfree`) e só com as bibliotecas externas dav1d e libvpx, ligadas estaticamente (seções abaixo). O texto de configure usado vai em `usr/share/doc/bsl-stage/FFMPEG-CONFIGURE.txt` dentro do AppImage. Esta build inclui os decodificadores H.264 e HEVC nativos do FFmpeg (patentes: `docs/PATENTES-E-LICENCAS.md`).
 - **Situação:** PENDENTE: (1) o CMake baixa a build "latest" da BtbN, que muda com o tempo, então a oferta de código-fonte da LGPL exige fixar a build usada ou compilar o próprio FFmpeg; (2) o build da BtbN incorpora dentro das DLLs bibliotecas de terceiros (libdav1d, libaom, libvpx, libopus, libvorbis, libwebp, libjxl, libopenh264, libass, freetype, harfbuzz, libxml2, entre outras, conforme a linha de configuração do build) e os avisos delas não acompanham o pacote; (3) a build inclui os decodificadores H.264 e HEVC (patentes: `docs/PATENTES-E-LICENCAS.md`). Compilar um FFmpeg mínimo próprio resolve os três.
+
+### dav1d
+- **Versão:** 1.5.4 (só no AppImage para Linux, ligada estaticamente nas bibliotecas do FFmpeg)
+- **Licença:** BSD-2-Clause
+- **Copyright:** Copyright © 2018-2025, VideoLAN and dav1d authors
+- **URL:** https://code.videolan.org/videolan/dav1d
+- **Texto da licença:** `licenses/dav1d-BSD-2.txt`
+- **Uso:** decodificação de vídeo AV1 pelo FFmpeg compilado para Linux.
+
+### libvpx
+- **Versão:** 1.17.0 (só no AppImage para Linux, ligada estaticamente nas bibliotecas do FFmpeg)
+- **Licença:** BSD-3-Clause, com concessão de patentes do WebM Project
+- **Copyright:** Copyright (c) 2010, The WebM Project authors
+- **URL:** https://github.com/webmproject/libvpx
+- **Texto da licença:** `licenses/libvpx-BSD-3.txt`, `licenses/libvpx-PATENTS.txt`
+- **Uso:** decodificação de VP8 e VP9 (inclusive com canal alfa) pelo FFmpeg compilado para Linux.
 
 ### PDFium
 - **Versão:** chromium/8111 (PDFium 158.0.8111.0), binários bblanchon/pdfium-binaries
@@ -306,7 +347,7 @@ Itens que dependem de decisão ou verificação de quem responde pelo projeto (n
 
 - Licença do DirectML (Microsoft) junto de um programa GPL-3.0: manter a DLL no pacote ou usar só a do Windows.
 - Licença dos componentes do React Bits em `assets/bsl/web_bg`.
-- FFmpeg da BtbN: fixar a build, oferecer o código-fonte correspondente e incluir os avisos das bibliotecas incorporadas (ou compilar um FFmpeg próprio, sem H.264/HEVC).
+- FFmpeg da BtbN (só Windows): fixar a build, oferecer o código-fonte correspondente e incluir os avisos das bibliotecas incorporadas (ou compilar um FFmpeg próprio, sem H.264/HEVC). No Linux o FFmpeg é próprio (`tools/package/build-ffmpeg-linux.sh`), mas ainda com H.264/HEVC.
 - Código-fonte do `assets/bsl/web_bg`: o arquivo é um bundle minificado; a GPL pede a forma preferida para modificação. O projeto `BSL_Background_Studio` precisa ser publicado (neste repositório ou em outro).
 - Inventário das dependências transitivas do `@react-three/drei` e dos demais pacotes npm que entram no bundle (por exemplo com `pnpm licenses list` no projeto de origem).
 - Textos que faltam em `licenses/`: CC0-1.0 e WTFPL (glad), @react-three/fiber, OGL, TensorFlow.js core, e a linha de copyright dos modelos Depth Anything V2 Small e MODNet.

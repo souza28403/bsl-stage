@@ -8,14 +8,12 @@
 
 #include <string>
 
-#include <windows.h>
-
 namespace bsl::ui {
 
 void keysFrame(PanelContext& ctx);
 void drawKeysWindows(PanelContext& ctx);
 void openKeysEditor();
-void runKeysDialogs(HWND owner);
+void runKeysDialogs(void* owner);
 
 control::SelectionRef selectionRef(const Selection& selection);
 

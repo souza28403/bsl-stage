@@ -344,9 +344,16 @@ std::unique_ptr<Frame> VideoDecoder::Impl::takeDue(double t)
     }
     lastT = t;
 
+    while (!queue.empty() && queue.front().epoch < consumerEpoch)
+        queue.pop_front();
+
     std::unique_ptr<Frame> best;
     while (!queue.empty()) {
         Queued& head = queue.front();
+        if (head.epoch < consumerEpoch) {
+            queue.pop_front();
+            continue;
+        }
         if (head.epoch > consumerEpoch)
             break;
         if (head.frame->pts <= t + 0.001) {
@@ -356,7 +363,7 @@ std::unique_ptr<Frame> VideoDecoder::Impl::takeDue(double t)
             break;
         }
     }
-    if (!best && !delivered && !queue.empty() && queue.front().epoch <= consumerEpoch) {
+    if (!best && !delivered && !queue.empty() && queue.front().epoch == consumerEpoch) {
         best = std::move(queue.front().frame);
         queue.pop_front();
     }
@@ -474,11 +481,14 @@ std::unique_ptr<Frame> VideoDecoder::tryGetFrame(double clipTime)
 {
     Impl& d = *impl_;
     std::unique_ptr<Frame> f;
+    bool freed = false;
     {
         std::lock_guard lk(d.m);
+        const size_t before = d.queue.size();
         f = d.takeDue(clipTime);
+        freed = d.queue.size() != before;
     }
-    if (f)
+    if (f || freed)
         d.cvWorker.notify_one();
     return f;
 }

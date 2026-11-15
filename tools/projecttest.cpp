@@ -15,12 +15,27 @@
 #include <iterator>
 #include <string>
 
+#include "platform/ExePath.h"
+
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace fs = std::filesystem;
 using namespace bsl;
 
 namespace {
+
+unsigned long testProcessId()
+{
+#ifdef _WIN32
+    return GetCurrentProcessId();
+#else
+    return static_cast<unsigned long>(getpid());
+#endif
+}
 
 int g_failures = 0;
 int g_checks = 0;
@@ -56,9 +71,7 @@ fs::path findTestMedia(int argc, char** argv)
     std::error_code ec;
     if (argc > 1 && fs::is_directory(argv[1], ec))
         return fs::absolute(argv[1], ec);
-    wchar_t buf[MAX_PATH];
-    const DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
-    fs::path dir = fs::path(std::wstring(buf, n)).parent_path();
+    fs::path dir = bslplat::exeDir();
     for (int i = 0; i < 6 && !dir.empty(); ++i) {
         if (fs::is_directory(dir / "testmedia", ec))
             return dir / "testmedia";
@@ -210,7 +223,7 @@ int main(int argc, char** argv)
     }
 
     std::error_code ec;
-    const fs::path root = fs::temp_directory_path() / ("bslstage_projecttest_" + std::to_string(GetCurrentProcessId()));
+    const fs::path root = fs::temp_directory_path() / ("bslstage_projecttest_" + std::to_string(testProcessId()));
     fs::remove_all(root, ec);
     const fs::path proj = root / u8"projeção";
     fs::create_directories(proj / "media", ec);

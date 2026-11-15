@@ -8,6 +8,8 @@
 #include "fx/EffectRegistry.h"
 #include "fx/IsfLibrary.h"
 #include "io/FileDialogs.h"
+#include "platform/OpenUrl.h"
+#include "platform/WindowHandle.h"
 #include "ui/Theme.h"
 #include "ui/Ui.h"
 #include "ui/Widgets.h"
@@ -17,8 +19,6 @@
 
 #include <imgui.h>
 
-#include <windows.h>
-#include <shellapi.h>
 
 #include <algorithm>
 #include <cctype>
@@ -171,7 +171,7 @@ void drawFoldersPopup(PanelContext& ctx)
     auto openFolder = [](const std::filesystem::path& dir) {
         std::error_code ec;
         std::filesystem::create_directories(dir, ec);
-        ShellExecuteW(nullptr, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        bslplat::openFolder(dir);
     };
 
     dimLabel("Principal");
@@ -212,7 +212,7 @@ void drawFoldersPopup(PanelContext& ctx)
 
     ImGui::Spacing();
     if (ImGui::Button(ICON_PLUS "  Adicionar pasta…##isf_pasta_adicionar")) {
-        if (auto dir = dialogs::pickFolder(GetActiveWindow())) {
+        if (auto dir = dialogs::pickFolder(bslplat::activeWindowHandle())) {
             const std::string utf8 = paths::toUtf8(*dir);
             if (std::find(ctx.settings.isfFolders.begin(), ctx.settings.isfFolders.end(), utf8) == ctx.settings.isfFolders.end()
                 && ctx.settings.isfFolders.size() < 32) {

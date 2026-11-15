@@ -12,4 +12,12 @@
   <String Id="OptionsDlgDescription" Value="Escolha onde criar os atalhos do programa." />
   <String Id="OptionsDlgDesktopShortcut" Value="Criar um atalho na Área de Trabalho" />
   <String Id="OptionsDlgStartMenuNote" Value="O atalho no Menu Iniciar é sempre criado. Os arquivos de projeto .bslstage serão associados ao BSL Stage, e seus projetos e configurações nunca são apagados ao desinstalar." />
+  <String Id="LicencaDlgTitleBold" Value="{\WixUI_Font_Title}Chave de ativação" />
+  <String Id="LicencaDlgDescription" Value="Informe o e-mail e a chave de ativação recebidos na compra." />
+  <String Id="LicencaDlgNota" Value="A chave é conferida neste computador, sem internet. Digite o e-mail exatamente como foi informado na compra; a chave pode ser colada com ou sem hífens." />
+  <String Id="LicencaDlgEmail" Value="E-mail:" />
+  <String Id="LicencaDlgChave" Value="Chave de ativação:" />
+  <String Id="LicencaErroTitulo" Value="BSL Stage" />
+  <String Id="LicencaErroDlgTexto" Value="E-mail ou chave inválidos. Confira os dados e tente de novo." />
+  <String Id="LicencaErro" Value="E-mail ou chave de ativação inválidos. Na instalação silenciosa use BSL_EMAIL=e-mail BSL_CHAVE=chave." />
 </WixLocalization>

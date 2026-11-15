@@ -1,4 +1,5 @@
 #include "plugin/IsfCheck.h"
+#include "platform/ScanUtil.h"
 
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
@@ -77,7 +78,8 @@ int main(int argc, char** argv)
         } else if (a == "--size") {
             const char* v = next("--size");
             int w = 0, h = 0;
-            if (!v || sscanf_s(v, "%dx%d", &w, &h) != 2 || w < 16 || h < 16 || w > 4096 || h > 4096) {
+            const char* cur = v;
+            if (!v || !(bslplat::scan::integer(cur, w) && bslplat::scan::text(cur, "x") && bslplat::scan::integer(cur, h)) || w < 16 || h < 16 || w > 4096 || h > 4096) {
                 std::fprintf(stderr, "--size espera LARGURAxALTURA (ex.: 1280x720), de 16 a 4096\n");
                 return usage();
             }

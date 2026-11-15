@@ -1,8 +1,8 @@
 #pragma once
 
-#include <nlohmann/json.hpp>
+#include "worker/WakeEvent.h"
 
-#include <windows.h>
+#include <nlohmann/json.hpp>
 
 #include <atomic>
 #include <deque>
@@ -22,7 +22,7 @@ public:
     PipeChannel(const PipeChannel&) = delete;
     PipeChannel& operator=(const PipeChannel&) = delete;
 
-    bool connect(const std::wstring& pipeName, HANDLE wake, std::string* error);
+    bool connect(const std::string& endpoint, WakeEvent* wake, std::string* error);
 
     bool send(const Json& msg);
     void log(const char* level, const std::string& text);
@@ -32,10 +32,16 @@ public:
 
 private:
     void readLoop();
+    void notify();
 
+#ifdef _WIN32
     HANDLE pipe_ = INVALID_HANDLE_VALUE;
-    HANDLE wake_ = nullptr;
     HANDLE stopEvent_ = nullptr;
+#else
+    int fd_ = -1;
+    WakeEvent stop_;
+#endif
+    WakeEvent* wake_ = nullptr;
     std::thread reader_;
     std::mutex writeMutex_;
     std::mutex queueMutex_;

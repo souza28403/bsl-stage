@@ -2,7 +2,9 @@
 
 #include "app/Paths.h"
 
+#ifdef _WIN32
 #include <windows.h>
+#endif
 
 #include <chrono>
 #include <cstdio>
@@ -22,7 +24,9 @@ void write(const char* level, const std::string& message)
 {
     const std::string line = std::string("[") + level + "] " + message + "\n";
     std::fputs(line.c_str(), stderr);
+#ifdef _WIN32
     OutputDebugStringA(line.c_str());
+#endif
 
     std::ofstream file(paths::appDataDir() / L"bslstage.log",
                        g_fileStarted ? std::ios::app : std::ios::trunc);

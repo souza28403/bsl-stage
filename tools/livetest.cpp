@@ -1,15 +1,19 @@
+#include "audio/AudioAnalyzer.h"
 #include "core/Clip.h"
 #include "media/CaptureDeviceSource.h"
 #include "media/CaptureTargets.h"
 #include "media/DeviceCatalog.h"
 #include "media/FontCatalog.h"
+#ifdef _WIN32
 #include "media/ScreenCaptureSource.h"
+#endif
 #include "media/TextRaster.h"
 #include "media/TextSource.h"
+#ifdef _WIN32
 #include "render/D3D11Interop.h"
+#endif
 #include "render/SolidColorSource.h"
 
-#include <windows.h>
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
 
@@ -275,6 +279,7 @@ void testSolid()
     src.close();
 }
 
+#ifdef _WIN32
 void testInteropTexture(bool forceCpu)
 {
     section(forceCpu ? "D3D11 -> GL: copia por CPU" : "D3D11 -> GL: caminho automatico");
@@ -473,6 +478,7 @@ void testScreenCapture()
     for (const WindowTarget& w : windows)
         CHECK(w.pid != static_cast<unsigned long>(GetCurrentProcessId()));
 }
+#endif
 
 void testWebcam()
 {
@@ -501,6 +507,12 @@ void testWebcam()
     for (int i = 0; i < 100 && !cat.listed(); ++i)
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     const std::vector<std::string> names = cat.deviceNames();
+    CHECK(cat.listed() && !cat.listing());
+    CHECK(cat.formatsBlocking("Dispositivo Que Nao Existe").empty());
+#ifndef _WIN32
+    for (const std::string& n : names)
+        CHECK(n.find("(/dev/video") != std::string::npos);
+#endif
     std::printf("  dispositivos:");
     for (const std::string& n : names)
         std::printf(" [%s]", n.c_str());
@@ -574,6 +586,63 @@ void testWebcam()
         src.close();
     }
 }
+void testAudio()
+{
+    using namespace bsl::audio;
+    section("audio: dispositivos e captura");
+    const auto inputs = AudioAnalyzer::listDevices(AudioSource::Input);
+    const auto outputs = AudioAnalyzer::listDevices(AudioSource::Loopback);
+    std::printf("  entradas: %zu | saidas (som do PC): %zu\n", inputs.size(), outputs.size());
+    for (const AudioDeviceInfo& d : inputs) {
+        CHECK(!d.id.empty() && !d.name.empty());
+        std::printf("    entrada [%s]\n", d.name.c_str());
+    }
+    for (const AudioDeviceInfo& d : outputs) {
+        CHECK(!d.id.empty() && !d.name.empty());
+        std::printf("    saida [%s]\n", d.name.c_str());
+    }
+
+    AudioAnalyzer& an = AudioAnalyzer::instance();
+    for (const AudioSource source : {AudioSource::Input, AudioSource::Loopback}) {
+        const bool isInput = source == AudioSource::Input;
+        const auto& devs = isInput ? inputs : outputs;
+        AudioConfig cfg;
+        cfg.enabled = true;
+        cfg.source = source;
+        an.setConfig(cfg);
+        an.start();
+        CHECK(an.running());
+        const char* prefix = isInput ? "Entrada: " : "Som do PC: ";
+        AudioSnapshot snap;
+        for (int i = 0; i < 60; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            snap = an.snapshot();
+            if (snap.active && snap.sampleRate > 0)
+                break;
+        }
+        const std::string status = an.statusText();
+        std::printf("  %s: status \"%s\" | taxa %d Hz\n", isInput ? "entrada" : "som do PC", status.c_str(), snap.sampleRate);
+        CHECK(!status.empty());
+        if (!devs.empty() && status.rfind(prefix, 0) == 0) {
+            CHECK(snap.active && snap.sampleRate >= 8000);
+            CHECK(snap.rms >= 0.0f && snap.rms <= 1.0f);
+        } else {
+            std::printf("  AVISO: sem dispositivo utilizavel; leitura pulada\n");
+            ++g_skipped;
+        }
+        an.stop();
+        CHECK(!an.running());
+        CHECK(an.statusText() == "Parado");
+    }
+
+    AudioSnapshot fake;
+    fake.active = true;
+    fake.rms = 0.5f;
+    an.setOverride(fake);
+    CHECK(an.snapshot().rms == 0.5f);
+    an.setOverride(std::nullopt);
+}
+
 
 }
 
@@ -601,10 +670,13 @@ int main()
     testText();
     testMarquee();
     testSolid();
+#ifdef _WIN32
     testInteropTexture(false);
     testInteropTexture(true);
     testScreenCapture();
+#endif
     testWebcam();
+    testAudio();
 
     glfwDestroyWindow(win);
     glfwTerminate();

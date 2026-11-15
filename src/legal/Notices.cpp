@@ -1,6 +1,10 @@
 #include "legal/Notices.h"
 
+#ifdef _WIN32
 #include <windows.h>
+#endif
+
+#include "platform/ExePath.h"
 
 #include <algorithm>
 #include <cctype>
@@ -174,9 +178,7 @@ std::filesystem::path findDocsRoot(const std::filesystem::path& startDir)
 std::filesystem::path docsRoot()
 {
     static const std::filesystem::path cached = [] {
-        wchar_t buf[MAX_PATH];
-        const DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
-        return findDocsRoot(std::filesystem::path(std::wstring(buf, n)).parent_path());
+        return findDocsRoot(bslplat::exeDir());
     }();
     return cached;
 }

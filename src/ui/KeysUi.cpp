@@ -784,7 +784,7 @@ void openKeysEditor()
     g.probeCache.clear();
 }
 
-void runKeysDialogs(HWND owner)
+void runKeysDialogs(void* owner)
 {
     if (!g.settings || !g.comp) {
         g.exportRequest = g.importRequest = false;

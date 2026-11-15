@@ -56,7 +56,6 @@ private:
     void readFormats(const std::string& device);
 
     mutable std::mutex m_;
-    std::mutex avMutex_;
     bool started_ = false;
     bool listing_ = false;
     bool listed_ = false;

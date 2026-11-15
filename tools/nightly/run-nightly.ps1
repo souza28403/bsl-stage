@@ -227,6 +227,7 @@ function Executar-Passos {
         @{ Nome = 'transformtest'; Argumentos = ''; Ui = $false },
         @{ Nome = 'dmxtest'; Argumentos = ''; Ui = $false },
         @{ Nome = 'updatetest'; Argumentos = ''; Ui = $false },
+        @{ Nome = 'licencatest'; Argumentos = ''; Ui = $false },
         @{ Nome = 'plugintest'; Argumentos = ''; Ui = $false },
         @{ Nome = 'streamtest'; Argumentos = ''; Ui = $false },
         @{ Nome = 'outputstress'; Argumentos = '--seconds 8 --toggles 4'; Ui = $true }
@@ -345,6 +346,13 @@ foreach ($s in $passos) {
     if ($null -ne $s.Segundos) { $cab += ' | tempo ' + $s.Segundos + ' s | código ' + $s.Codigo }
     if ($s.Aviso) { $cab += ' | ' + $s.Aviso }
     [void]$linhas.Add($cab)
+    if ($s.Estado -eq 'FALHA') {
+        $falhas = @($s.Linhas | Where-Object { $_ -cmatch '\bFALH(A|OU)\b|\bFAIL\b|QaFailure' } | Select-Object -First 30)
+        if ($falhas.Count -gt 0) {
+            [void]$linhas.Add('  linhas com falha:')
+            foreach ($l in $falhas) { [void]$linhas.Add('    ' + $l) }
+        }
+    }
     $ultimas = @($s.Linhas | Select-Object -Last 15)
     if ($ultimas.Count -gt 0) {
         [void]$linhas.Add('  últimas 15 linhas:')

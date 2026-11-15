@@ -15,7 +15,27 @@
 
 #include <imgui.h>
 
+#ifdef _WIN32
 #include <windows.h>
+#else
+namespace {
+constexpr int VK_BACK = 0x08;
+constexpr int VK_TAB = 0x09;
+constexpr int VK_RETURN = 0x0D;
+constexpr int VK_ESCAPE = 0x1B;
+constexpr int VK_SPACE = 0x20;
+constexpr int VK_PRIOR = 0x21;
+constexpr int VK_NEXT = 0x22;
+constexpr int VK_END = 0x23;
+constexpr int VK_HOME = 0x24;
+constexpr int VK_LEFT = 0x25;
+constexpr int VK_UP = 0x26;
+constexpr int VK_RIGHT = 0x27;
+constexpr int VK_DOWN = 0x28;
+constexpr int VK_INSERT = 0x2D;
+constexpr int VK_DELETE = 0x2E;
+}
+#endif
 
 #include <algorithm>
 #include <cmath>

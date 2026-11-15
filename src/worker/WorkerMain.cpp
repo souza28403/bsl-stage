@@ -1,17 +1,26 @@
 #include "media/WorkerProtocol.h"
+#ifdef _WIN32
 #include "worker/FfglScan.h"
+#endif
 #include "worker/FrameSink.h"
 #include "worker/OfficeConverter.h"
 #include "worker/PdfDocument.h"
 #include "worker/PipeChannel.h"
+#include "platform/Env.h"
+#include "platform/Utf.h"
+#include "worker/WakeEvent.h"
 #include "worker/WorkerUtil.h"
 
-#ifdef BSL_WITH_CEF
+#if BSL_WITH_CEF
 #include "worker/WebSession.h"
 #endif
 
+#ifdef _WIN32
 #include <objbase.h>
 #include <shellapi.h>
+#else
+#include <signal.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -48,7 +57,7 @@ void colorFromJson(const Json& v, std::uint8_t outBgra[4])
     outBgra[3] = b(c[3]);
 }
 
-int runThumbnail(const std::wstring& in, const std::wstring& out, int w, int h)
+int runThumbnail(const fs::path& in, const fs::path& out, int w, int h)
 {
     fs::path source(in);
     std::string error;
@@ -76,7 +85,8 @@ int runThumbnail(const std::wstring& in, const std::wstring& out, int w, int h)
         rgba[i + 2] = bgra[i];
         rgba[i + 3] = bgra[i + 3];
     }
-    const fs::path tmp = fs::path(out + L".tmp");
+    fs::path tmp = out;
+    tmp += ".tmp";
     {
         std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
         if (!f)
@@ -86,9 +96,9 @@ int runThumbnail(const std::wstring& in, const std::wstring& out, int w, int h)
         f.write(reinterpret_cast<const char*>(rgba.data()), static_cast<std::streamsize>(rgba.size()));
     }
     std::error_code ec;
-    fs::rename(tmp, fs::path(out), ec);
+    fs::rename(tmp, out, ec);
     if (ec) {
-        fs::copy_file(tmp, fs::path(out), fs::copy_options::overwrite_existing, ec);
+        fs::copy_file(tmp, out, fs::copy_options::overwrite_existing, ec);
         fs::remove(tmp, ec);
     }
     return ec ? 6 : 0;
@@ -97,32 +107,25 @@ int runThumbnail(const std::wstring& in, const std::wstring& out, int w, int h)
 class Worker
 {
 public:
-    Worker() { wake_ = CreateEventW(nullptr, FALSE, FALSE, nullptr); }
-    ~Worker()
-    {
-        joinConvert();
-        if (parent_)
-            CloseHandle(parent_);
-        if (wake_)
-            CloseHandle(wake_);
-    }
+    Worker() = default;
+    ~Worker() { joinConvert(); }
 
-    int run(const std::wstring& pipeName, DWORD parentPid)
+    int run(const std::string& endpoint, unsigned long parentPid)
     {
         parentPid_ = parentPid;
-        parent_ = OpenProcess(SYNCHRONIZE, FALSE, parentPid);
+        parent_ = std::make_unique<ParentWatch>(parentPid);
         std::string error;
-        if (!channel_.connect(pipeName, wake_, &error)) {
+        if (!channel_.connect(endpoint, &wake_, &error)) {
             fileLog("pipe: " + error);
             return 10;
         }
-        channel_.send(Json{{"t", "hello"}, {"pid", GetCurrentProcessId()}, {"v", wp::kProtocolVersion}});
+        channel_.send(Json{{"t", "hello"}, {"pid", bslplat::currentProcessId()}, {"v", wp::kProtocolVersion}});
         lastPing_ = Clock::now();
 
         while (!quit_) {
             if (channel_.broken())
                 break;
-            if (parent_ && WaitForSingleObject(parent_, 0) == WAIT_OBJECT_0)
+            if (parent_ && !parent_->alive())
                 break;
             if (Clock::now() - lastPing_ > std::chrono::seconds(30)) {
                 fileLog("sem ping do app por 30 s; encerrando");
@@ -135,22 +138,22 @@ public:
 
             pollConvert();
             retryPublish();
-#ifdef BSL_WITH_CEF
+#if BSL_WITH_CEF
             if (web_)
                 web_->pump();
 #endif
-            DWORD timeout = 15;
+            unsigned timeout = 15;
             if (pendingPublish_)
                 timeout = 5;
             else if (needsPrerender() || convertDone_.load())
                 timeout = 0;
-#ifdef BSL_WITH_CEF
+#if BSL_WITH_CEF
             if (web_)
-                timeout = std::min<DWORD>(timeout, 4);
+                timeout = std::min<unsigned>(timeout, 4);
 #endif
             if (!quit_) {
                 prerenderStep();
-                WaitForSingleObject(wake_, timeout);
+                wake_.wait(timeout);
             }
         }
         shutdown();
@@ -179,7 +182,7 @@ private:
         } else if (t == "quit") {
             quit_ = true;
         }
-#ifdef BSL_WITH_CEF
+#if BSL_WITH_CEF
         else if (web_) {
             web_->handle(m);
         }
@@ -188,16 +191,16 @@ private:
 
     void simulateHangOnce()
     {
-        wchar_t marker[MAX_PATH];
-        const DWORD n = GetEnvironmentVariableW(L"BSLSTAGE_WORKER_HANG_ONCE", marker, MAX_PATH);
-        if (n == 0 || n >= MAX_PATH)
+        const std::string name = envUtf8("BSLSTAGE_WORKER_HANG_ONCE");
+        if (name.empty())
             return;
+        const fs::path marker = pathFromUtf8(name);
         std::error_code ec;
         if (fs::exists(marker, ec))
             return;
         std::ofstream(marker) << "hang";
         for (;;)
-            Sleep(1000);
+            std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 
     void fail(const std::string& msg, bool fatal = true)
@@ -230,8 +233,8 @@ private:
         transport_ = m.value("transport", std::string("auto"));
         if (m.contains("luid") && m["luid"].is_array() && m["luid"].size() == 2) {
             haveLuid_ = true;
-            luidHigh_ = m["luid"][0].get<LONG>();
-            luidLow_ = m["luid"][1].get<DWORD>();
+            luidHigh_ = m["luid"][0].get<long>();
+            luidLow_ = m["luid"][1].get<unsigned long>();
         }
         const Json params = m.value("params", Json::object());
 
@@ -246,7 +249,7 @@ private:
                     fail("não foi possível criar os buffers de imagem");
                 return;
             }
-            const fs::path file = fromUtf8(m.value("path", std::string()));
+            const fs::path file = pathFromUtf8(m.value("path", std::string()));
             if (isOfficeExtension(lowerExt(file))) {
                 channel_.send(Json{{"t", "status"}, {"text", "Convertendo…"}, {"level", "info"}});
                 startConvert(file);
@@ -254,8 +257,8 @@ private:
                 loadPdf(file);
             }
         } else if (kind_ == "web") {
-#ifdef BSL_WITH_CEF
-            web_ = std::make_unique<WebSession>(channel_, sinkRequest(), wake_);
+#if BSL_WITH_CEF
+            web_ = std::make_unique<WebSession>(channel_, sinkRequest(), wake_.native());
             web_->open(m);
 #else
             fail("A Web não está habilitada nesta compilação (CEF não encontrado)");
@@ -268,7 +271,7 @@ private:
     void onParams(const Json& m)
     {
         const Json params = m.value("params", Json::object());
-#ifdef BSL_WITH_CEF
+#if BSL_WITH_CEF
         if (web_) {
             web_->setParams(params);
             return;
@@ -290,7 +293,7 @@ private:
     {
         w = std::clamp(w, 16, 8192);
         h = std::clamp(h, 16, 8192);
-#ifdef BSL_WITH_CEF
+#if BSL_WITH_CEF
         if (web_) {
             web_->resize(w, h);
             return;
@@ -312,7 +315,7 @@ private:
     void switchToShm()
     {
         transport_ = "shm";
-#ifdef BSL_WITH_CEF
+#if BSL_WITH_CEF
         if (web_) {
             web_->useShm();
             return;
@@ -420,7 +423,7 @@ private:
                 convertResult_ = std::move(r);
             }
             convertDone_ = true;
-            SetEvent(wake_);
+            wake_.set();
         });
     }
 
@@ -450,7 +453,7 @@ private:
 
     void shutdown()
     {
-#ifdef BSL_WITH_CEF
+#if BSL_WITH_CEF
         web_.reset();
 #endif
         joinConvert();
@@ -458,10 +461,10 @@ private:
         sink_.reset();
     }
 
+    WakeEvent wake_;
     PipeChannel channel_;
-    HANDLE wake_ = nullptr;
-    HANDLE parent_ = nullptr;
-    DWORD parentPid_ = 0;
+    std::unique_ptr<ParentWatch> parent_;
+    unsigned long parentPid_ = 0;
     bool quit_ = false;
     bool opened_ = false;
     Clock::time_point lastPing_;
@@ -469,8 +472,8 @@ private:
     std::string kind_;
     std::string transport_ = "auto";
     bool haveLuid_ = false;
-    LONG luidHigh_ = 0;
-    DWORD luidLow_ = 0;
+    long luidHigh_ = 0;
+    unsigned long luidLow_ = 0;
     int width_ = 1920;
     int height_ = 1080;
     std::unique_ptr<FrameSink> sink_;
@@ -487,7 +490,7 @@ private:
     std::mutex convertMutex_;
     ConvertResult convertResult_;
 
-#ifdef BSL_WITH_CEF
+#if BSL_WITH_CEF
     std::unique_ptr<WebSession> web_;
 #endif
 };
@@ -495,6 +498,8 @@ private:
 }
 
 }
+
+#ifdef _WIN32
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
 {
@@ -536,7 +541,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
     LocalFree(argv);
 
     if (cefSub) {
-#ifdef BSL_WITH_CEF
+#if BSL_WITH_CEF
         return cefSubprocessMain(instance);
 #else
         return 1;
@@ -545,9 +550,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
     if (!scanDll.empty())
         runFfglScan(scanDll, scanOut);
     if (thumb)
-        return runThumbnail(thumbIn, thumbOut, std::clamp(thumbW, 16, 1024), std::clamp(thumbH, 16, 1024));
+        return runThumbnail(fs::path(thumbIn), fs::path(thumbOut), std::clamp(thumbW, 16, 1024), std::clamp(thumbH, 16, 1024));
     if (!panelUrl.empty()) {
-#ifdef BSL_WITH_CEF
+#if BSL_WITH_CEF
         return runPanelWindow(instance, panelUrl, panelTitle, parent);
 #else
         return 1;
@@ -560,8 +565,48 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
 
     const HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     Worker worker;
-    const int rc = worker.run(pipe, parent);
+    const int rc = worker.run(bslplat::wideToUtf8(pipe), parent);
     if (SUCCEEDED(hr))
         CoUninitialize();
     return rc;
 }
+
+#else
+
+int main(int argc, char** argv)
+{
+    using namespace bsl::worker;
+    signal(SIGPIPE, SIG_IGN);
+
+    std::string endpoint, thumbIn, thumbOut;
+    unsigned long parent = 0;
+    int thumbW = 160, thumbH = 90;
+    bool thumb = false;
+    for (int i = 1; i < argc; ++i) {
+        const std::string a = argv[i];
+        if (a == "--fd" && i + 1 < argc) {
+            endpoint = argv[++i];
+        } else if (a == "--parent" && i + 1 < argc) {
+            parent = std::strtoul(argv[++i], nullptr, 10);
+        } else if (a == "--thumb" && i + 4 < argc) {
+            thumb = true;
+            thumbIn = argv[++i];
+            thumbOut = argv[++i];
+            thumbW = static_cast<int>(std::strtol(argv[++i], nullptr, 10));
+            thumbH = static_cast<int>(std::strtol(argv[++i], nullptr, 10));
+        }
+    }
+
+    if (thumb)
+        return runThumbnail(pathFromUtf8(thumbIn), pathFromUtf8(thumbOut), std::clamp(thumbW, 16, 1024),
+                            std::clamp(thumbH, 16, 1024));
+    if (endpoint.empty() || parent == 0)
+        return 2;
+    if (!envUtf8("BSLSTAGE_WORKER_CRASH").empty())
+        return 42;
+
+    Worker worker;
+    return worker.run(endpoint, parent);
+}
+
+#endif

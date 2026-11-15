@@ -1,49 +1,15 @@
 #include "media/DeviceCatalog.h"
 
 #include "app/Log.h"
+#include "media/DeviceBackend.h"
+#include "platform/ScanUtil.h"
 
 #include <algorithm>
-#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <sstream>
 
-extern "C" {
-#include <libavdevice/avdevice.h>
-#include <libavformat/avformat.h>
-#include <libavutil/dict.h>
-#include <libavutil/log.h>
-}
-
 namespace bsl::media {
-
-namespace {
-
-std::mutex g_sinkMutex;
-std::string* g_sink = nullptr;
-
-void captureLog(void* ptr, int level, const char* fmt, va_list vl)
-{
-    if (level > AV_LOG_INFO)
-        return;
-    char line[2048];
-    std::lock_guard lk(g_sinkMutex);
-    static int printPrefix = 1;
-    av_log_format_line(ptr, level, fmt, vl, line, static_cast<int>(sizeof(line)), &printPrefix);
-    if (g_sink)
-        g_sink->append(line);
-}
-
-const AVInputFormat* dshow()
-{
-    static const AVInputFormat* fmt = [] {
-        avdevice_register_all();
-        return av_find_input_format("dshow");
-    }();
-    return fmt;
-}
-
-}
 
 DeviceCatalog& DeviceCatalog::instance()
 {
@@ -98,34 +64,7 @@ std::vector<std::string> DeviceCatalog::deviceNames() const
 
 void DeviceCatalog::readDevices()
 {
-    std::vector<std::string> names;
-    {
-        std::lock_guard av(avMutex_);
-        if (const AVInputFormat* ifmt = dshow()) {
-            AVDeviceInfoList* list = nullptr;
-            const int n = avdevice_list_input_sources(ifmt, nullptr, nullptr, &list);
-            if (n >= 0 && list) {
-                for (int i = 0; i < list->nb_devices; ++i) {
-                    const AVDeviceInfo* d = list->devices[i];
-                    if (!d || !d->device_description)
-                        continue;
-                    bool hasVideo = d->nb_media_types == 0, any = false;
-                    for (int t = 0; t < d->nb_media_types; ++t) {
-                        any = true;
-                        if (d->media_types[t] == AVMEDIA_TYPE_VIDEO)
-                            hasVideo = true;
-                    }
-                    if (any && !hasVideo)
-                        continue;
-                    const std::string name = d->device_description;
-                    if (std::find(names.begin(), names.end(), name) == names.end())
-                        names.push_back(name);
-                }
-            }
-            if (list)
-                avdevice_free_list_devices(&list);
-        }
-    }
+    std::vector<std::string> names = devbackend::listVideoDevices();
     {
         std::lock_guard lk(m_);
         names_ = std::move(names);
@@ -180,34 +119,7 @@ std::vector<CaptureFormat> DeviceCatalog::formatsBlocking(const std::string& dev
 
 void DeviceCatalog::readFormats(const std::string& device)
 {
-    std::string text;
-    {
-        std::lock_guard av(avMutex_);
-        if (const AVInputFormat* ifmt = dshow()) {
-            {
-                std::lock_guard lk(g_sinkMutex);
-                g_sink = &text;
-            }
-            av_log_set_callback(&captureLog);
-            const int oldLevel = av_log_get_level();
-            av_log_set_level(AV_LOG_INFO);
-
-            AVDictionary* opts = nullptr;
-            av_dict_set(&opts, "list_options", "true", 0);
-            AVFormatContext* ctx = nullptr;
-            const std::string url = "video=" + device;
-            avformat_open_input(&ctx, url.c_str(), ifmt, &opts);
-            av_dict_free(&opts);
-            if (ctx)
-                avformat_close_input(&ctx);
-
-            av_log_set_level(oldLevel);
-            av_log_set_callback(av_log_default_callback);
-            std::lock_guard lk(g_sinkMutex);
-            g_sink = nullptr;
-        }
-    }
-    std::vector<CaptureFormat> formats = parseFormats(text);
+    std::vector<CaptureFormat> formats = devbackend::listVideoFormats(device);
     {
         std::lock_guard lk(m_);
         Caps& c = caps_[device];
@@ -241,8 +153,13 @@ std::vector<CaptureFormat> DeviceCatalog::parseFormats(const std::string& log)
             continue;
         int w1 = 0, h1 = 0, w2 = 0, h2 = 0;
         double f1 = 0.0, f2 = 0.0;
-        if (sscanf_s(line.c_str() + minPos, "min s=%dx%d fps=%lf max s=%dx%d fps=%lf", &w1, &h1, &f1, &w2, &h2, &f2) != 6)
-            continue;
+        {
+            const char* c = line.c_str() + minPos;
+            if (!(bslplat::scan::text(c, "min s=") && bslplat::scan::integer(c, w1) && bslplat::scan::text(c, "x") && bslplat::scan::integer(c, h1) &&
+                  bslplat::scan::text(c, " fps=") && bslplat::scan::real(c, f1) && bslplat::scan::text(c, " max s=") && bslplat::scan::integer(c, w2) &&
+                  bslplat::scan::text(c, "x") && bslplat::scan::integer(c, h2) && bslplat::scan::text(c, " fps=") && bslplat::scan::real(c, f2)))
+                continue;
+        }
         f.width = w2;
         f.height = h2;
         f.fpsMin = std::min(f1, f2);
@@ -264,8 +181,10 @@ ChosenFormat DeviceCatalog::parseValue(const std::string& value)
 {
     ChosenFormat c;
     int w = 0, h = 0, fps = 0;
-    char fmt[64] = {};
-    if (sscanf_s(value.c_str(), "%dx%d@%d:%63s", &w, &h, &fps, fmt, static_cast<unsigned>(sizeof(fmt))) == 4 && w > 0 && h > 0 && fps > 0) {
+    std::string fmt;
+    const char* cur = value.c_str();
+    if (bslplat::scan::integer(cur, w) && bslplat::scan::text(cur, "x") && bslplat::scan::integer(cur, h) && bslplat::scan::text(cur, "@") &&
+        bslplat::scan::integer(cur, fps) && bslplat::scan::text(cur, ":") && bslplat::scan::word(cur, fmt, 63) && w > 0 && h > 0 && fps > 0) {
         c.automatic = false;
         c.width = w;
         c.height = h;

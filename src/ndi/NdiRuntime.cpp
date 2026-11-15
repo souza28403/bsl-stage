@@ -2,7 +2,8 @@
 
 #include "app/Log.h"
 
-#include <windows.h>
+#include "platform/DynLib.h"
+#include "platform/ExePath.h"
 
 #include <cstdlib>
 #include <system_error>
@@ -16,22 +17,12 @@ namespace {
 fs::path g_override;
 std::mutex g_instanceMutex;
 
-fs::path exeDir()
+fs::path envDir(const char* name)
 {
-    wchar_t buf[MAX_PATH * 2] = {};
-    const DWORD n = GetModuleFileNameW(nullptr, buf, static_cast<DWORD>(std::size(buf)));
-    if (n == 0 || n >= std::size(buf))
+    const char* v = std::getenv(name);
+    if (!v || !*v)
         return {};
-    return fs::path(buf).parent_path();
-}
-
-fs::path envDir(const wchar_t* name)
-{
-    wchar_t buf[MAX_PATH * 2] = {};
-    const DWORD n = GetEnvironmentVariableW(name, buf, static_cast<DWORD>(std::size(buf)));
-    if (n == 0 || n >= std::size(buf))
-        return {};
-    return fs::path(buf);
+    return fs::path(v);
 }
 
 bool fileExists(const fs::path& p)
@@ -49,9 +40,9 @@ std::vector<fs::path> Runtime::candidates(const fs::path& explicitDll)
         out.push_back(explicitDll);
         return out;
     }
-    if (const fs::path dir = exeDir(); !dir.empty())
+    if (const fs::path dir = bslplat::exeDir(); !dir.empty())
         out.push_back(dir / kRuntimeDllName);
-    for (const wchar_t* var : {L"NDI_RUNTIME_DIR_V6", L"NDI_RUNTIME_DIR_V5"})
+    for (const char* var : {"NDI_RUNTIME_DIR_V6", "NDI_RUNTIME_DIR_V5"})
         if (const fs::path dir = envDir(var); !dir.empty())
             out.push_back(dir / kRuntimeDllName);
     return out;
@@ -100,16 +91,17 @@ bool Runtime::load(const fs::path& explicitDll)
             error_ = std::string(kMissingText) + " (arquivo inexistente: " + candidate.string() + ")";
             continue;
         }
-        HMODULE mod = LoadLibraryExW(candidate.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
-        if (!mod) {
-            error_ = std::string(kMissingText) + " (não foi possível carregar " + candidate.string() + ", erro "
-                     + std::to_string(GetLastError()) + ")";
+        auto* lib = new bslplat::DynLib();
+        if (!lib->open(candidate, true)) {
+            delete lib;
+            error_ = std::string(kMissingText) + " (não foi possível carregar " + candidate.string() + ")";
             continue;
         }
-        auto loader = reinterpret_cast<NDIlib_load_fn>(GetProcAddress(mod, "NDIlib_v6_load"));
+        auto loader = lib->symbolAs<NDIlib_load_fn>("NDIlib_v6_load");
         if (!loader)
-            loader = reinterpret_cast<NDIlib_load_fn>(GetProcAddress(mod, "NDIlib_v5_load"));
+            loader = lib->symbolAs<NDIlib_load_fn>("NDIlib_v5_load");
         if (!loader) {
+            delete lib;
             error_ = std::string(kMissingText) + " (" + candidate.string() + " não exporta NDIlib_v5_load/v6_load)";
             continue;
         }

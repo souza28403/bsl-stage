@@ -30,6 +30,11 @@
 #include "render/TextureLoader.h"
 #include "render/ThumbnailCache.h"
 #include "ui/Brand.h"
+#if BSL_WITH_ATIVACAO
+#include "license/Ativacao.h"
+#include "platform/Paths.h"
+#include "ui/AtivacaoUi.h"
+#endif
 #include "ui/Theme.h"
 #include "ui/LayoutUi.h"
 #include "ui/KeysUi.h"
@@ -61,10 +66,12 @@
 
 #include <stb_image_write.h>
 
+#ifdef _WIN32
 #include <windows.h>
 #include <mmsystem.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -89,13 +96,15 @@ void glfwErrorCallback(int code, const char* description)
     std::fprintf(stderr, "GLFW erro %d: %s\n", code, description);
 }
 
-struct DropFilesHeader
+void* nativeWindowHandle(GLFWwindow* window)
 {
-    DWORD pFiles;
-    POINT pt;
-    BOOL fNC;
-    BOOL fWide;
-};
+#ifdef _WIN32
+    return glfwGetWin32Window(window);
+#else
+    (void)window;
+    return nullptr;
+#endif
+}
 
 const char* glString(GLenum name)
 {
@@ -207,20 +216,14 @@ int App::run()
         pollSystemHotkeys();
         glfwPollEvents();
 
-        if (glfwGetWindowAttrib(window_, GLFW_ICONIFIED)) {
-            frameWatch_.enter(FrameWatch::Idle);
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            lastUpdate_ = Clock::now();
-            continue;
-        }
-
+        const bool minimized = glfwGetWindowAttrib(window_, GLFW_ICONIFIED) != 0;
         updateStats(frameStart);
-        frame();
+        frame(minimized);
 
         smoothedWork_ += 0.1f * (std::chrono::duration<float>(Clock::now() - frameStart).count()
                                  - smoothedWork_);
         frameWatch_.enter(FrameWatch::Limiter);
-        limitFrameRate(frameStart);
+        limitFrameRate(frameStart, minimized);
     }
 
     frameWatch_.stop();
@@ -236,6 +239,12 @@ bool App::init()
         paths::setAppDataOverride(options_.qaDir / L"appdata");
         qaOn_ = true;
     }
+#if BSL_WITH_ATIVACAO
+    {
+        std::string emailAtivo;
+        ativado_ = licenca::lerAtivacao(bslplat::configDir() / "licenca.txt", emailAtivo);
+    }
+#endif
     settings_ = Settings::load();
     envelopes_ = seq::carregarBiblioteca(seq::caminhoBiblioteca());
     if (options_.uiMode == "window")
@@ -262,12 +271,18 @@ bool App::init()
     audio::AudioAnalyzer::instance().start();
 
     glfwSetErrorCallback(glfwErrorCallback);
+#if defined(__linux__)
+    glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
+#endif
     if (!glfwInit())
         return false;
 
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+#ifdef __APPLE__
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
+#endif
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
     const bool sizeOverride = options_.windowWidth > 0 && options_.windowHeight > 0;
@@ -301,7 +316,9 @@ bool App::init()
     glInfo_.version = glString(GL_VERSION);
     glInfo_.gpu = glString(GL_RENDERER);
 
+#ifdef _WIN32
     timeBeginPeriod(1);
+#endif
 
     try {
         compositor_ = std::make_unique<Compositor>(composition_.width, composition_.height);
@@ -447,7 +464,9 @@ void App::shutdown()
         glfwDestroyWindow(window_);
         window_ = nullptr;
         glfwTerminate();
+#ifdef _WIN32
         timeEndPeriod(1);
+#endif
     }
 
     if (!testRun && !updaterLaunched_ && updates_.readyToInstall()) {
@@ -1022,7 +1041,7 @@ void App::updateStats(Clock::time_point frameStart)
     stats_.workMs = smoothedWork_ * 1000.0f;
 }
 
-void App::frame()
+void App::frame(bool minimized)
 {
     const auto now = Clock::now();
     const double dt = std::clamp(std::chrono::duration<double>(now - lastUpdate_).count(), 0.0, 0.1);
@@ -1094,11 +1113,20 @@ void App::frame()
     frameWatch_.enter(FrameWatch::Update);
     applySwapInterval();
 
+    if (minimized) {
+        ++frameCount_;
+        if (settings_.profile != before) {
+            applyProfile();
+            settings_.save();
+        }
+        return;
+    }
+
     updateUiScale();
     frameWatch_.enter(FrameWatch::Idle);
-    ui::runLayoutDialogs(glfwGetWin32Window(window_));
-    ui::runKeysDialogs(glfwGetWin32Window(window_));
-    ui::runDmxDialogs(glfwGetWin32Window(window_));
+    ui::runLayoutDialogs(nativeWindowHandle(window_));
+    ui::runKeysDialogs(nativeWindowHandle(window_));
+    ui::runDmxDialogs(nativeWindowHandle(window_));
     frameWatch_.enter(FrameWatch::Update);
     if (qaOn_) {
         runQaCommands();
@@ -1113,7 +1141,19 @@ void App::frame()
     PanelContext ctx{composition_, selection_, *compositor_, settings_.profile, stats_, glInfo_,
                      compositor_->uvMax(), settings_, *thumbs_, drop_,
                      quitRequested_, output_, *outputs_, mapping_, mode_, *project_, keyService_, dmx_, updates_, envelopes_};
+#if BSL_WITH_ATIVACAO
+    if (!ativado_) {
+        bool sair = false;
+        if (ui::drawAtivacao(sair))
+            ativado_ = true;
+        if (sair)
+            glfwSetWindowShouldClose(window_, GLFW_TRUE);
+    } else {
+        ui::drawUi(ctx);
+    }
+#else
     ui::drawUi(ctx);
+#endif
     if (qaOn_) {
         int fw = 0, fh = 0, ww = 0, wh = 0;
         glfwGetFramebufferSize(window_, &fw, &fh);
@@ -1249,32 +1289,19 @@ void App::runQaCommands()
         } else if (cmd == "quit") {
             glfwSetWindowShouldClose(window_, GLFW_TRUE);
         } else if (cmd == "drop") {
-            std::wstring files;
+            std::vector<std::string> files;
             size_t pos = 0;
             while (pos < arg.size()) {
                 const size_t bar = arg.find('|', pos);
-                const std::string one = arg.substr(pos, bar == std::string::npos ? std::string::npos : bar - pos);
-                files += std::filesystem::path{std::u8string(one.begin(), one.end())}.wstring();
-                files.push_back(L'\0');
+                files.push_back(arg.substr(pos, bar == std::string::npos ? std::string::npos : bar - pos));
                 if (bar == std::string::npos)
                     break;
                 pos = bar + 1;
             }
-            files.push_back(L'\0');
-            const SIZE_T bytes = sizeof(DropFilesHeader) + files.size() * sizeof(wchar_t);
-            HGLOBAL mem = GlobalAlloc(GHND, bytes);
-            if (!mem)
-                continue;
-            auto* df = static_cast<DropFilesHeader*>(GlobalLock(mem));
-            df->pFiles = sizeof(DropFilesHeader);
-            df->fWide = TRUE;
-            POINT pt{};
-            GetCursorPos(&pt);
-            ScreenToClient(glfwGetWin32Window(window_), &pt);
-            df->pt = pt;
-            std::memcpy(reinterpret_cast<char*>(df) + sizeof(DropFilesHeader), files.data(), files.size() * sizeof(wchar_t));
-            GlobalUnlock(mem);
-            SendMessageW(glfwGetWin32Window(window_), WM_DROPFILES, reinterpret_cast<WPARAM>(mem), 0);
+            std::vector<const char*> pointers;
+            for (const std::string& f : files)
+                pointers.push_back(f.c_str());
+            onDrop(window_, static_cast<int>(pointers.size()), pointers.data());
         }
     }
 }
@@ -1291,6 +1318,7 @@ std::string App::qaStateJson() const
                                                                     : "fixed";
     j["maximized"] = glfwGetWindowAttrib(window_, GLFW_MAXIMIZED) != 0;
     j["deck"] = c.currentDeck;
+    j["beat"] = c.beat;
     json decks = json::array();
     for (const Deck& d : c.decks)
         decks.push_back({{"name", d.name}, {"clips", d.clipCount()}});
@@ -1572,11 +1600,13 @@ std::string App::qaStateJson() const
     return j.dump();
 }
 
-void App::limitFrameRate(Clock::time_point frameStart) const
+void App::limitFrameRate(Clock::time_point frameStart, bool minimized) const
 {
     int fps = settingsFor(settings_.profile).uiFps;
     if (fps <= 0 && outputs_ && outputs_->hasWindowOutput())
         fps = kOutputWindowUiFps;
+    if (minimized)
+        fps = composition_.fps > 0 ? static_cast<int>(std::ceil(composition_.fps)) : 60;
     if (fps <= 0)
         return;
 

@@ -7,11 +7,17 @@
 #include "media/WebSource.h"
 #include "media/WorkerHost.h"
 #include "render/D3D11Interop.h"
-#include "worker/ComAuto.h"
+#include "platform/Utf.h"
 #include "worker/OfficeConverter.h"
 #include "worker/WorkerUtil.h"
 
+#ifdef _WIN32
+#include "worker/ComAuto.h"
+
 #include <windows.h>
+#else
+#include <stdlib.h>
+#endif
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
 
@@ -126,12 +132,22 @@ bool waitUntil(ISource& src, double seconds, const std::function<bool()>& pred, 
 
 fs::path tempDir()
 {
-    wchar_t buf[MAX_PATH];
-    const DWORD n = GetTempPathW(MAX_PATH, buf);
-    fs::path dir = fs::path(std::wstring(buf, n)) / L"bslstage-doctest";
     std::error_code ec;
+    fs::path dir = fs::temp_directory_path(ec) / "bslstage-doctest";
     fs::create_directories(dir, ec);
     return dir;
+}
+
+void setEnv(const char* name, const fs::path& value)
+{
+#ifdef _WIN32
+    _wputenv_s(bslplat::utf8ToWide(name).c_str(), value.c_str());
+#else
+    if (value.empty())
+        unsetenv(name);
+    else
+        setenv(name, value.c_str(), 1);
+#endif
 }
 
 void writeColorPdf(const fs::path& file, const std::vector<std::string>& colors, const std::vector<std::string>& labels = {})
@@ -186,18 +202,20 @@ void writeText(const fs::path& file, const std::string& text)
     f.write(text.data(), static_cast<std::streamsize>(text.size()));
 }
 
-std::set<DWORD> pidsOf(const wchar_t* exe)
+std::set<unsigned long> pidsOf(const wchar_t* exe)
 {
     const auto v = worker::processIds(exe);
     return {v.begin(), v.end()};
 }
 
+#ifdef _WIN32
+
 struct OfficeSession
 {
     const wchar_t* exe = nullptr;
-    std::set<DWORD> before;
+    std::set<unsigned long> before;
     com::AppInstance inst;
-    std::set<DWORD> mine;
+    std::set<unsigned long> mine;
 
     bool start(const wchar_t* progId, const wchar_t* exeName)
     {
@@ -338,6 +356,8 @@ bool makeDocx(const fs::path& file, std::string* error)
         CoUninitialize();
     return ok && fs::is_regular_file(file);
 }
+
+#endif
 
 std::unique_ptr<PdfSource> openPdf(const fs::path& file, int w, int h, const ParamValues& values = {})
 {
@@ -641,7 +661,7 @@ void testWorkerHang()
     const fs::path marker = tempDir() / L"hang-uma-vez.flag";
     std::error_code ec;
     fs::remove(marker, ec);
-    _wputenv_s(L"BSLSTAGE_WORKER_HANG_ONCE", marker.c_str());
+    setEnv("BSLSTAGE_WORKER_HANG_ONCE", marker);
     const fs::path pdf = makeThreePagePdf();
     auto srcPtr = openPdf(pdf, 320, 180);
     CHECK(srcPtr != nullptr);
@@ -673,7 +693,7 @@ void testWorkerHang()
         CHECK(!WorkerHost::processRunning(firstPid));
         src.close();
     }
-    _wputenv_s(L"BSLSTAGE_WORKER_HANG_ONCE", L"");
+    setEnv("BSLSTAGE_WORKER_HANG_ONCE", fs::path());
 }
 
 void testPdfResize()
@@ -705,7 +725,7 @@ void testWorkerGivesUp()
 {
     section("worker que nunca sobe: 3 reinicios e depois Falhou com o motivo");
     RemoteSource::forceTransport("auto");
-    _putenv_s("BSLSTAGE_WORKER_CRASH", "1");
+    setEnv("BSLSTAGE_WORKER_CRASH", fs::path("1"));
     const fs::path pdf = makeThreePagePdf();
     auto srcPtr = openPdf(pdf, 320, 180);
     CHECK(srcPtr != nullptr);
@@ -734,7 +754,7 @@ void testWorkerGivesUp()
         CHECK(src.status().level == SourceStatus::Level::Warning);
         src.close();
     }
-    _putenv_s("BSLSTAGE_WORKER_CRASH", "");
+    setEnv("BSLSTAGE_WORKER_CRASH", fs::path());
 }
 
 void testTransportFallbackLog()
@@ -752,11 +772,13 @@ void testTransportFallbackLog()
     }
 }
 
+#ifdef _WIN32
+
 void testOffice()
 {
     section("Office: pptx e docx convertidos pelo Microsoft Office");
     RemoteSource::forceTransport("auto");
-    const std::set<DWORD> pptBefore = pidsOf(L"POWERPNT.EXE"), wordBefore = pidsOf(L"WINWORD.EXE"),
+    const std::set<unsigned long> pptBefore = pidsOf(L"POWERPNT.EXE"), wordBefore = pidsOf(L"WINWORD.EXE"),
                           excelBefore = pidsOf(L"EXCEL.EXE");
     CLSID clsid{};
     if (FAILED(CLSIDFromProgID(L"PowerPoint.Application", &clsid)) || FAILED(CLSIDFromProgID(L"Word.Application", &clsid))) {
@@ -877,6 +899,104 @@ void testOffice()
         CHECK(WorkerHost::processRunning(pid));
 }
 
+#else
+
+bool haveSoffice()
+{
+    return std::system("command -v soffice >/dev/null 2>&1 || command -v libreoffice >/dev/null 2>&1") == 0;
+}
+
+bool makeDocxWithSoffice(const fs::path& docx, std::string* error)
+{
+    const fs::path dir = docx.parent_path();
+    const fs::path flat = dir / "teste-documento.fodt";
+    writeText(flat,
+              "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+              "<office:document xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" "
+              "xmlns:style=\"urn:oasis:names:tc:opendocument:xmlns:style:1.0\" "
+              "xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" "
+              "xmlns:fo=\"urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0\" office:version=\"1.2\" "
+              "office:mimetype=\"application/vnd.oasis.opendocument.text\"><office:automatic-styles>"
+              "<style:style style:name=\"P1\" style:family=\"paragraph\"><style:paragraph-properties "
+              "fo:break-before=\"page\"/></style:style></office:automatic-styles><office:body><office:text>"
+              "<text:p>Pagina um do documento de teste do BSL Stage</text:p>"
+              "<text:p text:style-name=\"P1\">Pagina dois</text:p></office:text></office:body></office:document>");
+    const std::string cmd = "soffice --headless --norestore --nologo --convert-to docx --outdir '" + dir.string() + "' '"
+                            + flat.string() + "' >/dev/null 2>&1 || libreoffice --headless --norestore --nologo --convert-to docx --outdir '"
+                            + dir.string() + "' '" + flat.string() + "' >/dev/null 2>&1";
+    [[maybe_unused]] const int convertResult = std::system(cmd.c_str());
+    std::error_code ec;
+    fs::remove(flat, ec);
+    if (!fs::is_regular_file(docx, ec)) {
+        if (error)
+            *error = "o LibreOffice nao gerou o docx de teste";
+        return false;
+    }
+    return true;
+}
+
+void testOffice()
+{
+    section("Office: docx convertido pelo LibreOffice");
+    RemoteSource::forceTransport("auto");
+    if (!haveSoffice()) {
+        skip("LibreOffice nao encontrado (soffice ou libreoffice no PATH)");
+        return;
+    }
+    const fs::path docx = tempDir() / "teste-documento.docx";
+    std::error_code ec;
+    fs::remove(docx, ec);
+    std::string error;
+    const bool haveDocx = makeDocxWithSoffice(docx, &error);
+    std::printf("  docx de teste: %s %s\n", haveDocx ? "criado" : "FALHOU", error.c_str());
+    CHECK(haveDocx);
+    if (!haveDocx)
+        return;
+    fs::remove(worker::docCachePath(docx), ec);
+
+    auto srcPtr = openPdf(docx, 640, 360);
+    CHECK(srcPtr != nullptr);
+    if (!srcPtr)
+        return;
+    PdfSource& src = *srcPtr;
+    const auto t0 = Clock::now();
+    bool sawConverting = false;
+    const bool got = waitUntil(
+        src, 120.0,
+        [&] {
+            sawConverting = sawConverting || src.status().text.rfind("Convertendo", 0) == 0;
+            return src.shownPage() >= 1 && src.texture() != 0;
+        },
+        0.016);
+    std::printf("  docx: %s em %.1f s | paginas: %d\n", got ? "pronto" : "NAO ABRIU", secondsSince(t0), src.pageCount());
+    CHECK(got);
+    CHECK(sawConverting);
+    CHECK(src.pageCount() == 2);
+    if (got) {
+        const Pixels p = readSource(src);
+        long nonBlack = 0;
+        for (int y = 0; y < p.h; y += 4)
+            for (int x = 0; x < p.w; x += 4)
+                if (p.at(x, y)[0] + p.at(x, y)[1] + p.at(x, y)[2] > 60)
+                    ++nonBlack;
+        CHECK(nonBlack > 500);
+    }
+    src.goToPage(2);
+    CHECK(waitPage(src, 2, 15.0));
+    src.close();
+    CHECK(fs::is_regular_file(worker::docCachePath(docx)));
+
+    Frame f;
+    int pages = 0;
+    std::string terr;
+    const bool ok = renderDocThumbnail(docx, 160, 90, f, &pages, &terr);
+    std::printf("  miniatura do docx: %s (%s), %d paginas\n", ok ? "ok" : "falhou", terr.c_str(), pages);
+    CHECK(ok);
+    CHECK(pages == 2);
+}
+
+#endif
+
 void testOfficeMissingMessage()
 {
     section("Office: arquivo inexistente e mensagem de erro");
@@ -887,6 +1007,17 @@ void testOfficeMissingMessage()
     CHECK(!src->open(ghost, &error));
     CHECK(!error.empty());
     std::printf("  %s\n", error.c_str());
+#ifndef _WIN32
+    if (!haveSoffice()) {
+        const fs::path fake = tempDir() / "sem-conversor.docx";
+        writeText(fake, "x");
+        const worker::ConvertResult r = worker::convertToPdf(fake);
+        std::printf("  sem LibreOffice: %s\n", r.error.c_str());
+        CHECK(!r.ok);
+        CHECK(r.error.rfind("LibreOffice n", 0) == 0);
+        fs::remove(fake);
+    }
+#endif
 }
 
 fs::path writeHtml(const char* name, const std::string& html)
@@ -912,7 +1043,11 @@ std::unique_ptr<WebSource> openWeb(const fs::path& file, int w, int h, const Par
 
 bool cefAvailable()
 {
+#ifdef _WIN32
     return fs::is_regular_file(fs::path(WorkerHost::workerExePath()).parent_path() / L"cef" / L"libcef.dll");
+#else
+    return false;
+#endif
 }
 
 void testWeb(const char* transport)
@@ -1151,7 +1286,7 @@ void testBackgroundWeb()
     CHECK(web.isWeb() && web.replay == ReplayMode::Resume && web.supportsReplayMode());
     CHECK(comp.clip(0, 1).replay == ReplayMode::Restart && !comp.clip(0, 1).supportsReplayMode());
 
-    const std::set<DWORD> before = pidsOf(L"bslstage_worker.exe");
+    const std::set<unsigned long> before = pidsOf(wp::kWorkerExeName);
     CHECK(comp.trigger(0, 0));
     CHECK(pumpComp(comp, 60.0, [&] { return pageCounter(web) >= 5; }));
     const ISource* instance = web.source.get();
@@ -1159,7 +1294,7 @@ void testBackgroundWeb()
     const unsigned long pid = remote ? remote->workerPid() : 0;
     const int n1 = pageCounter(web);
     CHECK(instance != nullptr && pid != 0);
-    const std::set<DWORD> withOne = pidsOf(L"bslstage_worker.exe");
+    const std::set<unsigned long> withOne = pidsOf(wp::kWorkerExeName);
     std::printf("  pagina aberta: contador %d | worker pid %lu\n", n1, pid);
 
     CHECK(comp.trigger(0, 1));
@@ -1178,7 +1313,7 @@ void testBackgroundWeb()
     std::printf("  ao voltar: contador %d (era %d antes de sair)\n", n2, n1);
     CHECK(n2 >= nBackground && n2 > n1);
     CHECK(remote && remote->workerPid() == pid);
-    CHECK(pidsOf(L"bslstage_worker.exe") == withOne);
+    CHECK(pidsOf(wp::kWorkerExeName) == withOne);
     CHECK(waitUntil(*web.source, 20.0, [&] {
         const Pixels p = readSource(*web.source);
         return isColor(p.at(p.w / 2, p.h / 2), 32, 32, 32, 12);
@@ -1208,7 +1343,7 @@ void testBackgroundWeb()
     const auto t0 = Clock::now();
     while (extra && secondsSince(t0) < 15.0) {
         extra = false;
-        for (DWORD pidNow : pidsOf(L"bslstage_worker.exe"))
+        for (unsigned long pidNow : pidsOf(wp::kWorkerExeName))
             extra = extra || !before.count(pidNow);
         if (extra)
             sleepMs(100);
@@ -1332,9 +1467,11 @@ int makeDemoDocs(const fs::path& dir)
     writeColorPdf(dir / L"sample.pdf", {"0.93 0.2 0.22", "0.1 0.4 0.9", "0.1 0.7 0.4", "0.5 0.2 0.8"},
                   {"BSL Stage - PDF - pagina 1", "BSL Stage - PDF - pagina 2", "BSL Stage - PDF - pagina 3",
                    "BSL Stage - PDF - pagina 4"});
+#ifdef _WIN32
     std::string error;
     if (!makePptx(dir / L"sample.pptx", 4, &error))
         std::printf("pptx nao gerado: %s\n", error.c_str());
+#endif
     writeText(dir / L"sample.html",
               "<!doctype html><html><head><meta charset=\"utf-8\"><style>"
               "html,body{margin:0;background:transparent;font-family:Segoe UI,Arial,sans-serif}"
@@ -1354,7 +1491,9 @@ int makeDemoDocs(const fs::path& dir)
 int main(int argc, char** argv)
 {
     if (argc >= 3 && std::string(argv[1]) == "--make-demo-docs") {
+#ifdef _WIN32
         CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+#endif
         return makeDemoDocs(fs::absolute(fs::path(argv[2])).lexically_normal());
     }
     std::set<std::string> wanted;
@@ -1386,7 +1525,7 @@ int main(int argc, char** argv)
         else
             std::printf("sem D3D11: %s\n", err.c_str());
     }
-    const std::set<DWORD> workersBefore = pidsOf(L"bslstage_worker.exe");
+    const std::set<unsigned long> workersBefore = pidsOf(wp::kWorkerExeName);
 
     if (want("pdf")) {
         testPdf("auto");
@@ -1425,12 +1564,12 @@ int main(int argc, char** argv)
         bool extra = true;
         while (extra && secondsSince(t0) < 10.0) {
             extra = false;
-            for (DWORD pid : pidsOf(L"bslstage_worker.exe"))
+            for (unsigned long pid : pidsOf(wp::kWorkerExeName))
                 extra = extra || !workersBefore.count(pid);
             if (extra)
                 sleepMs(100);
         }
-        std::printf("  bslstage_worker.exe sobrando: %s\n", extra ? "SIM" : "nenhum");
+        std::printf("  processos auxiliares sobrando: %s\n", extra ? "SIM" : "nenhum");
         CHECK(!extra);
     }
 

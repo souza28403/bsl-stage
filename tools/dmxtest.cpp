@@ -17,8 +17,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#include "platform/Socket.h"
 
 #include <algorithm>
 #include <array>
@@ -40,6 +39,15 @@ using namespace bsl;
 using namespace bsl::dmx;
 
 namespace {
+
+unsigned long testProcessId()
+{
+#ifdef _WIN32
+    return GetCurrentProcessId();
+#else
+    return static_cast<unsigned long>(getpid());
+#endif
+}
 
 int g_failures = 0;
 int g_checks = 0;
@@ -1144,7 +1152,7 @@ void testProject()
 
 struct UdpSender
 {
-    SOCKET s = INVALID_SOCKET;
+    bsl::sock::Handle s = bsl::sock::kInvalid;
     sockaddr_in dest{};
     UdpSender()
     {
@@ -1153,13 +1161,12 @@ struct UdpSender
         me.sin_family = AF_INET;
         me.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         bind(s, reinterpret_cast<sockaddr*>(&me), sizeof(me));
-        DWORD timeout = 1500;
-        setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+        bsl::sock::setTimeoutsMs(s, 1500, 1500);
     }
     ~UdpSender()
     {
-        if (s != INVALID_SOCKET)
-            closesocket(s);
+        if (s != bsl::sock::kInvalid)
+            bsl::sock::close(s);
     }
     void to(const char* ip, std::uint16_t port)
     {
@@ -1664,7 +1671,7 @@ void testExport()
     CHECK(html.find("Fundo &amp; &quot;Palco&quot; &lt;1&gt;") != std::string::npos);
     CHECK(html.find("<meta charset=\"utf-8\">") != std::string::npos && html.find("</html>") != std::string::npos);
 
-    const fs::path tmp = fs::temp_directory_path() / ("bslstage-dmxtest-" + std::to_string(GetCurrentProcessId()));
+    const fs::path tmp = fs::temp_directory_path() / ("bslstage-dmxtest-" + std::to_string(testProcessId()));
     std::error_code ec;
     fs::remove_all(tmp, ec);
     fs::create_directories(tmp, ec);
@@ -1734,8 +1741,7 @@ int runSender(const char* host, double seconds)
 
 int main(int argc, char** argv)
 {
-    WSADATA wsa{};
-    WSAStartup(MAKEWORD(2, 2), &wsa);
+    bsl::sock::startup();
 
     bool multicast = false;
     for (int i = 1; i < argc; ++i) {
@@ -1784,7 +1790,7 @@ int main(int argc, char** argv)
 
     glfwDestroyWindow(win);
     glfwTerminate();
-    WSACleanup();
+    bsl::sock::cleanup();
     std::printf("\n%d verificacoes, %d falha(s), %d bloco(s) nao testado(s)\n", g_checks, g_failures, g_notTested);
     std::printf(g_failures == 0 ? "DMXTEST OK\n" : "DMXTEST FALHOU\n");
     return g_failures == 0 ? 0 : 1;

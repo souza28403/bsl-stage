@@ -2,7 +2,9 @@
 
 #include "worker/PipeChannel.h"
 
+#ifdef _WIN32
 #include <windows.h>
+#endif
 
 #include <cstdint>
 #include <memory>
@@ -20,6 +22,7 @@ public:
     virtual const char* kind() const = 0;
     virtual bool resize(int w, int h) = 0;
     virtual bool submitBgra(const std::uint8_t* bgra, int stride, bool premultiplied, int page) = 0;
+#ifdef _WIN32
     virtual bool submitSharedHandle(HANDLE sharedHandle, int page, std::string* error)
     {
         (void)sharedHandle;
@@ -28,6 +31,7 @@ public:
             *error = "não suportado";
         return false;
     }
+#endif
     virtual bool supportsGpuHandle() const { return false; }
 
     int width() const { return width_; }
@@ -41,10 +45,10 @@ protected:
 struct SinkRequest
 {
     PipeChannel* channel = nullptr;
-    DWORD appPid = 0;
+    unsigned long appPid = 0;
     bool haveLuid = false;
-    LONG luidHigh = 0;
-    DWORD luidLow = 0;
+    long luidHigh = 0;
+    unsigned long luidLow = 0;
     std::string transport = "auto";
 };
 

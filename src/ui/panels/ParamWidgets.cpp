@@ -2,6 +2,7 @@
 
 #include "fx/bsl/SequenceFeed.h"
 #include "io/FileDialogs.h"
+#include "platform/WindowHandle.h"
 #include "media/FontCatalog.h"
 #include "ui/KeysUi.h"
 #include "ui/Theme.h"
@@ -12,7 +13,9 @@
 
 #include <imgui.h>
 
+#ifdef _WIN32
 #include <windows.h>
+#endif
 
 #include <algorithm>
 #include <cfloat>
@@ -145,9 +148,18 @@ int comboWithFilter(const char* id, const std::string& preview, const std::vecto
     return chosen;
 }
 
-float labelWidth()
+float labelColumnWidth(const std::vector<ParamDesc>& descs)
 {
-    return std::clamp(ImGui::GetContentRegionAvail().x * 0.36f, dp(100.0f), dp(160.0f));
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const float base = std::clamp(avail * 0.36f, dp(100.0f), dp(160.0f));
+    float need = 0.0f;
+    for (const ParamDesc& d : descs) {
+        if (d.type == ParamType::TextMultiline || (d.type == ParamType::Custom && d.custom == "bsl-slices"))
+            continue;
+        need = std::max(need, ImGui::CalcTextSize(d.label.c_str()).x);
+    }
+    need += ImGui::GetStyle().ItemSpacing.x * 2.0f;
+    return std::clamp(need, base, std::max(base, avail * 0.55f));
 }
 
 }
@@ -173,6 +185,7 @@ std::vector<ParamEdit> drawParams(const std::vector<ParamDesc>& descs, const med
     std::vector<ParamEdit> edits;
     const ParamSet set(descs, values);
     std::string lastGroup;
+    const float labelW = labelColumnWidth(descs);
 
     for (const ParamDesc& d : descs) {
         if (!d.group.empty() && d.group != lastGroup) {
@@ -202,8 +215,10 @@ std::vector<ParamEdit> drawParams(const std::vector<ParamDesc>& descs, const med
             dimLabel(d.label.c_str());
             if (!d.tooltip.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 ImGui::SetTooltip("%s", d.tooltip.c_str());
-            ImGui::SameLine();
-            ImGui::SetCursorPosX(x + labelWidth());
+            if (ImGui::CalcTextSize(d.label.c_str()).x + ImGui::GetStyle().ItemSpacing.x <= labelW) {
+                ImGui::SameLine();
+                ImGui::SetCursorPosX(x + labelW);
+            }
         }
         ImGui::SetNextItemWidth(-FLT_MIN);
 
@@ -330,7 +345,7 @@ std::vector<ParamEdit> drawParams(const std::vector<ParamDesc>& descs, const med
                         spec.assign(s.begin(), s.end());
                     }
                 }
-                if (auto file = dialogs::openFile(GetActiveWindow(), name, spec))
+                if (auto file = dialogs::openFile(bslplat::activeWindowHandle(), name, spec))
                     edits.push_back({d.id, Json(std::string(reinterpret_cast<const char*>(file->u8string().c_str())))});
             }
             break;

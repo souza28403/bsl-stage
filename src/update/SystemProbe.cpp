@@ -1,9 +1,15 @@
 #include "update/SystemProbe.h"
 
+#if BSL_WITH_UPDATER
 #include <windows.h>
 #include <shellapi.h>
+#else
+#include <cstdlib>
+#endif
 
 #include <cstdio>
+
+#if BSL_WITH_UPDATER
 
 namespace bsl::update {
 
@@ -88,3 +94,51 @@ bool openGithubUrl(const std::string& url)
 }
 
 }
+
+#else
+
+namespace bsl::update {
+
+namespace {
+
+std::string envVar(const char* name)
+{
+    const char* v = std::getenv(name);
+    return v ? std::string(v) : std::string();
+}
+
+}
+
+std::string windowsVersionText()
+{
+    return "Sistema não Windows";
+}
+
+std::string totalRamText()
+{
+    return "desconhecida";
+}
+
+std::string userProfileDir()
+{
+    return envVar("HOME");
+}
+
+std::string userNameText()
+{
+    return envVar("USER");
+}
+
+std::string computerNameText()
+{
+    return envVar("HOSTNAME");
+}
+
+bool openGithubUrl(const std::string&)
+{
+    return false;
+}
+
+}
+
+#endif

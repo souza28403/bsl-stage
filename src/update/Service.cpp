@@ -6,8 +6,12 @@
 
 #include <nlohmann/json.hpp>
 
+#include "platform/ExePath.h"
+
+#if BSL_WITH_UPDATER
 #include <windows.h>
 #include <shellapi.h>
+#endif
 
 #include <algorithm>
 #include <cstring>
@@ -46,9 +50,7 @@ void writeText(const fs::path& file, const std::string& text)
 
 fs::path exePath()
 {
-    wchar_t buf[MAX_PATH * 2];
-    const DWORD n = GetModuleFileNameW(nullptr, buf, static_cast<DWORD>(std::size(buf)));
-    return fs::path(std::wstring(buf, n));
+    return bslplat::exePath();
 }
 
 std::string lowerStr(std::string s)
@@ -59,6 +61,7 @@ std::string lowerStr(std::string s)
 
 }
 
+#if BSL_WITH_UPDATER
 bool installedByMsi()
 {
     HKEY key = nullptr;
@@ -71,6 +74,12 @@ bool installedByMsi()
     RegCloseKey(key);
     return r == ERROR_SUCCESS && type == REG_SZ && _wcsicmp(buf, L"msi") == 0;
 }
+#else
+bool installedByMsi()
+{
+    return false;
+}
+#endif
 
 Service::Service() = default;
 
@@ -557,6 +566,7 @@ bool Service::launchInstallerOnExit(bool restartAfter, std::string* error)
             *error = text;
         return false;
     };
+#if BSL_WITH_UPDATER
     std::error_code ec;
     const fs::path exe = exePath();
     const fs::path appDir = exe.parent_path();
@@ -613,6 +623,9 @@ bool Service::launchInstallerOnExit(bool restartAfter, std::string* error)
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
     return true;
+#else
+    return fail("Não há atualização automática nesta plataforma.");
+#endif
 }
 
 }

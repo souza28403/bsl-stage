@@ -1,17 +1,22 @@
 #include "app/ProjectSession.h"
+#include "platform/TimeUtil.h"
 
 #include "app/Log.h"
 #include "app/Paths.h"
 #include "app/Qa.h"
 #include "io/FileDialogs.h"
+#include "platform/Env.h"
 #include "io/ProjectFile.h"
 #include "ui/Theme.h"
 
+#ifdef _WIN32
 #include <windows.h>
-
 #define GLFW_EXPOSE_NATIVE_WIN32
+#endif
 #include <GLFW/glfw3.h>
+#ifdef _WIN32
 #include <GLFW/glfw3native.h>
+#endif
 
 #include <imgui.h>
 
@@ -75,7 +80,11 @@ ProjectSession::~ProjectSession() = default;
 
 void* ProjectSession::hwnd() const
 {
+#ifdef _WIN32
     return window_ ? static_cast<void*>(glfwGetWin32Window(window_)) : nullptr;
+#else
+    return nullptr;
+#endif
 }
 
 void ProjectSession::enableCrashRecovery(bool offerRecovery)
@@ -83,7 +92,7 @@ void ProjectSession::enableCrashRecovery(bool offerRecovery)
     crashRecovery_ = true;
     std::error_code ec;
     const bool crashed = fs::exists(lockPath(), ec);
-    std::ofstream(lockPath()) << GetCurrentProcessId() << '\n';
+    std::ofstream(lockPath()) << bslplat::currentProcessId() << '\n';
     lockHeld_ = true;
     lastAutosave_ = Clock::now();
 
@@ -122,7 +131,7 @@ void ProjectSession::autosaveIfNeeded()
 
     const std::time_t now = std::time(nullptr);
     std::tm tm{};
-    localtime_s(&tm, &now);
+    bslplat::localTime(now, tm);
     wchar_t stamp[40];
     std::wcsftime(stamp, 40, L"autosave-%Y%m%d-%H%M%S.bslstage", &tm);
 
@@ -302,7 +311,7 @@ void ProjectSession::execute(const Request& r)
             const std::string& last = t_.settings.recentProjects.front();
             start = fs::path(std::u8string(last.begin(), last.end())).parent_path();
         }
-        if (const auto file = dialogs::openProject(static_cast<HWND>(hwnd()), start))
+        if (const auto file = dialogs::openProject(hwnd(), start))
             openFile(*file);
         break;
     }
@@ -328,13 +337,12 @@ bool ProjectSession::saveAs()
 {
     std::optional<fs::path> file;
     if (qa::enabled()) {
-        wchar_t buf[MAX_PATH * 4] = {};
-        const DWORD n = GetEnvironmentVariableW(L"BSLSTAGE_QA_SAVE_PATH", buf, static_cast<DWORD>(std::size(buf)));
-        if (n > 0 && n < std::size(buf))
-            file = fs::path(std::wstring(buf, n));
+        const std::wstring v = bslplat::envWide(L"BSLSTAGE_QA_SAVE_PATH");
+        if (!v.empty())
+            file = fs::path(v);
     }
     if (!file)
-        file = dialogs::saveProject(static_cast<HWND>(hwnd()), path_);
+        file = dialogs::saveProject(hwnd(), path_);
     if (!file)
         return false;
     if (!isProjectExtension(*file))
@@ -444,7 +452,7 @@ void ProjectSession::doLocate(const Request& r)
     std::error_code ec;
     if (!fs::is_directory(start, ec))
         start.clear();
-    const auto file = dialogs::openMedia(static_cast<HWND>(hwnd()), start);
+    const auto file = dialogs::openMedia(hwnd(), start);
     if (!file)
         return;
     if (!project::relinkClip(clip, *file)) {

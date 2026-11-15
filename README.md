@@ -44,7 +44,7 @@ O BSL Stage se atualiza pelo **GitHub Releases** e recebe reportes pelo **GitHub
   vêm desmarcadas e a prévia mostra exatamente o texto que será enviado. **Abrir no GitHub** abre o navegador com o texto já preenchido e você confirma lá;
   **Copiar** copia o texto. O programa não envia nada sozinho.
 - **Privacidade.** A única coisa enviada ao GitHub nas atualizações é o cabeçalho `User-Agent: BSL-Stage/<versão>`. Nenhum dado do usuário, cookie ou token.
-- Repositório configurável em um lugar só (`BSLSTAGE_GITHUB_REPO`, hoje o provisório `bsl-light/bsl-stage`). Como publicar uma versão: `docs/RELEASE.md`.
+- Repositório configurável em um lugar só (`BSLSTAGE_GITHUB_REPO`, hoje `souza28403/bsl-stage`). Como publicar uma versão: `docs/RELEASE.md`.
 
 ![Aviso de atualização na barra de status e notas da versão](docs/screenshot-atualizacao.png)
 ![Janela Reportar problema](docs/screenshot-reportar.png)

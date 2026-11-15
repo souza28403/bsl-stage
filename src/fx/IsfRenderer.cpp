@@ -1,4 +1,5 @@
 #include "fx/IsfRenderer.h"
+#include "platform/TimeUtil.h"
 
 #include "app/Log.h"
 #include "render/TextureLoader.h"
@@ -329,7 +330,7 @@ bool IsfRenderer::render(const EffectContext& ctx, GLuint inputTex, int inW, int
 
     const std::time_t now = std::time(nullptr);
     std::tm lt{};
-    localtime_s(&lt, &now);
+    bslplat::localTime(now, lt);
     const float dateSeconds = static_cast<float>(lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec);
 
     GLuint fftTex = 0;

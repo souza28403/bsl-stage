@@ -1,12 +1,14 @@
 #include "ui/panels/PluginWizard.h"
 
 #include "app/Log.h"
+#include "platform/StringUtil.h"
 #include "app/Paths.h"
 #include "app/Qa.h"
 #include "fx/EffectRegistry.h"
 #include "fx/IsfDoc.h"
 #include "fx/IsfLibrary.h"
 #include "io/FileDialogs.h"
+#include "platform/WindowHandle.h"
 #include "plugin/PluginFiles.h"
 #include "plugin/PluginPackage.h"
 #include "plugin/PluginTemplates.h"
@@ -16,13 +18,18 @@
 
 #include <imgui.h>
 
+#ifdef _WIN32
 #include <windows.h>
 #include <shellapi.h>
+#endif
+#include "platform/Env.h"
+#include "platform/OpenUrl.h"
 
 #include <algorithm>
 #include <cfloat>
 #include <cstring>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace bsl::ui {
@@ -222,6 +229,7 @@ PluginSpec buildSpec()
     return spec;
 }
 
+#ifdef _WIN32
 fs::path vsCodePath()
 {
     std::vector<fs::path> candidates;
@@ -250,17 +258,20 @@ bool launchEditor(const fs::path& file)
             return true;
     return reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, L"open", L"notepad.exe", quoted.c_str(), nullptr, SW_SHOWNORMAL)) > 32;
 }
+#else
+bool launchEditor(const fs::path& file)
+{
+    return bslplat::openUrl(file.string());
+}
+#endif
 
 fs::path pickOpenPackage()
 {
     if (qa::enabled()) {
-        wchar_t buf[MAX_PATH * 2] = {};
-        const DWORD n = GetEnvironmentVariableW(L"BSLSTAGE_QA_PLUGIN_FILE", buf, static_cast<DWORD>(std::size(buf)));
-        if (n > 0 && n < std::size(buf))
-            return fs::path(std::wstring(buf, n));
-        return {};
+        const std::wstring v = bslplat::envWide(L"BSLSTAGE_QA_PLUGIN_FILE");
+        return v.empty() ? fs::path() : fs::path(v);
     }
-    if (auto f = dialogs::openFile(GetActiveWindow(), L"Plugin do BSL Stage (*.bslplugin)", L"*.bslplugin"))
+    if (auto f = dialogs::openFile(bslplat::activeWindowHandle(), L"Plugin do BSL Stage (*.bslplugin)", L"*.bslplugin"))
         return *f;
     return {};
 }
@@ -268,14 +279,11 @@ fs::path pickOpenPackage()
 fs::path pickSavePackage(const std::string& defaultName)
 {
     if (qa::enabled()) {
-        wchar_t buf[MAX_PATH * 2] = {};
-        const DWORD n = GetEnvironmentVariableW(L"BSLSTAGE_QA_PLUGIN_EXPORT", buf, static_cast<DWORD>(std::size(buf)));
-        if (n > 0 && n < std::size(buf))
-            return fs::path(std::wstring(buf, n));
-        return {};
+        const std::wstring v = bslplat::envWide(L"BSLSTAGE_QA_PLUGIN_EXPORT");
+        return v.empty() ? fs::path() : fs::path(v);
     }
     const std::u8string u = fromUtf8(defaultName).u8string();
-    if (auto f = dialogs::saveFile(GetActiveWindow(), L"Exportar plugin", L"Plugin do BSL Stage (*.bslplugin)", L"*.bslplugin",
+    if (auto f = dialogs::saveFile(bslplat::activeWindowHandle(), L"Exportar plugin", L"Plugin do BSL Stage (*.bslplugin)", L"*.bslplugin",
                                    fs::path(u).wstring(), L"bslplugin"))
         return *f;
     return {};
@@ -331,7 +339,7 @@ void drawParamRow(size_t i, Row& r, bool& remove)
     case ParamKind::Image:
         if (ImGui::Button(("Escolher imagem…##plug_p" + n + "_imagem").c_str())) {
             if (!qa::enabled())
-                if (auto f = dialogs::openFile(GetActiveWindow(), L"Imagens", L"*.png;*.jpg;*.jpeg;*.bmp;*.tga"))
+                if (auto f = dialogs::openFile(bslplat::activeWindowHandle(), L"Imagens", L"*.png;*.jpg;*.jpeg;*.bmp;*.tga"))
                     r.spec.imageFile = paths::toUtf8(*f);
         }
         ImGui::SameLine();
@@ -882,7 +890,7 @@ std::string duplicateUserPlugin(const fs::path& file)
     const fs::path parent = file.parent_path();
     const std::string a = paths::toUtf8(fs::weakly_canonical(parent, ec));
     const std::string b = paths::toUtf8(fs::weakly_canonical(sampleDir, ec));
-    if (!b.empty() && a.size() >= b.size() && _stricmp(a.substr(0, b.size()).c_str(), b.c_str()) == 0)
+    if (!b.empty() && a.size() >= b.size() && bslplat::iequals(std::string_view(a).substr(0, b.size()), b))
         target = paths::pluginsDir();
     const CreateResult r = duplicatePlugin(file, target);
     g_info.lastAction = "duplicar";

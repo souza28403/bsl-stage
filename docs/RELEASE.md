@@ -5,7 +5,7 @@ programa. Este guia diz como publicar uma versão e o que ainda depende de passo
 
 ## 1. Antes da primeira vez
 
-1. **Repositório.** O valor provisório é `bsl-light/bsl-stage`. Ele vem de uma constante só, `BSLSTAGE_GITHUB_REPO`
+1. **Repositório.** O valor atual é `souza28403/bsl-stage`. Ele vem de uma constante só, `BSLSTAGE_GITHUB_REPO`
    (`CMakeLists.txt`, gerada em `Version.h`). Troque-o nestes lugares quando o repositório de verdade existir:
    - `CMakeLists.txt` (variável de cache `BSLSTAGE_GITHUB_REPO`; o workflow de release já passa `-DBSLSTAGE_GITHUB_REPO=<dono/nome>`
      do repositório que está publicando, então os pacotes publicados apontam para o lugar certo mesmo sem editar);

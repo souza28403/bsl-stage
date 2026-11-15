@@ -1,4 +1,5 @@
 #include "ui/panels/StatusBar.h"
+#include "platform/TimeUtil.h"
 
 #include "app/Log.h"
 #include "ui/Theme.h"
@@ -12,8 +13,15 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
+#ifdef _WIN32
 #include <windows.h>
 #include <psapi.h>
+#else
+#include <time.h>
+#include <unistd.h>
+#include <cstdint>
+#include <fstream>
+#endif
 
 #include <chrono>
 #include <cstdio>
@@ -41,12 +49,17 @@ struct SystemStats
     double vramFreeMb = 0.0;
 
     std::chrono::steady_clock::time_point lastSample{};
+#ifdef _WIN32
     ULONGLONG lastProcessTime = 0;
+#else
+    uint64_t lastProcessTime = 0;
+#endif
     bool hasLast = false;
 };
 
 SystemStats g_stats;
 
+#ifdef _WIN32
 ULONGLONG fileTimeToU64(const FILETIME& ft)
 {
     ULARGE_INTEGER v;
@@ -54,6 +67,7 @@ ULONGLONG fileTimeToU64(const FILETIME& ft)
     v.HighPart = ft.dwHighDateTime;
     return v.QuadPart;
 }
+#endif
 
 bool hasExtension(const char* name)
 {
@@ -108,6 +122,7 @@ void sampleSystem(SystemStats& s)
     if (s.hasLast && now - s.lastSample < std::chrono::seconds(1))
         return;
 
+#ifdef _WIN32
     FILETIME creationTime{}, exitTime{}, kernelTime{}, userTime{};
     if (GetProcessTimes(GetCurrentProcess(), &creationTime, &exitTime, &kernelTime, &userTime)) {
         const ULONGLONG total = fileTimeToU64(kernelTime) + fileTimeToU64(userTime);
@@ -125,6 +140,28 @@ void sampleSystem(SystemStats& s)
     PROCESS_MEMORY_COUNTERS pmc{};
     if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc)))
         s.ramMb = static_cast<double>(pmc.WorkingSetSize) / (1024.0 * 1024.0);
+
+#else
+    timespec cpu{};
+    if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cpu) == 0) {
+        const uint64_t total = static_cast<uint64_t>(cpu.tv_sec) * 10000000ull + static_cast<uint64_t>(cpu.tv_nsec) / 100ull;
+        if (s.hasLast) {
+            const double wall100ns = std::chrono::duration<double>(now - s.lastSample).count() * 1.0e7;
+            const long n = sysconf(_SC_NPROCESSORS_ONLN);
+            const double cores = n > 0 ? static_cast<double>(n) : 1.0;
+            if (wall100ns > 0.0)
+                s.cpuPercent = static_cast<double>(total - s.lastProcessTime) / (wall100ns * cores) * 100.0;
+        }
+        s.lastProcessTime = total;
+    }
+
+    std::ifstream statm("/proc/self/statm");
+    unsigned long long sizePages = 0, residentPages = 0;
+    if (statm >> sizePages >> residentPages) {
+        const long page = sysconf(_SC_PAGESIZE);
+        s.ramMb = static_cast<double>(residentPages) * static_cast<double>(page > 0 ? page : 4096) / (1024.0 * 1024.0);
+    }
+#endif
 
     sampleVram(s);
 
@@ -223,7 +260,7 @@ void drawStatusBar(PanelContext& ctx)
 
         const std::time_t t = std::time(nullptr);
         std::tm local{};
-        localtime_s(&local, &t);
+        bslplat::localTime(t, local);
         char clock[16];
         std::strftime(clock, sizeof(clock), "%H:%M", &local);
         ImFont* mono = fonts().mono;

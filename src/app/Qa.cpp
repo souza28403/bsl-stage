@@ -6,8 +6,6 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
-#include <windows.h>
-
 #include <algorithm>
 #include <cstdarg>
 #include <cstdio>
@@ -79,14 +77,16 @@ std::string jsonEscape(const std::string& s)
 
 void writeFileAtomic(const std::filesystem::path& file, const std::string& text)
 {
-    const std::filesystem::path tmp = file.wstring() + L".tmp";
+    std::filesystem::path tmp = file;
+    tmp += ".tmp";
     {
         std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
         if (!out)
             return;
         out << text;
     }
-    MoveFileExW(tmp.c_str(), file.c_str(), MOVEFILE_REPLACE_EXISTING);
+    std::error_code ec;
+    std::filesystem::rename(tmp, file, ec);
 }
 
 void addConflict(const std::string& window, const std::string& label, unsigned id, const float* r = nullptr)
@@ -194,7 +194,7 @@ void endFrame(int frame, const std::string& stateJson, float scale, int fbW, int
             continue;
         const ImGuiTabBar* bar = w->DockNode->TabBar;
         for (const ImGuiTabItem& tab : bar->Tabs) {
-            if (!tab.Window)
+            if (!tab.Window || !tab.Window->WasActive)
                 continue;
             std::string name = tab.Window->Name;
             const size_t hash = name.find("###");

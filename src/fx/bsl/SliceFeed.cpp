@@ -8,9 +8,6 @@
 #include <cstdlib>
 #include <limits>
 
-#include <windows.h>
-#include <shlobj.h>
-
 namespace bsl::fx::bsllight {
 
 SliceFeed& SliceFeed::instance()

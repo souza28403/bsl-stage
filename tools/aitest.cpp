@@ -280,7 +280,7 @@ void testRuntime()
 {
     section("ONNX Runtime: carrega, DirectML e CPU, modelos");
     const ai::RuntimeInfo ri = ai::runtimeInfo();
-    CHECK_MSG(ri.dllFound, "onnxruntime.dll ao lado do exe");
+    CHECK_MSG(ri.dllFound, "biblioteca do ONNX Runtime ao lado do exe");
     CHECK_MSG(ri.loaded, "runtime carregou: " + ri.error);
     std::printf("  ONNX Runtime %s\n", ri.version.c_str());
     for (const ai::AdapterInfo& a : ai::listAdapters())
@@ -288,7 +288,11 @@ void testRuntime()
                     a.software ? ", software" : "", a.usable ? ", D3D12 ok" : "");
     std::printf("  DirectML: %s\n", ri.gpuAvailable ? ri.gpuName.c_str() : ("indisponivel (" + ri.gpuError + ")").c_str());
     g_sum.gpuName = ri.gpuName;
+#ifdef _WIN32
     CHECK_MSG(ri.gpuAvailable, "DirectML disponivel: " + ri.gpuError);
+#else
+    CHECK_MSG(!ri.gpuAvailable, "sem GPU nesta plataforma: usa a CPU");
+#endif
     for (int k = 0; k < ai::kModelKindCount; ++k) {
         const auto kind = static_cast<ai::ModelKind>(k);
         CHECK_MSG(ai::modelPresent(kind), std::string("modelo presente: ") + ai::modelSpec(kind).fileName);
@@ -318,7 +322,11 @@ void testModels(bool bench)
         std::vector<float> outGpu, outCpu;
         const Bench g = benchModel(kind, ai::DevicePref::Gpu, in, outGpu, iters);
         const Bench c = benchModel(kind, ai::DevicePref::Cpu, in, outCpu, std::max(5, iters / 4));
+#ifdef _WIN32
         CHECK_MSG(g.ok, std::string("modelo ") + spec.key + " roda na GPU (DirectML)");
+#else
+        CHECK_MSG(!g.ok, std::string("modelo ") + spec.key + " recusa GPU sem DirectML");
+#endif
         CHECK_MSG(c.ok, std::string("modelo ") + spec.key + " roda na CPU");
         if (g.ok)
             CHECK_MSG(g.device.find("DirectML") != std::string::npos, "sessao GPU usa DirectML: " + g.device);
@@ -405,7 +413,12 @@ void testEngine(const Rgb& photo)
         const ai::AiFrame first = eng.acquire(1001, 0, top, photo.w, photo.h, true, need, false);
         const double ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
         std::printf("  1a chamada de acquire(): %.2f ms (estado %d)\n", ms, static_cast<int>(first.state));
-        CHECK_MSG(ms < 100.0, "acquire() nao bloqueia (carregar a DLL/modelos fica na thread da IA)");
+#ifdef _WIN32
+        const double acquireLimitMs = 100.0;
+#else
+        const double acquireLimitMs = 1000.0;
+#endif
+        CHECK_MSG(ms < acquireLimitMs, "acquire() nao bloqueia (carregar a DLL/modelos fica na thread da IA)");
         CHECK(first.state == ai::AiState::Warming || first.state == ai::AiState::Ready);
     }
 
@@ -479,7 +492,11 @@ void testEngine(const Rgb& photo)
     std::printf("  stats: %d fonte(s), %.0f inferencias/s, depth %.1f ms (%s), person %.1f ms (%s)\n", st.activeSources, static_cast<double>(st.inferencesPerSec),
                 st.models[0].avgMs, st.models[0].device.c_str(), st.models[1].avgMs, st.models[1].device.c_str());
     CHECK(st.runtimeLoaded && st.models[0].loaded && st.models[1].loaded);
+#ifdef _WIN32
     CHECK_MSG(st.models[0].onGpu && st.models[1].onGpu, "modelos na GPU no modo Auto");
+#else
+    CHECK_MSG(!st.models[0].onGpu && !st.models[1].onGpu, "modelos na CPU no modo Auto sem GPU");
+#endif
 
     glDeleteTextures(1, &top);
     glDeleteTextures(1, &bottom);

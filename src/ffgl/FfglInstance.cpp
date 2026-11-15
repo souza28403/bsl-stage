@@ -1,4 +1,3 @@
-#include <windows.h>
 
 #include "ffgl/FfglInstance.h"
 
@@ -16,6 +15,15 @@
 namespace bsl::ffgl {
 
 namespace {
+
+bool currentContextValid()
+{
+#if BSL_WITH_FFGL
+    return wglGetCurrentContext() != nullptr;
+#else
+    return true;
+#endif
+}
 
 struct Slot
 {
@@ -241,7 +249,7 @@ FfglInstance::~FfglInstance()
 
 void FfglInstance::teardown(bool callPlugin)
 {
-    if (instance_ && plugin_ && callPlugin && wglGetCurrentContext()) {
+    if (instance_ && plugin_ && callPlugin && currentContextValid()) {
         GlGuard guard;
         GlGuard::setDefaults(0, std::max(width_, 1), std::max(height_, 1));
         const CallResult r = plugin_->call(fn::DeinstantiateGL, 0, instance_);

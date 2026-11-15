@@ -1,16 +1,9 @@
 #include "ai/AiRuntime.h"
 
+#include "ai/AiDml.h"
 #include "app/Log.h"
-
-#include <windows.h>
-
-#include <d3d12.h>
-#include <dxgi1_6.h>
-#include <wrl/client.h>
-
-#define ORT_API_MANUAL_INIT
-#include <onnxruntime_cxx_api.h>
-#include <dml_provider_factory.h>
+#include "platform/DynLib.h"
+#include "platform/ExePath.h"
 
 #include <algorithm>
 #include <array>
@@ -22,8 +15,6 @@
 
 namespace bsl::ai {
 
-using Microsoft::WRL::ComPtr;
-
 namespace {
 
 const ModelSpec kSpecs[kModelKindCount] = {
@@ -32,22 +23,9 @@ const ModelSpec kSpecs[kModelKindCount] = {
     {ModelKind::Person, "person", "Pessoa (MODNet)", "modnet_fp32.onnx", "Apache-2.0", 384, 224},
 };
 
-std::string narrow(const std::wstring& w)
-{
-    if (w.empty())
-        return {};
-    const int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
-    std::string s(static_cast<size_t>(std::max(n, 0)), '\0');
-    if (n > 0)
-        WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), s.data(), n, nullptr, nullptr);
-    return s;
-}
-
 std::filesystem::path exeDir()
 {
-    wchar_t buf[MAX_PATH];
-    const DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
-    return std::filesystem::path(std::wstring(buf, n)).parent_path();
+    return bslplat::exeDir();
 }
 
 std::uint16_t floatToHalf(float f)
@@ -104,13 +82,9 @@ struct Global
     std::mutex mutex;
     bool tried = false;
     RuntimeInfo info;
-    HMODULE ortDll = nullptr;
-    HMODULE dmlDll = nullptr;
+    bslplat::DynLib ortLib;
     std::unique_ptr<Ort::Env> env;
-    const OrtDmlApi* dmlApi = nullptr;
-    ComPtr<ID3D12Device> d3d;
-    ComPtr<ID3D12CommandQueue> queue;
-    ComPtr<IDMLDevice> dml;
+    std::unique_ptr<DmlDevice> dml;
 };
 
 Global& global()
@@ -121,61 +95,7 @@ Global& global()
 
 void initGpu(Global& g)
 {
-    ComPtr<IDXGIFactory6> factory;
-    if (FAILED(CreateDXGIFactory2(0, IID_PPV_ARGS(&factory)))) {
-        g.info.gpuError = "DXGI indisponível";
-        return;
-    }
-    ComPtr<IDXGIAdapter1> chosen;
-    DXGI_ADAPTER_DESC1 chosenDesc{};
-    for (UINT i = 0;; ++i) {
-        ComPtr<IDXGIAdapter1> a;
-        if (factory->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&a)) == DXGI_ERROR_NOT_FOUND)
-            break;
-        DXGI_ADAPTER_DESC1 desc{};
-        a->GetDesc1(&desc);
-        if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)
-            continue;
-        ComPtr<ID3D12Device> dev;
-        if (SUCCEEDED(D3D12CreateDevice(a.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev)))) {
-            chosen = a;
-            chosenDesc = desc;
-            g.d3d = dev;
-            break;
-        }
-    }
-    if (!g.d3d) {
-        g.info.gpuError = "nenhuma GPU com Direct3D 12";
-        return;
-    }
-    D3D12_COMMAND_QUEUE_DESC qd{};
-    qd.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
-    if (FAILED(g.d3d->CreateCommandQueue(&qd, IID_PPV_ARGS(&g.queue)))) {
-        g.info.gpuError = "falha ao criar a fila de comandos D3D12";
-        return;
-    }
-    using CreateFn = HRESULT(WINAPI*)(ID3D12Device*, DML_CREATE_DEVICE_FLAGS, REFIID, void**);
-    const auto create = reinterpret_cast<CreateFn>(g.dmlDll ? GetProcAddress(g.dmlDll, "DMLCreateDevice") : nullptr);
-    if (!create) {
-        g.info.gpuError = "DirectML.dll não encontrada";
-        return;
-    }
-    if (FAILED(create(g.d3d.Get(), DML_CREATE_DEVICE_FLAG_NONE, IID_PPV_ARGS(&g.dml)))) {
-        g.info.gpuError = "falha ao criar o dispositivo DirectML";
-        return;
-    }
-    const void* dmlApi = nullptr;
-    try {
-        Ort::ThrowOnError(Ort::GetApi().GetExecutionProviderApi("DML", ORT_API_VERSION, &dmlApi));
-    } catch (...) {
-    }
-    if (!dmlApi) {
-        g.info.gpuError = "o onnxruntime.dll não tem o provedor DirectML";
-        return;
-    }
-    g.dmlApi = static_cast<const OrtDmlApi*>(dmlApi);
-    g.info.gpuName = narrow(chosenDesc.Description);
-    g.info.gpuAvailable = true;
+    g.info.gpuAvailable = g.dml && g.dml->init(g.info.gpuName, g.info.gpuError);
 }
 
 Global& ensureGlobal()
@@ -187,29 +107,30 @@ Global& ensureGlobal()
     g.tried = true;
 
     const std::filesystem::path dir = exeDir();
+#ifdef _WIN32
     const std::filesystem::path ortPath = dir / L"onnxruntime.dll";
+#elif defined(__APPLE__)
+    const std::filesystem::path ortPath = dir / "libonnxruntime.dylib";
+#else
+    const std::filesystem::path ortPath = dir / "libonnxruntime.so";
+#endif
     std::error_code ec;
     g.info.dllFound = std::filesystem::exists(ortPath, ec);
     if (!g.info.dllFound) {
-        g.info.error = "onnxruntime.dll não encontrada ao lado do programa";
+        g.info.error = ortPath.filename().string() + " não encontrada ao lado do programa";
         return g;
     }
-    const std::filesystem::path dmlPath = dir / L"DirectML.dll";
-    if (std::filesystem::exists(dmlPath, ec))
-        g.dmlDll = LoadLibraryExW(dmlPath.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
-    if (!g.dmlDll)
-        g.dmlDll = LoadLibraryExW(L"DirectML.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
-    g.ortDll = LoadLibraryExW(ortPath.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
-    if (!g.ortDll) {
-        g.info.error = "falha ao carregar onnxruntime.dll (erro " + std::to_string(GetLastError()) + ")";
+    g.dml = DmlDevice::load(dir);
+    if (!g.ortLib.open(ortPath, true)) {
+        g.info.error = "falha ao carregar " + ortPath.filename().string();
         return g;
     }
     using GetBaseFn = const OrtApiBase*(ORT_API_CALL*)();
-    const auto getBase = reinterpret_cast<GetBaseFn>(GetProcAddress(g.ortDll, "OrtGetApiBase"));
+    const auto getBase = g.ortLib.symbolAs<GetBaseFn>("OrtGetApiBase");
     const OrtApiBase* base = getBase ? getBase() : nullptr;
     const OrtApi* api = base ? base->GetApi(ORT_API_VERSION) : nullptr;
     if (!api) {
-        g.info.error = "o onnxruntime.dll não é compatível (versão da API)";
+        g.info.error = "o " + ortPath.filename().string() + " não é compatível (versão da API)";
         return g;
     }
     try {
@@ -235,7 +156,7 @@ Global& ensureGlobal()
     if (g.info.gpuAvailable)
         log::info("IA: ONNX Runtime " + g.info.version + ", GPU " + g.info.gpuName + " (DirectML)");
     else
-        log::info("IA: ONNX Runtime " + g.info.version + ", sem GPU DirectML (" + g.info.gpuError + "): usa a CPU");
+        log::info("IA: ONNX Runtime " + g.info.version + ", sem GPU (" + g.info.gpuError + "): usa a CPU");
     return g;
 }
 
@@ -302,28 +223,6 @@ bool modelPresent(ModelKind kind)
     return !p.empty() && std::filesystem::is_regular_file(p, ec);
 }
 
-std::vector<AdapterInfo> listAdapters()
-{
-    std::vector<AdapterInfo> out;
-    ComPtr<IDXGIFactory6> factory;
-    if (FAILED(CreateDXGIFactory2(0, IID_PPV_ARGS(&factory))))
-        return out;
-    for (UINT i = 0;; ++i) {
-        ComPtr<IDXGIAdapter1> a;
-        if (factory->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&a)) == DXGI_ERROR_NOT_FOUND)
-            break;
-        DXGI_ADAPTER_DESC1 desc{};
-        a->GetDesc1(&desc);
-        AdapterInfo info;
-        info.name = narrow(desc.Description);
-        info.vramBytes = desc.DedicatedVideoMemory;
-        info.software = (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0;
-        info.usable = !info.software && SUCCEEDED(D3D12CreateDevice(a.Get(), D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr));
-        out.push_back(std::move(info));
-    }
-    return out;
-}
-
 RuntimeInfo runtimeInfo()
 {
     return ensureGlobal().info;
@@ -379,7 +278,7 @@ std::unique_ptr<Session> Session::create(ModelKind kind, DevicePref pref, std::s
             if (gpu) {
                 so.DisableMemPattern();
                 so.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
-                Ort::ThrowOnError(g.dmlApi->SessionOptionsAppendExecutionProvider_DML1(so, g.dml.Get(), g.queue.Get()));
+                g.dml->appendProvider(so);
             } else {
                 so.AddConfigEntry("optimization.disable_specified_optimizers", "SimplifiedLayerNormFusion");
                 const unsigned hw = std::max(1u, std::thread::hardware_concurrency());

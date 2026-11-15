@@ -28,3 +28,9 @@ Certificado BSL Stage/
 __pycache__/
 *.pyc
 Novalct mapa/
+
+# chaves de ativacao: a chave privada nunca vai para o repositorio
+Licencas BSL Stage/
+
+build-linux/
+build-appimage/

@@ -1083,7 +1083,7 @@ void drawDmxWindow(PanelContext& ctx)
     ImGui::End();
 }
 
-void runDmxDialogs(HWND owner)
+void runDmxDialogs(void* owner)
 {
     if (!g.exportRequest)
         return;

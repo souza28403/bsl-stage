@@ -621,7 +621,7 @@ nem token no programa**. Núcleo em `bslupdate_core` (sem GL nem ImGui), testado
 
 | Arquivo | Papel |
 |---|---|
-| `app/Version.h.in` | gera `Version.h`: `BSLSTAGE_VERSION` (de `project(VERSION)`, o único lugar da versão) e `BSLSTAGE_GITHUB_REPO` (variável de cache do CMake, hoje o provisório `bsl-light/bsl-stage`). Aparece em Ajuda > Sobre |
+| `app/Version.h.in` | gera `Version.h`: `BSLSTAGE_VERSION` (de `project(VERSION)`, o único lugar da versão) e `BSLSTAGE_GITHUB_REPO` (variável de cache do CMake, hoje `souza28403/bsl-stage`). Aparece em Ajuda > Sobre |
 | `SemVer` | semver (aceita `v`, ignora build, pré-release menor que a estável, identificadores numéricos × alfanuméricos) |
 | `Release` | JSON da API (`/releases/latest` e lista), escolha do asset pelo nome (`BSL-Stage-<ver>-win64.zip`; nunca `src`/`updater`; instalador `.exe` como alternativa), `SHA256SUMS.txt`, URL de download só do GitHub, nome de arquivo seguro |
 | `Policy` | `Prefs` (`Settings::update`: verificar sozinho, beta, versão pulada, última verificação) e as regras: uma vez por dia (relógio que anda para trás conta), nunca com saída ligada / F11 / layout bloqueado / Eco, "pular versão" |

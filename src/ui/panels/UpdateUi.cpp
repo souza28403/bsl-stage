@@ -10,8 +10,7 @@
 
 #include <imgui.h>
 
-#include <windows.h>
-#include <shellapi.h>
+#include "platform/OpenUrl.h"
 
 #include <cstdio>
 
@@ -110,10 +109,7 @@ void openReleasePage(const update::Release& r)
     const std::string url = r.htmlUrl.rfind("https://github.com/", 0) == 0
                                 ? r.htmlUrl
                                 : std::string("https://github.com/") + BSLSTAGE_GITHUB_REPO + "/releases";
-    const int n = MultiByteToWideChar(CP_UTF8, 0, url.data(), static_cast<int>(url.size()), nullptr, 0);
-    std::wstring w(static_cast<size_t>(n), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, url.data(), static_cast<int>(url.size()), w.data(), n);
-    ShellExecuteW(nullptr, L"open", w.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    bslplat::openUrl(url);
 }
 
 }

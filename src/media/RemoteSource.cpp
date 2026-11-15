@@ -3,7 +3,12 @@
 #include "app/Log.h"
 #include "render/D3D11Interop.h"
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+#if BSL_WITH_D3D
 #include <d3d11.h>
+#endif
 
 #include <algorithm>
 #include <cstring>
@@ -12,6 +17,15 @@
 namespace bsl::media {
 
 namespace {
+
+long long readSeq(const volatile wp::ShmLong64* p)
+{
+#ifdef _WIN32
+    return ReadAcquire64(const_cast<volatile LONG64*>(p));
+#else
+    return __atomic_load_n(p, __ATOMIC_ACQUIRE);
+#endif
+}
 
 std::mutex g_forceMutex;
 std::string g_forcedTransport = "auto";
@@ -118,6 +132,7 @@ void RemoteSource::applyFrame(const FrameAccess& fa)
     info.first = !anyFrame_;
 
     if (fa.kind == FrameAccess::Kind::Texture) {
+#if BSL_WITH_D3D
         if (!interop_)
             return;
         beforeFrame(info);
@@ -130,13 +145,16 @@ void RemoteSource::applyFrame(const FrameAccess& fa)
         fa.context->CopyResource(interopTex_->d3d(), fa.mailbox);
         interopTex_->endD3D();
         activeTex_ = interopTex_->gl();
+#else
+        return;
+#endif
     } else {
         auto* hdr = const_cast<wp::ShmHeader*>(fa.shmHeader);
-        const LONG latest = hdr->latest;
+        const wp::ShmLong latest = hdr->latest;
         if (latest < 0 || latest > 1)
             return;
         const int idx = static_cast<int>(latest);
-        const LONG64 s1 = ReadAcquire64(&hdr->seq[idx]);
+        const long long s1 = readSeq(&hdr->seq[idx]);
         if (s1 & 1) {
             lastSeq_ = fa.seq - 1;
             return;
@@ -170,7 +188,7 @@ void RemoteSource::applyFrame(const FrameAccess& fa)
         glPixelStorei(GL_UNPACK_ROW_LENGTH, prevRow);
         glPixelStorei(GL_UNPACK_ALIGNMENT, prevAlign);
         glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prevTex));
-        const LONG64 s2 = ReadAcquire64(&hdr->seq[idx]);
+        const long long s2 = readSeq(&hdr->seq[idx]);
         if (s1 != s2)
             lastSeq_ = fa.seq - 1;
         activeTex_ = glTex_;

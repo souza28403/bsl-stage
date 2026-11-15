@@ -739,7 +739,8 @@ void testLegalFiles()
 
     section("avisos: toda biblioteca do CMake aparece em THIRD-PARTY-NOTICES.md");
     const std::map<std::string, std::string> shown = {{"glfw", "GLFW"}, {"imgui", "Dear ImGui"}, {"nlohmann_json", "nlohmann/json"},
-                                                      {"stb", "stb"}, {"spout2", "Spout"}};
+                                                      {"stb", "stb"}, {"spout2", "Spout"}, {"monocypher", "Monocypher"},
+                                                      {"nfd", "Native File Dialog Extended"}, {"miniaudio", "miniaudio"}};
     std::set<std::string> declared;
     const std::regex declareRe(R"(FetchContent_Declare\(\s*(\w+))");
     for (std::sregex_iterator it(cmake.begin(), cmake.end(), declareRe), end; it != end; ++it)
@@ -778,7 +779,7 @@ void testLegalFiles()
     for (const std::string& v : versions)
         CHECK(contains(notices, v));
     for (const char* name : {"FFmpeg", "PDFium", "ONNX Runtime", "DirectML", "Chromium Embedded Framework", "Depth Anything V2 Small",
-                             "MODNet", "Barlow", "JetBrains Mono", "Lucide", "NDI", "glad", "FFGL"})
+                             "MODNet", "Barlow", "JetBrains Mono", "Lucide", "NDI", "glad", "FFGL", "dav1d", "libvpx"})
         CHECK(contains(notices, name));
 
     section("avisos: entradas da lista de terceiros");

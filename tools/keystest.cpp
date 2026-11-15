@@ -834,6 +834,7 @@ void testFiles()
     CHECK(!saveKeysFile(fs::temp_directory_path() / "pasta-que-nao-existe" / "x.bslkeys", app, set, &error));
 }
 
+#if BSL_WITH_HOTKEYS
 void testSystemHotkeys()
 {
     section("atalhos globais do sistema");
@@ -871,6 +872,7 @@ void testSystemHotkeys()
     r.svc.pollSystem(r.comp, r.sel, r.app, r.project, false);
     CHECK(r.svc.system.registeredCount() == 0);
 }
+#endif
 
 }
 
@@ -1087,7 +1089,9 @@ int main()
     testDispatchGate();
     testFlash();
     testFiles();
+#if BSL_WITH_HOTKEYS
     testSystemHotkeys();
+#endif
     testView();
     testSequenceKeys();
     testFxEvent();

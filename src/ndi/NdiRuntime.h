@@ -9,7 +9,13 @@
 
 namespace bsl::ndi {
 
+#if defined(_WIN32)
 inline constexpr const char* kRuntimeDllName = "Processing.NDI.Lib.x64.dll";
+#elif defined(__APPLE__)
+inline constexpr const char* kRuntimeDllName = "libndi.dylib";
+#else
+inline constexpr const char* kRuntimeDllName = "libndi.so.6";
+#endif
 inline constexpr const char* kDownloadUrl = "https://ndi.video/tools/";
 inline constexpr const char* kMissingText = "NDI Runtime não encontrado";
 

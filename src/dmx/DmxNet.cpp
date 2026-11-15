@@ -2,9 +2,7 @@
 
 #include "app/Log.h"
 
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <iphlpapi.h>
+#include "platform/Socket.h"
 
 #include <nlohmann/json.hpp>
 
@@ -18,21 +16,6 @@ namespace bsl::dmx {
 
 namespace {
 
-#ifndef SIO_UDP_CONNRESET
-#define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
-#endif
-
-std::string wideToUtf8(const wchar_t* w)
-{
-    if (!w || !*w)
-        return {};
-    const int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
-    if (n <= 1)
-        return {};
-    std::string out(static_cast<std::size_t>(n - 1), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, w, -1, out.data(), n, nullptr, nullptr);
-    return out;
-}
 
 std::uint32_t hostIp(const sockaddr_in& a)
 {
@@ -63,39 +46,27 @@ std::array<std::uint8_t, 4> ipBytes(std::uint32_t ipHost)
             static_cast<std::uint8_t>((ipHost >> 8) & 0xFF), static_cast<std::uint8_t>(ipHost & 0xFF)};
 }
 
-void setNonBlocking(SOCKET s)
+sock::Handle openUdp(std::uint32_t bindIpHost, std::uint16_t port, bool broadcast, std::string* error)
 {
-    u_long on = 1;
-    ioctlsocket(s, FIONBIO, &on);
-}
-
-SOCKET openUdp(std::uint32_t bindIpHost, std::uint16_t port, bool broadcast, std::string* error)
-{
-    SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (s == INVALID_SOCKET) {
+    sock::Handle s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (s == sock::kInvalid) {
         if (error)
-            *error = "socket(): erro " + std::to_string(WSAGetLastError());
-        return INVALID_SOCKET;
+            *error = "socket(): erro " + std::to_string(sock::lastError());
+        return sock::kInvalid;
     }
-    BOOL reuse = TRUE;
-    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&reuse), sizeof(reuse));
-    if (broadcast) {
-        BOOL on = TRUE;
-        setsockopt(s, SOL_SOCKET, SO_BROADCAST, reinterpret_cast<const char*>(&on), sizeof(on));
-    }
-    int rcvbuf = 1 << 20;
-    setsockopt(s, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<const char*>(&rcvbuf), sizeof(rcvbuf));
-    DWORD bytes = 0;
-    BOOL newBehavior = FALSE;
-    WSAIoctl(s, SIO_UDP_CONNRESET, &newBehavior, sizeof(newBehavior), nullptr, 0, &bytes, nullptr, nullptr);
+    sock::setReuseAddr(s);
+    if (broadcast)
+        sock::setBroadcast(s);
+    sock::setRecvBuffer(s, 1 << 20);
+    sock::disableUdpConnReset(s);
     sockaddr_in a = makeAddr(bindIpHost, port);
     if (bind(s, reinterpret_cast<sockaddr*>(&a), sizeof(a)) != 0) {
         if (error)
-            *error = "bind(" + ipToString(bindIpHost) + ":" + std::to_string(port) + "): erro " + std::to_string(WSAGetLastError());
-        closesocket(s);
-        return INVALID_SOCKET;
+            *error = "bind(" + ipToString(bindIpHost) + ":" + std::to_string(port) + "): erro " + std::to_string(sock::lastError());
+        sock::close(s);
+        return sock::kInvalid;
     }
-    setNonBlocking(s);
+    sock::setNonBlocking(s);
     return s;
 }
 
@@ -104,41 +75,21 @@ SOCKET openUdp(std::uint32_t bindIpHost, std::uint16_t port, bool broadcast, std
 std::vector<NetInterface> listInterfaces(bool includeLoopback)
 {
     std::vector<NetInterface> out;
-    ULONG size = 16 * 1024;
-    std::vector<unsigned char> buf(size);
-    ULONG rc = GetAdaptersAddresses(AF_INET, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER, nullptr,
-                                    reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()), &size);
-    if (rc == ERROR_BUFFER_OVERFLOW) {
-        buf.resize(size);
-        rc = GetAdaptersAddresses(AF_INET, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER, nullptr,
-                                  reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()), &size);
-    }
-    if (rc == NO_ERROR) {
-        for (const IP_ADAPTER_ADDRESSES* a = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()); a; a = a->Next) {
-            if (a->OperStatus != IfOperStatusUp)
-                continue;
-            const bool loop = a->IfType == IF_TYPE_SOFTWARE_LOOPBACK;
-            if (loop && !includeLoopback)
-                continue;
-            for (const IP_ADAPTER_UNICAST_ADDRESS* u = a->FirstUnicastAddress; u; u = u->Next) {
-                if (!u->Address.lpSockaddr || u->Address.lpSockaddr->sa_family != AF_INET)
-                    continue;
-                const sockaddr_in* sin = reinterpret_cast<const sockaddr_in*>(u->Address.lpSockaddr);
-                NetInterface n;
-                n.name = wideToUtf8(a->FriendlyName);
-                n.loopback = loop;
-                n.ipHost = ntohl(sin->sin_addr.s_addr);
-                n.ip = ipToString(n.ipHost);
-                const int prefix = std::clamp<int>(u->OnLinkPrefixLength, 0, 32);
-                n.maskHost = prefix == 0 ? 0u : (0xFFFFFFFFu << (32 - prefix));
-                n.mask = ipToString(n.maskHost);
-                if (a->PhysicalAddressLength == 6)
-                    std::memcpy(n.mac.data(), a->PhysicalAddress, 6);
-                if (n.ipHost == 0 || (n.ipHost >> 16) == 0xA9FE)
-                    continue;
-                out.push_back(std::move(n));
-            }
-        }
+    for (const sock::LocalInterface& li : sock::localInterfaces()) {
+        if (li.loopback && !includeLoopback)
+            continue;
+        if (li.ipHost == 0 || (li.ipHost >> 16) == 0xA9FE)
+            continue;
+        NetInterface n;
+        n.name = li.name;
+        n.loopback = li.loopback;
+        n.ipHost = li.ipHost;
+        n.ip = ipToString(n.ipHost);
+        n.maskHost = li.maskHost;
+        n.mask = ipToString(n.maskHost);
+        if (li.hasMac)
+            n.mac = li.mac;
+        out.push_back(std::move(n));
     }
     if (includeLoopback && std::none_of(out.begin(), out.end(), [](const NetInterface& n) { return n.loopback; })) {
         NetInterface n;
@@ -224,8 +175,8 @@ struct Receiver::Impl
     std::uint16_t artPort = kArtNetPort;
     std::uint16_t sacnPort = kSacnPort;
 
-    SOCKET art = INVALID_SOCKET;
-    std::vector<SOCKET> sacn;
+    sock::Handle art = sock::kInvalid;
+    std::vector<sock::Handle> sacn;
     bool wsaStarted = false;
 
     NetInterface iface;
@@ -298,8 +249,7 @@ bool Receiver::start(const NetConfig& config, const std::vector<int>& extraUnive
         return false;
     };
 
-    WSADATA wsa{};
-    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
+    if (!sock::startup())
         return fail("Winsock não iniciou");
     d.wsaStarted = true;
 
@@ -337,14 +287,14 @@ bool Receiver::start(const NetConfig& config, const std::vector<int>& extraUnive
     std::string artErr, sacnErr;
     if (config.artNet) {
         d.art = openUdp(bindIp, d.artPort, true, &artErr);
-        d.artOk = d.art != INVALID_SOCKET;
+        d.artOk = d.art != sock::kInvalid;
     }
     if (config.sacn) {
         constexpr std::size_t kPerSocket = 16;
         const std::size_t sockets = std::max<std::size_t>(1, (d.universes.size() + kPerSocket - 1) / kPerSocket);
         for (std::size_t s = 0; s < sockets; ++s) {
-            SOCKET sock = openUdp(bindIp, d.sacnPort, false, s == 0 ? &sacnErr : nullptr);
-            if (sock == INVALID_SOCKET)
+            sock::Handle sock = openUdp(bindIp, d.sacnPort, false, s == 0 ? &sacnErr : nullptr);
+            if (sock == sock::kInvalid)
                 break;
             d.sacn.push_back(sock);
             const bool multicast = !(d.hasIface && d.iface.loopback);
@@ -380,13 +330,13 @@ bool Receiver::start(const NetConfig& config, const std::vector<int>& extraUnive
             msg += " - Art-Net: " + artErr;
         if (!sacnErr.empty())
             msg += " - sACN: " + sacnErr;
-        for (SOCKET s : d.sacn)
-            closesocket(s);
+        for (sock::Handle s : d.sacn)
+            sock::close(s);
         d.sacn.clear();
-        if (d.art != INVALID_SOCKET)
-            closesocket(d.art);
-        d.art = INVALID_SOCKET;
-        WSACleanup();
+        if (d.art != sock::kInvalid)
+            sock::close(d.art);
+        d.art = sock::kInvalid;
+        sock::cleanup();
         d.wsaStarted = false;
         return fail(msg);
     }
@@ -417,15 +367,15 @@ void Receiver::stop()
         d.stopFlag = true;
         d.thread.join();
     }
-    for (SOCKET s : d.sacn)
-        closesocket(s);
+    for (sock::Handle s : d.sacn)
+        sock::close(s);
     d.sacn.clear();
-    if (d.art != INVALID_SOCKET) {
-        closesocket(d.art);
-        d.art = INVALID_SOCKET;
+    if (d.art != sock::kInvalid) {
+        sock::close(d.art);
+        d.art = sock::kInvalid;
     }
     if (d.wsaStarted) {
-        WSACleanup();
+        sock::cleanup();
         d.wsaStarted = false;
     }
     running_ = false;
@@ -477,17 +427,17 @@ std::uint32_t Receiver::Impl::localIpFor(std::uint32_t peerIp) const
 {
     if (hasIface)
         return iface.ipHost;
-    SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    sock::Handle s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     std::uint32_t result = 0;
-    if (s != INVALID_SOCKET) {
+    if (s != sock::kInvalid) {
         sockaddr_in to = makeAddr(peerIp, 9);
         if (connect(s, reinterpret_cast<sockaddr*>(&to), sizeof(to)) == 0) {
             sockaddr_in me{};
-            int len = sizeof(me);
+            sock::Len len = sizeof(me);
             if (getsockname(s, reinterpret_cast<sockaddr*>(&me), &len) == 0)
                 result = hostIp(me);
         }
-        closesocket(s);
+        sock::close(s);
     }
     if (result == 0)
         for (const NetInterface& n : allIfaces)
@@ -500,7 +450,7 @@ std::uint32_t Receiver::Impl::localIpFor(std::uint32_t peerIp) const
 
 void Receiver::Impl::sendPollReplies(const sockaddr_in& to)
 {
-    if (art == INVALID_SOCKET)
+    if (art == sock::kInvalid)
         return;
     const std::uint32_t peer = hostIp(to);
     const std::uint32_t local = localIpFor(peer);
@@ -627,19 +577,22 @@ void Receiver::Impl::run()
     while (!stopFlag.load()) {
         fd_set rd;
         FD_ZERO(&rd);
-        if (art != INVALID_SOCKET)
+        if (art != sock::kInvalid)
             FD_SET(art, &rd);
-        for (SOCKET s : sacn)
+        for (sock::Handle s : sacn)
             FD_SET(s, &rd);
+        sock::Handle maxFd = art == sock::kInvalid ? 0 : art;
+        for (sock::Handle s : sacn)
+            maxFd = std::max(maxFd, s);
         timeval tv{0, 40000};
-        const int r = select(0, &rd, nullptr, nullptr, &tv);
+        const int r = select(sock::selectArg(maxFd), &rd, nullptr, nullptr, &tv);
         if (r > 0) {
-            auto drain = [&](SOCKET s, bool isArt) {
+            auto drain = [&](sock::Handle s, bool isArt) {
                 if (!FD_ISSET(s, &rd))
                     return;
                 for (int guard = 0; guard < 256; ++guard) {
                     sockaddr_in from{};
-                    int len = sizeof(from);
+                    sock::Len len = sizeof(from);
                     const int got = recvfrom(s, reinterpret_cast<char*>(buf.data()), static_cast<int>(buf.size()), 0,
                                              reinterpret_cast<sockaddr*>(&from), &len);
                     if (got <= 0)
@@ -653,9 +606,9 @@ void Receiver::Impl::run()
                         handleSacn(buf.data(), static_cast<std::size_t>(got), from, now);
                 }
             };
-            if (art != INVALID_SOCKET)
+            if (art != sock::kInvalid)
                 drain(art, true);
-            for (SOCKET s : sacn)
+            for (sock::Handle s : sacn)
                 drain(s, false);
         } else if (r < 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(20));

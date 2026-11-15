@@ -23,6 +23,23 @@
 
     <Property Id="DESKTOP_SHORTCUT" Value="1" />
 
+    <Property Id="BSL_EMAIL" Secure="yes">
+      <RegistrySearch Id="BslEmailBusca" Root="HKLM" Key="Software\BSL Light\BSL Stage" Name="LicencaEmail" Type="raw" Bitness="always64" />
+    </Property>
+    <Property Id="BSL_CHAVE" Secure="yes">
+      <RegistrySearch Id="BslChaveBusca" Root="HKLM" Key="Software\BSL Light\BSL Stage" Name="LicencaChave" Type="raw" Bitness="always64" />
+    </Property>
+    <Property Id="BSL_LICENCA_OK" Value="0" />
+
+    <Binary Id="LicencaCa" SourceFile="$(var.LicencaCa)" />
+    <CustomAction Id="VerificarLicenca" BinaryRef="LicencaCa" DllEntry="VerificarLicenca" Execute="immediate" Return="check" />
+    <CustomAction Id="LicencaInvalida" Error="!(loc.LicencaErro)" />
+
+    <InstallExecuteSequence>
+      <Custom Action="VerificarLicenca" After="AppSearch" />
+      <Custom Action="LicencaInvalida" After="VerificarLicenca" Condition="NOT Installed AND NOT REMOVE AND BSL_LICENCA_OK &lt;&gt; &quot;1&quot;" />
+    </InstallExecuteSequence>
+
     <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
     <WixVariable Id="WixUIBannerBmp" Value="$(var.BannerBmp)" />
     <WixVariable Id="WixUIDialogBmp" Value="$(var.DialogBmp)" />
@@ -42,6 +59,35 @@
     <UI Id="BslInstallUI">
       <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
 
+      <Dialog Id="LicencaDlg" Width="370" Height="270" Title="!(loc.InstallDirDlg_Title)">
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)">
+          <Publish Event="DoAction" Value="VerificarLicenca" Order="1" />
+          <Publish Event="NewDialog" Value="InstallDirDlg" Order="2" Condition="BSL_LICENCA_OK = &quot;1&quot;" />
+          <Publish Event="SpawnDialog" Value="LicencaErroDlg" Order="3" Condition="BSL_LICENCA_OK &lt;&gt; &quot;1&quot;" />
+        </Control>
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="320" Height="15" Transparent="yes" NoPrefix="yes" Text="!(loc.LicencaDlgDescription)" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Transparent="yes" NoPrefix="yes" Text="!(loc.LicencaDlgTitleBold)" />
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="373" Height="0" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="373" Height="0" />
+        <Control Id="Nota" Type="Text" X="20" Y="56" Width="330" Height="28" NoPrefix="yes" Text="!(loc.LicencaDlgNota)" />
+        <Control Id="EmailLabel" Type="Text" X="20" Y="92" Width="330" Height="12" NoPrefix="yes" Text="!(loc.LicencaDlgEmail)" />
+        <Control Id="EmailEdit" Type="Edit" X="20" Y="106" Width="330" Height="18" Property="BSL_EMAIL" />
+        <Control Id="ChaveLabel" Type="Text" X="20" Y="134" Width="330" Height="12" NoPrefix="yes" Text="!(loc.LicencaDlgChave)" />
+        <Control Id="ChaveEdit" Type="Edit" X="20" Y="148" Width="330" Height="44" Property="BSL_CHAVE" Multiline="yes" />
+      </Dialog>
+
+      <Dialog Id="LicencaErroDlg" Width="260" Height="85" Title="!(loc.LicencaErroTitulo)">
+        <Control Id="Ok" Type="PushButton" X="102" Y="57" Width="56" Height="17" Default="yes" Cancel="yes" Text="!(loc.WixUIOK)">
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+        <Control Id="Texto" Type="Text" X="24" Y="15" Width="214" Height="36" NoPrefix="yes" Text="!(loc.LicencaErroDlgTexto)" />
+      </Dialog>
+
       <Dialog Id="OptionsDlg" Width="370" Height="270" Title="!(loc.InstallDirDlg_Title)">
         <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)" />
         <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
@@ -57,6 +103,9 @@
         <Control Id="StartMenuNote" Type="Text" X="20" Y="90" Width="320" Height="30" NoPrefix="yes" Text="!(loc.OptionsDlgStartMenuNote)" />
       </Dialog>
 
+      <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="LicencaDlg" Order="6" Condition="LicenseAccepted = &quot;1&quot; AND NOT Installed" />
+      <Publish Dialog="LicencaDlg" Control="Back" Event="NewDialog" Value="LicenseAgreementDlg" />
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="LicencaDlg" Order="6" Condition="NOT Installed" />
       <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="OptionsDlg" Order="6" Condition="NOT Installed" />
       <Publish Dialog="OptionsDlg" Control="Back" Event="NewDialog" Value="InstallDirDlg" />
       <Publish Dialog="OptionsDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" />
@@ -95,6 +144,8 @@
           <RegistryValue Name="InstalledBy" Type="string" Value="msi" KeyPath="yes" />
           <RegistryValue Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" />
           <RegistryValue Name="Version" Type="string" Value="$(var.MsiVersion)" />
+          <RegistryValue Name="LicencaEmail" Type="string" Value="[BSL_EMAIL]" />
+          <RegistryValue Name="LicencaChave" Type="string" Value="[BSL_CHAVE]" />
         </RegistryKey>
       </Component>
 

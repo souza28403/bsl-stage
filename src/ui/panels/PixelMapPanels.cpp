@@ -4,6 +4,7 @@
 #include "app/Paths.h"
 #include "app/Qa.h"
 #include "io/FileDialogs.h"
+#include "platform/WindowHandle.h"
 #include "output/NovaScr.h"
 #include "output/PatternRaster.h"
 #include "output/PixelMap.h"
@@ -17,7 +18,9 @@
 
 #include <imgui.h>
 
+#ifdef _WIN32
 #include <windows.h>
+#endif
 
 #include <algorithm>
 #include <cfloat>
@@ -165,7 +168,7 @@ bool writePattern(const pm::Config& cfg, const pm::Panel& p, const fs::path& fil
 
 void actionGeneratePattern(const pm::Config& cfg, const pm::Panel& p)
 {
-    const auto file = dialogs::saveFile(GetActiveWindow(), L"Gerar padrão HD", L"Imagem PNG (*.png)", L"*.png",
+    const auto file = dialogs::saveFile(bslplat::activeWindowHandle(), L"Gerar padrão HD", L"Imagem PNG (*.png)", L"*.png",
                                         wideName(pm::patternFileName(p)), L"png");
     if (!file)
         return;
@@ -180,7 +183,7 @@ void actionExportAll(const pm::Config& cfg)
 {
     if (cfg.panels.empty())
         return;
-    const auto folder = dialogs::pickFolder(GetActiveWindow());
+    const auto folder = dialogs::pickFolder(bslplat::activeWindowHandle());
     if (!folder)
         return;
     pm::Image logo;
@@ -207,7 +210,7 @@ void actionExportAll(const pm::Config& cfg)
 
 void actionExportOverview(const pm::Config& cfg)
 {
-    const auto file = dialogs::saveFile(GetActiveWindow(), L"Exportar overview", L"Imagem PNG (*.png)", L"*.png",
+    const auto file = dialogs::saveFile(bslplat::activeWindowHandle(), L"Exportar overview", L"Imagem PNG (*.png)", L"*.png",
                                         L"BSLLight_Map.png", L"png");
     if (!file)
         return;
@@ -223,7 +226,7 @@ void actionExportOverview(const pm::Config& cfg)
 
 void actionExportCsv(const pm::Config& cfg)
 {
-    const auto file = dialogs::saveFile(GetActiveWindow(), L"Exportar tabela", L"Planilha CSV (*.csv)", L"*.csv",
+    const auto file = dialogs::saveFile(bslplat::activeWindowHandle(), L"Exportar tabela", L"Planilha CSV (*.csv)", L"*.csv",
                                         L"BSLLight_PixelMap.csv", L"csv");
     if (!file)
         return;
@@ -239,7 +242,7 @@ void actionExportCsv(const pm::Config& cfg)
 
 void actionImportCsv(pm::Config& cfg)
 {
-    const auto file = dialogs::openFile(GetActiveWindow(), L"Planilha CSV (*.csv)", L"*.csv;*.txt");
+    const auto file = dialogs::openFile(bslplat::activeWindowHandle(), L"Planilha CSV (*.csv)", L"*.csv;*.txt");
     if (!file)
         return;
     std::ifstream in(*file, std::ios::binary);
@@ -258,7 +261,7 @@ void actionImportCsv(pm::Config& cfg)
 
 void actionImportScr()
 {
-    const auto file = dialogs::openFile(GetActiveWindow(), L"Mapa de tela NovaLCT (*.scr)", L"*.scr");
+    const auto file = dialogs::openFile(bslplat::activeWindowHandle(), L"Mapa de tela NovaLCT (*.scr)", L"*.scr");
     if (!file)
         return;
     novascr::Result r = novascr::parseFile(utf8(*file));
@@ -613,7 +616,7 @@ void drawPixelMapConfigPanel(PanelContext& ctx)
         cfg.watermark = pm::Watermark::Monogram;
     ImGui::SameLine();
     if (chip("Escolher imagem…##pm_wm_img", cfg.watermark == pm::Watermark::Image, "PNG, JPG ou BMP")) {
-        if (const auto file = dialogs::openFile(GetActiveWindow(), L"Imagens (*.png;*.jpg;*.jpeg;*.bmp)", L"*.png;*.jpg;*.jpeg;*.bmp")) {
+        if (const auto file = dialogs::openFile(bslplat::activeWindowHandle(), L"Imagens (*.png;*.jpg;*.jpeg;*.bmp)", L"*.png;*.jpg;*.jpeg;*.bmp")) {
             pm::Image test;
             std::string err;
             if (pm::loadImageFile(*file, test, &err)) {

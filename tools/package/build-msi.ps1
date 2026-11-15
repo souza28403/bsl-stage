@@ -266,6 +266,8 @@ $BannerBmp = Join-Path $Obj 'banner.bmp'
 $DialogBmp = Join-Path $Obj 'dialog.bmp'
 $LicenseRtf = Join-Path $Obj 'aviso.rtf'
 $MarkFile = Join-Path $Obj 'mark.png'
+$LicencaCa = Join-Path $BuildDir 'bslstage_licenca_ca.dll'
+if (-not (Test-Path $LicencaCa)) { throw "DLL da chave de ativacao nao encontrada: $LicencaCa. Rode: cmake --build --preset release" }
 New-CleanMark -Source (Join-Path $Root 'assets\brand\bsl-mark.png') -Target $MarkFile
 New-BrandImages -Mark $MarkFile -BannerPath $BannerBmp -DialogPath $DialogBmp
 New-LicenseRtf -Markdown (Join-Path $Root 'docs\instalador\AVISO-INSTALADOR.md') -Target $LicenseRtf -VersionText $Version
@@ -287,6 +289,7 @@ $wixArgs = @(
     '-d', "LicenseRtf=$LicenseRtf",
     '-d', "RepoUrl=$RepoUrl",
     '-d', "Compression=$Compression",
+    '-d', "LicencaCa=$LicencaCa",
     '-pdbtype', 'none',
     '-o', $MsiPath,
     (Join-Path $PSScriptRoot 'Package.wxs')

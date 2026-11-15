@@ -1,6 +1,7 @@
 #include "media/CaptureDeviceSource.h"
 
 #include "app/Log.h"
+#include "media/DeviceBackend.h"
 #include "media/DeviceCatalog.h"
 
 #include <algorithm>
@@ -234,18 +235,14 @@ void CaptureDeviceSource::startConnect()
             chosen = DeviceCatalog::pickBest(cat.formatsBlocking(device));
 
         auto tryOpen = [&](const ChosenFormat& c, std::unique_ptr<VideoDecoder>& dec, std::string& error) {
+            const devbackend::OpenSpec spec = devbackend::makeOpenSpec(device, c);
             VideoDecoderOptions opt;
             opt.live = true;
-            opt.inputFormat = "dshow";
+            opt.inputFormat = spec.inputFormat;
             opt.queueSize = 2;
-            opt.inputOptions.emplace_back("rtbufsize", "32M");
-            if (!c.automatic) {
-                opt.inputOptions.emplace_back("video_size", std::to_string(c.width) + "x" + std::to_string(c.height));
-                opt.inputOptions.emplace_back("framerate", std::to_string(c.fps));
-                opt.inputOptions.emplace_back(c.isCodec ? "vcodec" : "pixel_format", c.format);
-            }
+            opt.inputOptions = spec.options;
             dec = std::make_unique<VideoDecoder>();
-            if (dec->open("video=" + device, opt))
+            if (dec->open(spec.url, opt))
                 return true;
             error = dec->error();
             dec.reset();

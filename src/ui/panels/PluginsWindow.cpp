@@ -5,14 +5,14 @@
 #include "ffgl/FfglCatalog.h"
 #include "ffgl/FfglImport.h"
 #include "io/FileDialogs.h"
+#include "platform/OpenUrl.h"
+#include "platform/WindowHandle.h"
 #include "ui/Theme.h"
 #include "ui/Ui.h"
 #include "ui/Widgets.h"
 
 #include <imgui.h>
 
-#include <windows.h>
-#include <shellapi.h>
 
 #include <algorithm>
 #include <string>
@@ -35,7 +35,7 @@ void openInExplorer(const std::filesystem::path& dir)
 {
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
-    ShellExecuteW(nullptr, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    bslplat::openFolder(dir);
 }
 
 void fixedFolder(const char* label, const std::filesystem::path& dir, const char* id)
@@ -110,7 +110,7 @@ void drawPluginsWindow(PanelContext& ctx)
         configureFfglCatalog(st);
     }
     if (ImGui::Button(ICON_PLUS "  Adicionar pasta…##plugins_pasta_adicionar")) {
-        if (auto dir = dialogs::pickFolder(GetActiveWindow())) {
+        if (auto dir = dialogs::pickFolder(bslplat::activeWindowHandle())) {
             const std::string utf8 = paths::toUtf8(*dir);
             if (std::find(st.ffglFolders.begin(), st.ffglFolders.end(), utf8) == st.ffglFolders.end()
                 && st.ffglFolders.size() < 32) {
@@ -134,11 +134,11 @@ void drawPluginsWindow(PanelContext& ctx)
     if (ImGui::BeginPopup("##plugins_importar_menu")) {
         std::filesystem::path chosen;
         if (ImGui::MenuItem("Arquivo DLL…##plugins_importar_dll")) {
-            if (auto file = dialogs::openFile(GetActiveWindow(), L"Plugins FFGL (*.dll)", L"*.dll"))
+            if (auto file = dialogs::openFile(bslplat::activeWindowHandle(), L"Plugins FFGL (*.dll)", L"*.dll"))
                 chosen = *file;
         }
         if (ImGui::MenuItem("Pasta…##plugins_importar_pasta")) {
-            if (auto dir = dialogs::pickFolder(GetActiveWindow()))
+            if (auto dir = dialogs::pickFolder(bslplat::activeWindowHandle()))
                 chosen = *dir;
         }
         if (!chosen.empty()) {

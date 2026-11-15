@@ -4,6 +4,7 @@
 #include "io/ProjectFile.h"
 #include "media/MediaFormats.h"
 
+#include <windows.h>
 #include <shobjidl.h>
 #include <wrl/client.h>
 
@@ -32,7 +33,7 @@ struct ComScope
     }
 };
 
-std::optional<std::filesystem::path> show(HWND owner, bool save, const wchar_t* title,
+std::optional<std::filesystem::path> show(void* owner, bool save, const wchar_t* title,
                                           const std::vector<Filter>& filters, const wchar_t* defaultExt,
                                           const std::filesystem::path& initialDir, const std::wstring& fileName)
 {
@@ -73,7 +74,7 @@ std::optional<std::filesystem::path> show(HWND owner, bool save, const wchar_t* 
             dlg->SetFolder(folder.Get());
     }
 
-    if (FAILED(dlg->Show(owner)))
+    if (FAILED(dlg->Show(static_cast<HWND>(owner))))
         return std::nullopt;
 
     ComPtr<IShellItem> item;
@@ -94,18 +95,18 @@ std::vector<Filter> projectFilters()
 
 }
 
-std::optional<std::filesystem::path> openProject(HWND owner, const std::filesystem::path& initialDir)
+std::optional<std::filesystem::path> openProject(void* owner, const std::filesystem::path& initialDir)
 {
     return show(owner, false, L"Abrir projeto", projectFilters(), L"bslstage", initialDir, {});
 }
 
-std::optional<std::filesystem::path> saveProject(HWND owner, const std::filesystem::path& currentFile)
+std::optional<std::filesystem::path> saveProject(void* owner, const std::filesystem::path& currentFile)
 {
     const std::wstring name = currentFile.empty() ? L"Sem t\u00edtulo.bslstage" : currentFile.filename().wstring();
     return show(owner, true, L"Salvar projeto", projectFilters(), L"bslstage", currentFile.parent_path(), name);
 }
 
-std::optional<std::filesystem::path> openMedia(HWND owner, const std::filesystem::path& initialDir)
+std::optional<std::filesystem::path> openMedia(void* owner, const std::filesystem::path& initialDir)
 {
     std::wstring spec;
     auto add = [&](std::span<const std::string_view> exts) {
@@ -122,7 +123,7 @@ std::optional<std::filesystem::path> openMedia(HWND owner, const std::filesystem
                 {{L"V\u00eddeos e imagens", spec}, {L"Todos os arquivos (*.*)", L"*.*"}}, nullptr, initialDir, {});
 }
 
-std::optional<std::filesystem::path> openFile(HWND owner, const std::wstring& filterName, const std::wstring& spec,
+std::optional<std::filesystem::path> openFile(void* owner, const std::wstring& filterName, const std::wstring& spec,
                                               const std::filesystem::path& initialDir)
 {
     std::vector<Filter> filters;
@@ -132,7 +133,7 @@ std::optional<std::filesystem::path> openFile(HWND owner, const std::wstring& fi
     return show(owner, false, L"Escolher arquivo", filters, nullptr, initialDir, {});
 }
 
-std::optional<std::filesystem::path> saveFile(HWND owner, const std::wstring& title, const std::wstring& filterName,
+std::optional<std::filesystem::path> saveFile(void* owner, const std::wstring& title, const std::wstring& filterName,
                                               const std::wstring& spec, const std::wstring& defaultName,
                                               const std::wstring& defaultExt, const std::filesystem::path& initialDir)
 {
@@ -144,7 +145,7 @@ std::optional<std::filesystem::path> saveFile(HWND owner, const std::wstring& ti
                 defaultName);
 }
 
-std::optional<std::filesystem::path> pickFolder(HWND owner, const std::filesystem::path& initialDir)
+std::optional<std::filesystem::path> pickFolder(void* owner, const std::filesystem::path& initialDir)
 {
     ComScope com;
     if (FAILED(com.hr) && com.hr != RPC_E_CHANGED_MODE)
@@ -161,7 +162,7 @@ std::optional<std::filesystem::path> pickFolder(HWND owner, const std::filesyste
         if (SUCCEEDED(SHCreateItemFromParsingName(initialDir.c_str(), nullptr, IID_PPV_ARGS(&folder))))
             dlg->SetFolder(folder.Get());
     }
-    if (FAILED(dlg->Show(owner)))
+    if (FAILED(dlg->Show(static_cast<HWND>(owner))))
         return std::nullopt;
     ComPtr<IShellItem> item;
     if (FAILED(dlg->GetResult(&item)))

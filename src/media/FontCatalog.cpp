@@ -3,8 +3,12 @@
 #include "app/Log.h"
 #include "app/Paths.h"
 
+#include "platform/Paths.h"
+
+#ifdef _WIN32
 #include <windows.h>
 #include <shlobj.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -20,6 +24,7 @@ namespace fs = std::filesystem;
 
 namespace {
 
+#ifdef _WIN32
 fs::path knownFolder(const KNOWNFOLDERID& id)
 {
     PWSTR raw = nullptr;
@@ -29,6 +34,7 @@ fs::path knownFolder(const KNOWNFOLDERID& id)
     CoTaskMemFree(raw);
     return result;
 }
+#endif
 
 std::string lower(std::string s)
 {
@@ -142,6 +148,23 @@ bool isFontFile(const fs::path& p)
     return ext == ".ttf" || ext == ".otf" || ext == ".ttc";
 }
 
+std::vector<fs::path> listFontFiles(const fs::path& dir)
+{
+    std::vector<fs::path> files;
+    std::error_code ec;
+    const auto options = fs::directory_options::skip_permission_denied;
+#ifdef _WIN32
+    for (fs::directory_iterator it(dir, options, ec), end; !ec && it != end; it.increment(ec)) {
+#else
+    for (fs::recursive_directory_iterator it(dir, options, ec), end; !ec && it != end; it.increment(ec)) {
+#endif
+        std::error_code ec2;
+        if (it->is_regular_file(ec2) && isFontFile(it->path()))
+            files.push_back(it->path());
+    }
+    return files;
+}
+
 }
 
 bool readFontLabel(const fs::path& file, std::string& label)
@@ -224,13 +247,26 @@ struct FontCatalog::Impl
         std::vector<fs::path> dirs;
         const fs::path assets = paths::assetsDir();
         if (!assets.empty())
-            dirs.push_back(assets / L"fonts");
+            dirs.push_back(assets / "fonts");
+#ifdef _WIN32
         const fs::path sys = knownFolder(FOLDERID_Fonts);
         if (!sys.empty())
             dirs.push_back(sys);
         const fs::path local = knownFolder(FOLDERID_LocalAppData);
         if (!local.empty())
             dirs.push_back(local / L"Microsoft" / L"Windows" / L"Fonts");
+#else
+        const fs::path home = bslplat::homeDir();
+        dirs.push_back("/usr/share/fonts");
+        dirs.push_back("/usr/local/share/fonts");
+        if (!home.empty()) {
+            dirs.push_back(home / ".local" / "share" / "fonts");
+            dirs.push_back(home / ".fonts");
+            dirs.push_back(home / "Library" / "Fonts");
+        }
+        dirs.push_back("/Library/Fonts");
+        dirs.push_back("/System/Library/Fonts");
+#endif
         return dirs;
     }
 
@@ -238,25 +274,19 @@ struct FontCatalog::Impl
     {
         std::vector<FontEntry> found;
         const fs::path assets = paths::assetsDir();
-        const fs::path bundledDir = assets.empty() ? fs::path() : assets / L"fonts";
-        std::error_code ec;
+        const fs::path bundledDir = assets.empty() ? fs::path() : assets / "fonts";
         for (const fs::path& dir : searchDirs()) {
-            for (fs::directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec), end;
-                 !ec && it != end; it.increment(ec)) {
-                std::error_code ec2;
-                if (!it->is_regular_file(ec2) || !isFontFile(it->path()))
-                    continue;
+            for (const fs::path& file : listFontFiles(dir)) {
                 std::string label;
-                if (!readFontLabel(it->path(), label) || isUnwanted(label))
+                if (!readFontLabel(file, label) || isUnwanted(label))
                     continue;
                 FontEntry e;
-                e.file = paths::toUtf8(it->path().filename());
+                e.file = paths::toUtf8(file.filename());
                 e.label = label;
-                e.path = it->path();
+                e.path = file;
                 e.bundled = !bundledDir.empty() && dir == bundledDir;
                 found.push_back(std::move(e));
             }
-            ec.clear();
         }
         std::sort(found.begin(), found.end(), [](const FontEntry& a, const FontEntry& b) {
             const std::string la = lower(a.label), lb = lower(b.label);
@@ -320,6 +350,11 @@ fs::path FontCatalog::resolve(const std::string& file) const
         const fs::path candidate = dir / name;
         if (fs::is_regular_file(candidate, ec))
             return candidate;
+#ifndef _WIN32
+        for (const fs::path& f : listFontFiles(dir))
+            if (f.filename() == name)
+                return f;
+#endif
     }
     return {};
 }
