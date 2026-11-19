@@ -7,7 +7,9 @@ Script: `tools/nightly/run-nightly.ps1`. Tarefa agendada: **BSL Stage - testes n
 - Só se o projeto mudou desde a última execução bem-sucedida (commit, `git status` e `git diff`).
 - Espera enquanto você usa o PC (até 8 esperas de 15 min; sem atividade nos últimos 3 min).
 - Build `cmake --build --preset release`, todos os testes de `build\Release` e `tools/uiqa/run.py --config window` (3 rodadas).
-- Testes visuais (uiqa e outputstress) só depois das 19h e com a tela desbloqueada.
+- Testes visuais (uiqa, outputstress e saída no segundo monitor) só depois das 19h e com a tela desbloqueada.
+- Saída no segundo monitor (`tools/uiqa/saidatest.py`): a saída continua tocando com a janela Abrir aberta e ao arrastar janelas,
+  fica por cima de outra janela e da barra de tarefas, e dois slices iguais sobrepostos têm o brilho de um. Com um monitor só, fica PULADO.
 - Faz backup e restaura `settings.json` e `imgui.ini` do BSL Stage.
 
 ## Ver o último relatório

@@ -2226,7 +2226,7 @@ def sc_atalhos(t):
     app.click("##master_limpar", "cmp_grade")
     app.wait_state(lambda s: all(l["activeColumn"] == -1 for l in s["layers"]), "tudo parado")
     s = app.read()["state"]
-    expect(len(s["keys"]["project"]) == 23 and len(s["keys"]["app"]) == 14, "padroes: 23 do projeto e 14 do app (F11 = tela cheia)")
+    expect(len(s["keys"]["project"]) == 23 and len(s["keys"]["app"]) == 15, "padroes: 23 do projeto e 15 do app (F11 = tela cheia)")
 
     app.click("celula L1 C2", button="right")
     app.wait_frames(3)
@@ -2389,7 +2389,7 @@ def sc_atalhos(t):
     app.click("##atalhos_restaurar")
     app.wait_frames(4)
     app.click("##atalhos_restaurar_ok")
-    app.wait_state(lambda s: len(s["keys"]["project"]) == 23 and len(s["keys"]["app"]) == 14
+    app.wait_state(lambda s: len(s["keys"]["project"]) == 23 and len(s["keys"]["app"]) == 15
                    and find_binding(s, "clip.trigger", "Q", selected=True) is not None
                    and find_binding(s, "layer.power") is None, "restaurar padroes")
     app.click("##atalhos_fechar")

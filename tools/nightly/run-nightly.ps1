@@ -256,6 +256,19 @@ function Executar-Passos {
         Adicionar-Passo $rotulo $estado $r.Segundos $r.Codigo $r.Linhas ''
     }
 
+    if ($construiu) {
+        $motivoSaida = Motivo-Visual
+        if ($motivoSaida) {
+            Passo-Visual 'saída no segundo monitor' $motivoSaida
+        } else {
+            $r = Executar 'python' 'tools\uiqa\saidatest.py'
+            $estado = 'FALHA'
+            if ($r.Codigo -eq 0) { $estado = 'OK' } elseif ($r.Codigo -eq 2) { $estado = 'PULADO' }
+            $falhas = @($r.Linhas | Where-Object { $_ -match '^FALHA' })
+            Adicionar-Passo 'saída no segundo monitor' $estado $r.Segundos $r.Codigo $r.Linhas ($falhas -join '; ')
+        }
+    }
+
     if (-not $construiu) {
         Adicionar-Passo 'uiqa' 'PULADO' $null $null @() 'build falhou'
         return
