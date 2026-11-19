@@ -24,7 +24,7 @@ programa. Este guia diz como publicar uma versão e o que ainda depende de passo
 1. Escolha o número (semver). Edite `project(BSLStage VERSION x.y.z …)` no `CMakeLists.txt` (é o único lugar da versão) e faça commit.
 2. Crie e envie a tag: `v1.2.0` (estável) ou `v1.3.0-beta.1` (pré-release: só quem marcou "Receber versões beta" é avisado).
    O workflow recusa tag que não bata com a versão do CMake.
-3. O workflow `.github/workflows/release.yml` (`windows-latest`) compila com o preset release, roda `bslstage_updatetest`, `bslstage_uitest` e
+3. O workflow `.github/workflows/release.yml` (`windows-latest`) compila em Release, roda `bslstage_updatetest`, `bslstage_uitest` e
    `bslstage_maptest`, monta `BSL-Stage-<versão>-win64.zip`, gera `SHA256SUMS.txt` e cria o release **como rascunho**.
 4. Abra o rascunho em Releases, confira o pacote e as notas (o programa mostra as notas em markdown simples: títulos, listas, negrito, código),
    resolva os itens manuais abaixo e clique em **Publish**. Só depois de publicado o programa dos clientes enxerga a versão.
@@ -62,8 +62,10 @@ Nomes que o programa espera nos arquivos do release:
 - **NDI.** O runtime do NDI **não** é distribuído (o cliente instala o NDI Tools). Nada a fazer.
 - **Assinatura de código.** O CI não assina (o certificado não está no repositório). A assinatura é local: `tools/package/build-msi.ps1 -Sign`
   assina os executáveis e o `.msi`; o `.msi` assinado substitui o do rascunho (e o `SHA256SUMS.txt` deve ser atualizado). Sem assinatura, o SmartScreen pode avisar.
-- **Versão do Visual Studio do runner.** O preset `windows` usa "Visual Studio 17 2022". Se o `windows-latest` mudar de versão, troque o preset
-  (`windows-vs2026` existe no `CMakePresets.json`) no passo "Configurar".
+- **Versão do Visual Studio do runner.** O passo "Configurar" tenta o preset `windows-vs2026` e, se o runner não tiver o Visual Studio 2026,
+  cai no `windows` (Visual Studio 2022). Uma versão nova do Visual Studio no `windows-latest` pede um preset novo no `CMakePresets.json`.
+- **Release feito daqui.** Para incluir a fonte Web, o release pode ser criado com o `.msi` e o `.zip` gerados localmente
+  (`tools/package/build-msi.ps1`), o `SHA256SUMS.txt` e `gh release create`. Foi assim na 0.1.2.
 
 ## 4. Como o programa atualiza (para suporte)
 
