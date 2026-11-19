@@ -191,6 +191,23 @@ void screenProperties(PanelContext& ctx, Screen& screen)
         }
     }
 
+    if (screen.kind == OutputKind::Monitor || screen.kind == OutputKind::Window) {
+        dim("Modo compatível da saída");
+        const char* compatLabels[] = {"Automático (liga em placas AMD)", "Ligado", "Desligado"};
+        const char* compatKeys[] = {"auto", "on", "off"};
+        int compatCur = ctx.settings.outputCompat == "on" ? 1 : ctx.settings.outputCompat == "off" ? 2 : 0;
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (beginCombo("##saidaCompat", compatLabels[compatCur])) {
+            for (int i = 0; i < 3; ++i)
+                if (ImGui::Selectable(compatLabels[i], i == compatCur)) {
+                    ctx.settings.outputCompat = compatKeys[i];
+                    ctx.settings.save();
+                }
+            ImGui::EndCombo();
+        }
+        dim("Use se a imagem do monitor de saída piscar ou travar.");
+    }
+
     dim("Resolução");
     if (screen.kind == OutputKind::Monitor) {
         pushMono();

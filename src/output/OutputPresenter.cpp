@@ -18,14 +18,29 @@ long long nowMs()
 
 }
 
-OutputPresenter::OutputPresenter(GLFWwindow* window, GLuint program, bool letterbox)
-    : window_(window), program_(program), letterbox_(letterbox)
+OutputPresenter::OutputPresenter(GLFWwindow* window, GLuint program, bool letterbox, bool synchronous, int bottomInset)
+    : window_(window), program_(program), letterbox_(letterbox), synchronous_(synchronous), bottomInset_(bottomInset)
 {
+    if (synchronous_) {
+        GLFWwindow* previous = glfwGetCurrentContext();
+        glfwMakeContextCurrent(window_);
+        glfwSwapInterval(0);
+        glGenVertexArrays(1, &syncVao_);
+        glfwMakeContextCurrent(previous);
+        return;
+    }
     thread_ = std::thread([this] { run(); });
 }
 
 OutputPresenter::~OutputPresenter()
 {
+    if (synchronous_) {
+        GLFWwindow* previous = glfwGetCurrentContext();
+        glfwMakeContextCurrent(window_);
+        glDeleteVertexArrays(1, &syncVao_);
+        glfwMakeContextCurrent(previous);
+        return;
+    }
     {
         std::lock_guard lk(mutex_);
         stop_ = true;
@@ -69,8 +84,54 @@ void OutputPresenter::ensureTexture(Slot& slot, int width, int height)
     slot.height = height;
 }
 
+void OutputPresenter::presentNow(const Fbo& source, int framebufferWidth, int framebufferHeight)
+{
+    if (framebufferWidth <= 0 || framebufferHeight <= 0 || source.width() <= 0 || source.height() <= 0)
+        return;
+    glFlush();
+    GLFWwindow* previous = glfwGetCurrentContext();
+    glfwMakeContextCurrent(window_);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDisable(GL_BLEND);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_DEPTH_TEST);
+    glViewport(0, 0, framebufferWidth, framebufferHeight);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    const int inset = std::min(bottomInset_, framebufferHeight - 1);
+    const int fw = framebufferWidth;
+    const int fh = framebufferHeight - inset;
+    int vx = 0, vy = inset, vw = fw, vh = fh;
+    if (letterbox_) {
+        const double k = std::min(static_cast<double>(fw) / source.width(), static_cast<double>(fh) / source.height());
+        vw = std::max(1, static_cast<int>(source.width() * k));
+        vh = std::max(1, static_cast<int>(source.height() * k));
+        vx = (fw - vw) / 2;
+        vy = inset + (fh - vh) / 2;
+    }
+    glViewport(vx, vy, vw, vh);
+
+    glUseProgram(program_);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, source.texture());
+    glBindVertexArray(syncVao_);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindVertexArray(0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glUseProgram(0);
+
+    glfwSwapBuffers(window_);
+    glfwMakeContextCurrent(previous);
+}
+
 void OutputPresenter::submit(const Fbo& source, int framebufferWidth, int framebufferHeight)
 {
+    if (synchronous_) {
+        presentNow(source, framebufferWidth, framebufferHeight);
+        return;
+    }
     int index = -1;
     GLsync stale = nullptr;
     GLsync release = nullptr;

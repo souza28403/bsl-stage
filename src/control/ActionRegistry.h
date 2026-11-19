@@ -39,6 +39,7 @@ struct AppHooks
     std::function<void(int)> setMode;
     std::function<bool()> identify;
     std::function<void(bool)> setIdentify;
+    std::function<void()> disableOutputs;
     std::function<bool(int)> layoutPreset;
     std::function<void()> clearClipSelection;
     std::function<int(const char*)> panelVisible;

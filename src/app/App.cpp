@@ -90,6 +90,30 @@ namespace {
 
 constexpr const char* kWindowTitle = "BSL Stage";
 constexpr int kOutputWindowUiFps = 60;
+constexpr auto kKeepAliveAfter = std::chrono::milliseconds(100);
+
+#ifdef _WIN32
+constexpr UINT_PTR kKeepAliveTimerId = 0xB51;
+App* g_keepAliveApp = nullptr;
+
+void CALLBACK keepAliveTimer(HWND, UINT, UINT_PTR, DWORD)
+{
+    if (g_keepAliveApp)
+        g_keepAliveApp->keepOutputsAlive();
+}
+
+void disablePowerThrottling()
+{
+    PROCESS_POWER_THROTTLING_STATE state{};
+    state.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+    state.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+#ifdef PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION
+    state.ControlMask |= PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION;
+#endif
+    state.StateMask = 0;
+    SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &state, sizeof(state));
+}
+#endif
 
 void glfwErrorCallback(int code, const char* description)
 {
@@ -208,7 +232,11 @@ int App::run()
     if (!init())
         return 1;
 
-    startTime_ = lastFrameStart_ = lastUpdate_ = Clock::now();
+    startTime_ = lastFrameStart_ = lastUpdate_ = loopMark_ = Clock::now();
+#ifdef _WIN32
+    g_keepAliveApp = this;
+    keepAliveTimer_ = SetTimer(glfwGetWin32Window(window_), kKeepAliveTimerId, USER_TIMER_MINIMUM, &keepAliveTimer);
+#endif
     frameWatch_.start();
     while (!glfwWindowShouldClose(window_)) {
         const auto frameStart = Clock::now();
@@ -224,6 +252,7 @@ int App::run()
                                  - smoothedWork_);
         frameWatch_.enter(FrameWatch::Limiter);
         limitFrameRate(frameStart, minimized);
+        loopMark_ = Clock::now();
     }
 
     frameWatch_.stop();
@@ -315,9 +344,11 @@ bool App::init()
     }
     glInfo_.version = glString(GL_VERSION);
     glInfo_.gpu = glString(GL_RENDERER);
+    log::info(std::string("BSL Stage ") + BSLSTAGE_VERSION + " | GPU: " + glInfo_.gpu + " | OpenGL " + glInfo_.version);
 
 #ifdef _WIN32
     timeBeginPeriod(1);
+    disablePowerThrottling();
 #endif
 
     try {
@@ -408,6 +439,13 @@ bool App::init()
 void App::shutdown()
 {
     const bool testRun = qaOn_ || !options_.screenshotPath.empty() || !options_.screenshotOutputPath.empty();
+#ifdef _WIN32
+    if (keepAliveTimer_) {
+        KillTimer(glfwGetWin32Window(window_), kKeepAliveTimerId);
+        keepAliveTimer_ = 0;
+    }
+    g_keepAliveApp = nullptr;
+#endif
     updates_.shutdown();
     if (qaOn_) {
         qa::finish();
@@ -917,6 +955,17 @@ void App::setupKeyHooks()
         if (outputs_)
             outputs_->setIdentify(on);
     };
+    hooks.disableOutputs = [this] {
+        int count = 0;
+        for (Screen& screen : output_.screens) {
+            if (screen.kind != OutputKind::Disabled) {
+                screen.kind = OutputKind::Disabled;
+                ++count;
+            }
+        }
+        if (count > 0)
+            log::warn("Saídas desativadas. Escolha o destino de novo no painel Saída.");
+    };
     hooks.layoutPreset = [](int index) { return ui::applyLayoutPresetIndex(index); };
     hooks.panelVisible = [](const char* key) { return ui::view::findPanel(key) ? (ui::panelVisibleKey(key) ? 1 : 0) : -1; };
     hooks.setPanelVisible = [](const char* key, bool on) { ui::setPanelVisible(key, on); };
@@ -944,8 +993,45 @@ void App::pollSystemHotkeys()
                 focused = true;
         }
     }
+    GLFWwindow* outputWindow = outputs_ ? outputs_->focusedWindow() : nullptr;
+    const bool mainFocused = focused;
+    if (outputWindow)
+        focused = true;
     keyService_.pollSystem(composition_, ui::selectionRef(selection_), settings_.keys, composition_.keys, focused,
                            project_->busy());
+    pollOutputKeys(mainFocused ? nullptr : outputWindow);
+}
+
+void App::pollOutputKeys(GLFWwindow* outputWindow)
+{
+    if (!outputWindow) {
+        outputKeysDown_.fill(false);
+        return;
+    }
+    const auto down = [outputWindow](int a, int b) {
+        return glfwGetKey(outputWindow, a) == GLFW_PRESS || glfwGetKey(outputWindow, b) == GLFW_PRESS;
+    };
+    std::uint8_t mods = control::ModNone;
+    if (down(GLFW_KEY_LEFT_CONTROL, GLFW_KEY_RIGHT_CONTROL))
+        mods |= control::ModCtrl;
+    if (down(GLFW_KEY_LEFT_SHIFT, GLFW_KEY_RIGHT_SHIFT))
+        mods |= control::ModShift;
+    if (down(GLFW_KEY_LEFT_ALT, GLFW_KEY_RIGHT_ALT))
+        mods |= control::ModAlt;
+
+    control::KeyGate gate;
+    gate.busy = project_->busy();
+    control::ActionContext ctx = keyService_.context(composition_, ui::selectionRef(selection_));
+    for (int i = 1; i < static_cast<int>(control::Key::Count); ++i) {
+        const auto key = static_cast<control::Key>(i);
+        const bool now = control::SystemHotkeys::keyDown(key);
+        const bool was = outputKeysDown_[static_cast<size_t>(i)];
+        outputKeysDown_[static_cast<size_t>(i)] = now;
+        if (!now || was)
+            continue;
+        if (const auto fired = keyService_.dispatcher.press(control::Chord{key, mods}, settings_.keys, composition_.keys, gate, ctx))
+            keyService_.note(*fired);
+    }
 }
 
 void App::saveScreenshot()
@@ -1105,11 +1191,16 @@ void App::frame(bool minimized)
         }
     }
     frameWatch_.enter(FrameWatch::Compositor);
-    compositor_->render(composition_, outputLive ? 1.0f : settingsFor(settings_.profile).previewScale,
-                        settings_.profile == PerformanceProfile::Eco, layerViews);
+    renderBusy_ = true;
+    lastPreviewScale_ = outputLive ? 1.0f : settingsFor(settings_.profile).previewScale;
+    lastPreviewScreenId_ = previewScreenId;
+    lastLayerViews_ = layerViews;
+    compositor_->render(composition_, lastPreviewScale_, settings_.profile == PerformanceProfile::Eco, layerViews);
     outputs_->setFrameRate(composition_.fps);
+    outputs_->setCompatMode(outputCompatFor(settings_.outputCompat, glString(GL_VENDOR), glInfo_.gpu));
     frameWatch_.enter(FrameWatch::Outputs);
     outputs_->render(output_, *compositor_, previewScreenId);
+    renderBusy_ = false;
     frameWatch_.enter(FrameWatch::Update);
     applySwapInterval();
 
@@ -1214,6 +1305,33 @@ void App::frame(bool minimized)
         applyProfile();
         settings_.save();
     }
+}
+
+void App::keepOutputsAlive()
+{
+    if (renderBusy_ || !compositor_ || !outputs_ || !OutputRenderer::anyLive(output_))
+        return;
+    const auto now = Clock::now();
+    if (now - loopMark_ < kKeepAliveAfter)
+        return;
+    const double fps = composition_.fps > 0 ? static_cast<double>(composition_.fps) : 60.0;
+    if (std::chrono::duration<double>(now - lastKeepAlive_).count() < 0.9 / fps)
+        return;
+
+    renderBusy_ = true;
+    lastKeepAlive_ = now;
+    const FrameWatch::Blocking blocking;
+    GLFWwindow* previous = glfwGetCurrentContext();
+    if (previous != window_)
+        glfwMakeContextCurrent(window_);
+    const double dt = std::clamp(std::chrono::duration<double>(now - lastUpdate_).count(), 0.0, 0.1);
+    lastUpdate_ = now;
+    composition_.update(dt);
+    compositor_->render(composition_, lastPreviewScale_, settings_.profile == PerformanceProfile::Eco, lastLayerViews_);
+    outputs_->render(output_, *compositor_, lastPreviewScreenId_);
+    if (previous != window_)
+        glfwMakeContextCurrent(previous);
+    renderBusy_ = false;
 }
 
 void App::applyFullscreen(bool on)

@@ -280,6 +280,9 @@ void drawMenuBar(PanelContext& ctx)
     if (ImGui::BeginMenu("Saída")) {
         if (ImGui::MenuItem("Identificar", nullptr, ctx.outputRenderer.identify()))
             ctx.outputRenderer.setIdentify(!ctx.outputRenderer.identify());
+        std::string offShortcut;
+        if (ImGui::MenuItem("Desligar todas as saídas", shortcutText(offShortcut, "output.disableAll")) && ctx.keys.hooks.disableOutputs)
+            ctx.keys.hooks.disableOutputs();
         if (ImGui::MenuItem("Abrir Mapeamento"))
             ctx.mode = AppMode::Mapping;
         if (ImGui::MenuItem("Abrir Pixel Map"))

@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -18,6 +19,34 @@ std::filesystem::path settingsPath()
     return paths::appDataDir() / L"settings.json";
 }
 
+std::string lowered(std::string text)
+{
+    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return text;
+}
+
+bool hasWord(const std::string& text, const std::string& word)
+{
+    for (size_t pos = text.find(word); pos != std::string::npos; pos = text.find(word, pos + 1)) {
+        const bool startOk = pos == 0 || !std::isalnum(static_cast<unsigned char>(text[pos - 1]));
+        const size_t end = pos + word.size();
+        const bool endOk = end >= text.size() || !std::isalnum(static_cast<unsigned char>(text[end]));
+        if (startOk && endOk)
+            return true;
+    }
+    return false;
+}
+
+}
+
+bool outputCompatFor(const std::string& setting, const std::string& vendor, const std::string& renderer)
+{
+    if (setting == "on")
+        return true;
+    if (setting == "off")
+        return false;
+    const std::string text = lowered(vendor) + "|" + lowered(renderer);
+    return hasWord(text, "amd") || hasWord(text, "ati") || text.find("radeon") != std::string::npos;
 }
 
 const char* uiLayoutKey(UiLayout layout)
@@ -90,6 +119,9 @@ Settings Settings::load()
         s.aiDevice = j.value("aiDevice", std::string("auto"));
         if (s.aiDevice != "gpu" && s.aiDevice != "cpu")
             s.aiDevice = "auto";
+        s.outputCompat = j.value("outputCompat", std::string("auto"));
+        if (s.outputCompat != "on" && s.outputCompat != "off")
+            s.outputCompat = "auto";
         s.controlPanelMode = j.value("controlPanelMode", std::string("browser")) == "window" ? "window" : "browser";
         if (j.contains("keys") && j["keys"].is_array())
             s.keys = control::bindingsFromJson(j["keys"]);
@@ -166,6 +198,7 @@ void Settings::save() const
                   {"releaseScale", audio.releaseScale}};
     j["aiFps"] = aiFps;
     j["aiDevice"] = aiDevice;
+    j["outputCompat"] = outputCompat;
     j["controlPanelMode"] = controlPanelMode;
     if (!(keys == control::defaultAppKeys()))
         j["keys"] = control::bindingsToJson(keys);

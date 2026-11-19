@@ -48,6 +48,7 @@ KeyBindingSet defaultAppKeys()
     set.items.push_back(makeBinding("project.open", Key::O, ModCtrl));
     set.items.push_back(makeBinding("project.new", Key::N, ModCtrl));
     set.items.push_back(makeBinding("view.fullscreen", Key::F11));
+    set.items.push_back(makeBinding("output.disableAll", Key::F, ModCtrl | ModShift));
     for (int i = 0; i < 9; ++i) {
         KeyBinding b = makeBinding("ui.layoutPreset", kColumnKeys[i], ModAlt);
         b.args.index = i;

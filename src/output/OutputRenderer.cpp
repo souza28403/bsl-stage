@@ -13,6 +13,18 @@
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <exception>
@@ -92,9 +104,10 @@ void main()
     vec2 tc = vec2(cpx.x / uCanvasSize.x, 1.0 - cpx.y / uCanvasSize.y) * uCanvasScale;
 
     vec3 rgb = max(textureLod(uCanvas, tc, 0.0).rgb * uGain + uBright, 0.0);
+    float zone = 1.0;
     if (uZone >= 0) {
         vec4 zw = textureLod(uZoneMask, vec2(cpx.x / uCanvasSize.x, 1.0 - cpx.y / uCanvasSize.y), 0.0);
-        rgb *= uZone == 0 ? zw.r : (uZone == 1 ? zw.g : (uZone == 2 ? zw.b : zw.a));
+        zone = uZone == 0 ? zw.r : (uZone == 1 ? zw.g : (uZone == 2 ? zw.b : zw.a));
     }
 
     float edge = ramp(dLeft, uEdgeW.x, uEdgeG.x) * ramp(dTop, uEdgeW.y, uEdgeG.y)
@@ -104,15 +117,17 @@ void main()
         vec2 gd = abs(fract(grid + 0.5) - 0.5) / gridWidth;
         float line = 1.0 - clamp(min(gd.x, gd.y) - 0.5, 0.0, 1.0);
         float border = 1.0 - clamp(dMin - 5.0, 0.0, 1.0);
-        vec3 id = rgb * 0.30;
+        vec3 id = rgb * zone * 0.30;
         id = mix(id, vec3(1.0), line * 0.55);
         id = mix(id, uIdColor, border);
         if (uv.x + uv.y < 0.06)
             id = vec3(1.0);
         rgb = id;
+        zone = 1.0;
     }
 
-    fragColor = vec4(rgb * (edge * uOpacity * cover), 1.0);
+    float a = clamp(edge * uOpacity * cover * zone, 0.0, 1.0);
+    fragColor = vec4(rgb * a, a);
 }
 )";
 
@@ -324,7 +339,7 @@ bool OutputRenderer::createWindow(const Screen& screen, Runtime& rt, const Monit
     glfwWindowHint(GLFW_VISIBLE, GLFW_TRUE);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
     glfwWindowHint(GLFW_DECORATED, monitor ? GLFW_FALSE : GLFW_TRUE);
-    glfwWindowHint(GLFW_FLOATING, monitor ? GLFW_TRUE : GLFW_FALSE);
+    glfwWindowHint(GLFW_FLOATING, monitor && !compat_ ? GLFW_TRUE : GLFW_FALSE);
     glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_FALSE);
     glfwWindowHint(GLFW_FOCUSED, GLFW_FALSE);
     glfwWindowHint(GLFW_FOCUS_ON_SHOW, GLFW_FALSE);
@@ -332,7 +347,7 @@ bool OutputRenderer::createWindow(const Screen& screen, Runtime& rt, const Monit
     int w = 0, h = 0;
     if (monitor) {
         w = monitor->width;
-        h = monitor->height;
+        h = monitor->height + (compat_ ? 1 : 0);
         glfwWindowHint(GLFW_POSITION_X, monitor->x);
         glfwWindowHint(GLFW_POSITION_Y, monitor->y);
     } else {
@@ -357,13 +372,13 @@ bool OutputRenderer::createWindow(const Screen& screen, Runtime& rt, const Monit
 
     if (monitor) {
         glfwSetWindowPos(win, monitor->x, monitor->y);
-        glfwSetWindowSize(win, monitor->width, monitor->height);
+        glfwSetWindowSize(win, w, h);
     }
     glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
 
     rt.window = win;
     rt.windowKind = monitor ? OutputKind::Monitor : OutputKind::Window;
-    rt.presenter = std::make_unique<OutputPresenter>(win, blitShader_->id(), !monitor);
+    rt.presenter = std::make_unique<OutputPresenter>(win, blitShader_->id(), !monitor, compat_, monitor && compat_ ? 1 : 0);
     rt.stallLogMs = kFirstStallLogMs;
     if (monitor) {
         rt.monitorX = monitor->x;
@@ -372,6 +387,17 @@ bool OutputRenderer::createWindow(const Screen& screen, Runtime& rt, const Monit
         rt.monitorH = monitor->height;
     }
     return true;
+}
+
+void OutputRenderer::setCompatMode(bool on)
+{
+    if (compat_ == on)
+        return;
+    compat_ = on;
+    for (auto& [id, rt] : runtimes_) {
+        destroyWindow(*rt);
+        rt->failedSignature.clear();
+    }
 }
 
 void OutputRenderer::destroyWindow(Runtime& rt)
@@ -430,7 +456,7 @@ void OutputRenderer::syncTarget(Screen& screen, Runtime& rt, std::vector<bool>& 
             }
             rt.failedSignature.clear();
             log::info("Saída \"" + screen.name + "\" aberta em " + m.name + " (" + std::to_string(m.width) + "x"
-                      + std::to_string(m.height) + ")");
+                      + std::to_string(m.height) + ")" + (compat_ ? ", modo compatível" : ""));
         }
         if (glfwWindowShouldClose(rt.window))
             glfwSetWindowShouldClose(rt.window, GLFW_FALSE);
@@ -555,7 +581,7 @@ void OutputRenderer::renderScreen(const Screen& screen, Runtime& rt, const Compo
     glClear(GL_COLOR_BUFFER_BIT);
 
     glEnable(GL_BLEND);
-    glBlendFuncSeparate(GL_ONE, GL_ONE, GL_ZERO, GL_ONE);
+    glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
     glBlendEquation(GL_FUNC_ADD);
 
     Shader& sh_ = *sliceShader_;
@@ -724,7 +750,7 @@ void OutputRenderer::renderScreen(const Screen& screen, Runtime& rt, const Compo
 
 void OutputRenderer::watchStall(Runtime& rt, const Screen& screen)
 {
-    const long long stalled = rt.presenter->stalledMs();
+    const long long stalled = compat_ ? 0 : rt.presenter->stalledMs();
     if (stalled < kFirstStallLogMs) {
         if (rt.stallLogMs != kFirstStallLogMs) {
             log::info("Saída \"" + screen.name + "\": apresentação retomada");
@@ -736,6 +762,37 @@ void OutputRenderer::watchStall(Runtime& rt, const Screen& screen)
         log::warn("Saída \"" + screen.name + "\": apresentação parada há " + std::to_string(stalled / 1000) + " s");
         rt.stallLogMs = (stalled / kStallLogStepMs + 1) * kStallLogStepMs;
     }
+}
+
+void OutputRenderer::keepOnTop()
+{
+#ifdef _WIN32
+    const auto now = std::chrono::steady_clock::now();
+    HWND foreground = GetForegroundWindow();
+    if (foreground == lastForeground_ && now < nextTopCheck_)
+        return;
+    lastForeground_ = foreground;
+    nextTopCheck_ = now + std::chrono::milliseconds(500);
+    if (compat_)
+        return;
+    for (const auto& entry : runtimes_) {
+        const Runtime& rt = *entry.second;
+        if (!rt.window || rt.windowKind != OutputKind::Monitor)
+            continue;
+        SetWindowPos(glfwGetWin32Window(rt.window), HWND_TOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+    }
+#endif
+}
+
+GLFWwindow* OutputRenderer::focusedWindow() const
+{
+    for (const auto& entry : runtimes_) {
+        GLFWwindow* w = entry.second->window;
+        if (w && glfwGetWindowAttrib(w, GLFW_FOCUSED))
+            return w;
+    }
+    return nullptr;
 }
 
 void OutputRenderer::render(OutputSetup& setup, const Compositor& canvas, int previewScreenId)
@@ -753,6 +810,7 @@ void OutputRenderer::render(OutputSetup& setup, const Compositor& canvas, int pr
             ++it;
         }
     }
+    keepOnTop();
 
     GLint prevViewport[4];
     glGetIntegerv(GL_VIEWPORT, prevViewport);

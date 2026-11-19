@@ -4,6 +4,7 @@
 #include "render/Shader.h"
 #include "render/Texture.h"
 
+#include <chrono>
 #include <map>
 #include <memory>
 #include <string>
@@ -49,10 +50,14 @@ public:
     int ndiConnections(int screenId) const;
     void setFrameRate(float fps) { fps_ = fps; }
 
+    void setCompatMode(bool on);
+    bool compatMode() const { return compat_; }
+
     void setIdentify(bool on) { identify_ = on; }
     bool identify() const { return identify_; }
 
     bool hasWindowOutput() const { return windowOutput_; }
+    GLFWwindow* focusedWindow() const;
 
     static bool anyLive(const OutputSetup& setup);
 
@@ -69,6 +74,7 @@ private:
     bool createWindow(const Screen& screen, Runtime& rt, const MonitorInfo* monitor);
     void renderScreen(const Screen& screen, Runtime& rt, const Compositor& canvas);
     void watchStall(Runtime& rt, const Screen& screen);
+    void keepOnTop();
     unsigned int labelTexture(const std::string& line1, float px1, const std::string& line2, float px2,
                               int& width, int& height);
 
@@ -77,8 +83,11 @@ private:
     std::vector<GLFWmonitor*> monitorHandles_;
     bool monitorsDirty_ = false;
     bool identify_ = false;
+    bool compat_ = false;
     bool windowOutput_ = false;
     float fps_ = 30.0f;
+    void* lastForeground_ = nullptr;
+    std::chrono::steady_clock::time_point nextTopCheck_{};
 
     std::map<int, std::unique_ptr<Runtime>> runtimes_;
     std::unique_ptr<Shader> sliceShader_;

@@ -439,6 +439,13 @@ int identifySet(ActionContext& c, const ActionArgs&, bool on)
     c.app->setIdentify(on);
     return 1;
 }
+int outputDisableAll(ActionContext& c, const ActionArgs&)
+{
+    if (!c.app || !c.app->disableOutputs)
+        return 0;
+    c.app->disableOutputs();
+    return 1;
+}
 int layoutPreset(ActionContext& c, const ActionArgs& a)
 {
     return (c.app && c.app->layoutPreset && c.app->layoutPreset(a.index)) ? 1 : 0;
@@ -574,6 +581,7 @@ const ActionDef kActions[] = {
     BSL_ONCE("mode.pixelmap", "Modo Pixel Map", "Aplicativo", ArgNone, false, None, modePixelMap),
     BSL_ONCE("mode.sequences", "Modo Sequências", "Aplicativo", ArgNone, false, None, modeSequences),
     BSL_TOGGLE("output.identify", "Identificar (saídas)", "Aplicativo", ArgNone, false, None, identifyGet, identifySet),
+    BSL_ONCE("output.disableAll", "Desligar todas as saídas", "Aplicativo", ArgNone, false, None, outputDisableAll),
     BSL_ONCE("project.new", "Projeto: novo", "Aplicativo", ArgNone, false, None, projectNew),
     BSL_ONCE("project.open", "Projeto: abrir", "Aplicativo", ArgNone, false, None, projectOpen),
     BSL_ONCE("project.save", "Projeto: salvar", "Aplicativo", ArgNone, false, None, projectSave),

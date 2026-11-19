@@ -17,7 +17,7 @@ class Fbo;
 class OutputPresenter
 {
 public:
-    OutputPresenter(GLFWwindow* window, GLuint program, bool letterbox);
+    OutputPresenter(GLFWwindow* window, GLuint program, bool letterbox, bool synchronous = false, int bottomInset = 0);
     ~OutputPresenter();
     OutputPresenter(const OutputPresenter&) = delete;
     OutputPresenter& operator=(const OutputPresenter&) = delete;
@@ -46,11 +46,15 @@ private:
     static constexpr int kSlots = 3;
 
     void run();
+    void presentNow(const Fbo& source, int framebufferWidth, int framebufferHeight);
     void ensureTexture(Slot& slot, int width, int height);
 
     GLFWwindow* window_ = nullptr;
     GLuint program_ = 0;
     bool letterbox_ = false;
+    bool synchronous_ = false;
+    int bottomInset_ = 0;
+    GLuint syncVao_ = 0;
 
     std::array<Slot, kSlots> slots_;
     GLuint blitFbo_ = 0;

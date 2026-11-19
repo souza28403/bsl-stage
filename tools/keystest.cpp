@@ -79,6 +79,7 @@ struct Rig
         svc.hooks.setMode = [this](int mode) { calls.push_back("mode:" + std::to_string(mode)); };
         svc.hooks.identify = [this] { return identify; };
         svc.hooks.setIdentify = [this](bool on) { identify = on; };
+        svc.hooks.disableOutputs = [this] { calls.push_back("disableOutputs"); };
         svc.hooks.layoutPreset = [this](int i) {
             calls.push_back("preset:" + std::to_string(i));
             return i < 2;
@@ -174,7 +175,7 @@ void testDefaults()
     section("padroes e resolucao");
     const KeyBindingSet app = defaultAppKeys();
     const KeyBindingSet project = defaultProjectKeys();
-    CHECK(app.items.size() == 14);
+    CHECK(app.items.size() == 15);
     CHECK(project.items.size() == 23);
 
     for (int i = 0; i < 10; ++i) {
@@ -200,6 +201,9 @@ void testDefaults()
     CHECK(resolveKey({Key::N, ModCtrl}, app, project)->binding->action == "project.new");
     auto fs = resolveKey({Key::F11, ModNone}, app, project);
     CHECK(fs && fs->scope == Scope::App && fs->binding->action == "view.fullscreen");
+    auto off = resolveKey({Key::F, ModCtrl | ModShift}, app, project);
+    CHECK(off && off->scope == Scope::App && off->binding->action == "output.disableAll");
+    CHECK(!resolveKey({Key::F, ModCtrl}, app, project));
     auto preset = resolveKey({Key::D3, ModAlt}, app, project);
     CHECK(preset && preset->binding->action == "ui.layoutPreset" && preset->binding->args.index == 2);
     CHECK(!resolveKey({Key::Z, ModNone}, app, project) && !resolveKey({Key::None, ModNone}, app, project));
@@ -227,7 +231,7 @@ void testRegistry()
                            "bpm.tap", "bpm.half", "bpm.double", "bpm.resync", "transport.play", "transport.pause",
                            "transport.stop", "doc.next", "doc.prev", "doc.first", "doc.last", "preview.live", "effect.bypass",
                            "ui.layoutPreset", "mode.composition", "mode.mapping", "mode.pixelmap", "mode.sequences", "output.identify",
-                           "project.save"})
+                           "output.disableAll", "project.save"})
         CHECK(findAction(id) != nullptr);
     CHECK(findAction("nao.existe") == nullptr);
     CHECK(supportsHold("master.blackout") && supportsHold("layer.power") && !supportsHold("clip.trigger")
@@ -649,6 +653,9 @@ void testActions()
         CHECK(r.identify);
         r.press(Key::F4, ModAlt);
         CHECK(!r.identify);
+        r.calls.clear();
+        r.press(Key::F, ModCtrl | ModShift);
+        CHECK(r.calls == (std::vector<std::string>{"disableOutputs"}));
         Rig bare;
         bare.svc.hooks = AppHooks{};
         auto none = bare.press(Key::S, ModCtrl);

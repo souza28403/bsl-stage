@@ -858,6 +858,43 @@ void testLegacyNoticeKey(const fs::path& root)
     bsl::paths::setAppDataOverride(fs::path());
 }
 
+void testOutputCompat(const fs::path& root)
+{
+    using bsl::Settings;
+    section("settings: modo compativel da saida");
+    const fs::path dir = root / "settings-compat";
+    fs::create_directories(dir);
+    bsl::paths::setAppDataOverride(dir);
+
+    Settings s;
+    CHECK(s.outputCompat == "auto");
+    s.save();
+    CHECK(Settings::load().outputCompat == "auto");
+    for (const char* v : {"on", "off", "auto"}) {
+        s.outputCompat = v;
+        s.save();
+        CHECK(Settings::load().outputCompat == v);
+    }
+    nlohmann::json j = nlohmann::json::parse(readAll(dir / "settings.json"));
+    j["outputCompat"] = "talvez";
+    writeAll(dir / "settings.json", j.dump());
+    CHECK(Settings::load().outputCompat == "auto");
+    j["outputCompat"] = 7;
+    writeAll(dir / "settings.json", j.dump());
+    CHECK(Settings::load().outputCompat == "auto");
+    bsl::paths::setAppDataOverride(fs::path());
+
+    using bsl::outputCompatFor;
+    CHECK(outputCompatFor("auto", "ATI Technologies Inc.", "AMD Radeon(TM) Graphics"));
+    CHECK(outputCompatFor("auto", "ATI Technologies Inc.", "Unknown"));
+    CHECK(outputCompatFor("auto", "Advanced Micro Devices, Inc.", "AMD Radeon Vega 8"));
+    CHECK(outputCompatFor("auto", "", "radeon rx 580"));
+    CHECK(!outputCompatFor("auto", "NVIDIA Corporation", "NVIDIA GeForce RTX 3060/PCIe/SSE2"));
+    CHECK(!outputCompatFor("auto", "Intel", "Intel(R) UHD Graphics 620"));
+    CHECK(outputCompatFor("on", "NVIDIA Corporation", "NVIDIA GeForce RTX 3060"));
+    CHECK(!outputCompatFor("off", "ATI Technologies Inc.", "AMD Radeon(TM) Graphics"));
+}
+
 }
 
 int main()
@@ -874,6 +911,7 @@ int main()
     testLegalParser();
     testLegalFiles();
     testLegacyNoticeKey(root);
+    testOutputCompat(root);
 
     fs::remove_all(root, ec);
     std::printf("\n%d verificacoes, %d falha(s)\n", g_checks, g_failures);

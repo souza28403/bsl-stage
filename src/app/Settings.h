@@ -19,6 +19,8 @@ inline constexpr int kUiLayoutCount = 3;
 const char* uiLayoutKey(UiLayout layout);
 const char* uiLayoutLabel(UiLayout layout);
 
+bool outputCompatFor(const std::string& setting, const std::string& vendor, const std::string& renderer);
+
 struct Settings
 {
     PerformanceProfile profile = PerformanceProfile::Balanced;
@@ -39,6 +41,7 @@ struct Settings
     audio::AudioConfig audio;
     int aiFps = 0;
     std::string aiDevice = "auto";
+    std::string outputCompat = "auto";
     std::string controlPanelMode = "browser";
     control::KeyBindingSet keys = control::defaultAppKeys();
 

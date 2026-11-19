@@ -9,6 +9,7 @@
 #include "ui/PanelContext.h"
 #include "update/Service.h"
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -71,6 +72,8 @@ public:
 
     int run();
 
+    void keepOutputsAlive();
+
 private:
     using Clock = std::chrono::steady_clock;
 
@@ -100,6 +103,7 @@ private:
     void publicarSequencias();
     void updateTick();
     void pollSystemHotkeys();
+    void pollOutputKeys(GLFWwindow* outputWindow);
     std::string qaStateJson() const;
     void saveScreenshotTo(const std::filesystem::path& file);
     static void onDrop(GLFWwindow* window, int count, const char** paths);
@@ -137,6 +141,7 @@ private:
     bool fsMaximized_ = false;
     int fsX_ = 0, fsY_ = 0, fsW_ = 0, fsH_ = 0;
     control::KeyService keyService_;
+    std::array<bool, static_cast<size_t>(control::Key::Count)> outputKeysDown_{};
     dmx::Service dmx_;
     update::Service updates_;
     double nextAutoCheck_ = 0.0;
@@ -147,6 +152,13 @@ private:
     Clock::time_point lastFrameStart_{};
     Clock::time_point startTime_{};
     Clock::time_point lastUpdate_{};
+    Clock::time_point loopMark_{};
+    Clock::time_point lastKeepAlive_{};
+    bool renderBusy_ = false;
+    int lastPreviewScreenId_ = -1;
+    float lastPreviewScale_ = 1.0f;
+    std::vector<LayerViewRequest> lastLayerViews_;
+    std::uintptr_t keepAliveTimer_ = 0;
     float smoothedInterval_ = 1.0f / 60.0f;
     float smoothedWork_ = 0.0f;
     int frameCount_ = 0;

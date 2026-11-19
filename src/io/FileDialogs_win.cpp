@@ -147,6 +147,7 @@ std::optional<std::filesystem::path> saveFile(void* owner, const std::wstring& t
 
 std::optional<std::filesystem::path> pickFolder(void* owner, const std::filesystem::path& initialDir)
 {
+    const FrameWatch::Blocking blocking;
     ComScope com;
     if (FAILED(com.hr) && com.hr != RPC_E_CHANGED_MODE)
         return std::nullopt;
