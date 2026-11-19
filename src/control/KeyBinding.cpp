@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cstdlib>
 #include <fstream>
 #include <iterator>
 
@@ -91,6 +92,35 @@ bool supportsHold(const std::string& action)
     return def && def->isToggle();
 }
 
+bool supportsRepeat(const std::string& action)
+{
+    const ActionDef* def = findAction(action);
+    return def && def->show;
+}
+
+bool supportsMode(const std::string& action, Mode mode)
+{
+    switch (mode) {
+    case Mode::Hold: return supportsHold(action);
+    case Mode::Repeat: return supportsRepeat(action);
+    default: return true;
+    }
+}
+
+int snapRate(int rate)
+{
+    int best = 4;
+    int bestDist = 1 << 30;
+    for (const int r : {1, 2, 4, 8}) {
+        const int d = std::abs(rate - r);
+        if (d < bestDist) {
+            bestDist = d;
+            best = r;
+        }
+    }
+    return best;
+}
+
 std::optional<Match> resolveKey(const Chord& chord, const KeyBindingSet& app, const KeyBindingSet& project)
 {
     if (!chord.valid())
@@ -143,7 +173,9 @@ nlohmann::json bindingsToJson(const KeyBindingSet& set)
         json j = json::object();
         j["action"] = b.action;
         j["key"] = chordId(b.chord);
-        j["mode"] = b.mode == Mode::Hold ? "hold" : "press";
+        j["mode"] = b.mode == Mode::Hold ? "hold" : b.mode == Mode::Repeat ? "repeat" : "press";
+        if (b.mode == Mode::Repeat)
+            j["rate"] = b.rate;
         if (b.global)
             j["global"] = true;
         json a = json::object();
@@ -210,7 +242,11 @@ KeyBindingSet bindingsFromJson(const nlohmann::json& j, std::vector<std::string>
             continue;
         }
         const std::string mode = e.contains("mode") && e["mode"].is_string() ? e["mode"].get<std::string>() : "press";
-        b.mode = (mode == "hold" && supportsHold(b.action)) ? Mode::Hold : Mode::Press;
+        b.mode = (mode == "hold" && supportsHold(b.action))       ? Mode::Hold
+                 : (mode == "repeat" && supportsRepeat(b.action)) ? Mode::Repeat
+                                                                  : Mode::Press;
+        if (b.mode == Mode::Repeat)
+            b.rate = snapRate(intField(e, "rate", 4, 1, 64));
         b.global = e.contains("global") && e["global"].is_boolean() && e["global"].get<bool>();
         if (e.contains("args") && e["args"].is_object()) {
             const nlohmann::json& a = e["args"];

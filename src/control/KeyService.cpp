@@ -85,6 +85,10 @@ std::vector<Fired> KeyService::pollSystem(Composition& comp, const SelectionRef&
         out.push_back(f);
         note(f);
     }
+    for (const Fired& f : dispatcher.tick(ctx)) {
+        out.push_back(f);
+        note(f);
+    }
     return out;
 }
 

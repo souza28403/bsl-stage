@@ -1,5 +1,9 @@
 #include "control/KeyDispatcher.h"
 
+#include "core/Composition.h"
+
+#include <algorithm>
+
 namespace bsl::control {
 
 bool gateAllows(const KeyBinding& binding, const KeyGate& gate)
@@ -34,6 +38,13 @@ Fired KeyDispatcher::fire(const Match& match, ActionContext& ctx)
     Fired out;
     out.match = match;
     const KeyBinding& b = *match.binding;
+    if (b.mode == Mode::Repeat && supportsRepeat(b.action)) {
+        if (isHeld(b.chord.key)) {
+            out.result = ActionResult{};
+            return out;
+        }
+        return begin(match, b, 0, ctx);
+    }
     if (b.mode == Mode::Hold && supportsHold(b.action)) {
         if (isHeld(b.chord.key)) {
             out.result = ActionResult{};
@@ -52,10 +63,63 @@ Fired KeyDispatcher::fire(const Match& match, ActionContext& ctx)
     return out;
 }
 
+namespace {
+
+double repeatInterval(const ActionContext& ctx, int rate)
+{
+    const double bpm = std::max<double>(ctx.comp.bpm, 1.0);
+    return 60.0 / bpm / std::max<int>(rate, 1);
+}
+
+}
+
+Fired KeyDispatcher::begin(const Match& match, const KeyBinding& binding, int token, ActionContext& ctx)
+{
+    Fired out;
+    out.match = match;
+    int previous = -1;
+    out.result = runAction(ctx, binding.action, binding.args, &previous);
+    const ActionDef* def = findAction(binding.action);
+    if (def && def->isToggle() && previous < 0)
+        return out;
+    out.hold = true;
+    Held h{match, binding, previous, token};
+    h.match.binding = nullptr;
+    h.repeat = true;
+    h.rate = snapRate(binding.rate);
+    h.next = ctx.now + repeatInterval(ctx, h.rate);
+    held_.push_back(std::move(h));
+    return out;
+}
+
+std::vector<Fired> KeyDispatcher::tick(ActionContext& ctx)
+{
+    std::vector<Fired> out;
+    for (Held& h : held_) {
+        if (!h.repeat || h.next > ctx.now)
+            continue;
+        Fired f;
+        f.match = h.match;
+        f.hold = true;
+        f.result = runAction(ctx, h.binding.action, h.binding.args);
+        out.push_back(f);
+        const double interval = repeatInterval(ctx, h.rate);
+        h.next += interval;
+        if (h.next <= ctx.now)
+            h.next = ctx.now + interval;
+    }
+    return out;
+}
+
 Fired KeyDispatcher::fireToken(int token, const KeyBinding& binding, ActionContext& ctx)
 {
     Fired out;
     out.match = Match{Scope::Project, -1, &binding};
+    if (binding.mode == Mode::Repeat && supportsRepeat(binding.action)) {
+        if (tokenHeld(token))
+            return out;
+        return begin(out.match, binding, token, ctx);
+    }
     if (binding.mode == Mode::Hold && supportsHold(binding.action)) {
         if (tokenHeld(token))
             return out;
@@ -85,7 +149,8 @@ std::vector<Fired> KeyDispatcher::releaseToken(int token, ActionContext& ctx)
         f.match = held_[i].match;
         f.hold = true;
         f.result = setActionState(ctx, held_[i].binding.action, held_[i].binding.args, held_[i].previous == 1);
-        out.push_back(f);
+        if (f.result.ran || !held_[i].repeat)
+            out.push_back(f);
         held_.erase(held_.begin() + static_cast<std::ptrdiff_t>(i));
     }
     return out;
@@ -111,7 +176,8 @@ std::vector<Fired> KeyDispatcher::release(Key key, ActionContext& ctx)
         f.match = held_[i].match;
         f.hold = true;
         f.result = setActionState(ctx, held_[i].binding.action, held_[i].binding.args, held_[i].previous == 1);
-        out.push_back(f);
+        if (f.result.ran || !held_[i].repeat)
+            out.push_back(f);
         held_.erase(held_.begin() + static_cast<std::ptrdiff_t>(i));
     }
     return out;
@@ -129,7 +195,8 @@ std::vector<Fired> KeyDispatcher::releaseUp(const std::function<bool(const KeyBi
         f.match = held_[i].match;
         f.hold = true;
         f.result = setActionState(ctx, held_[i].binding.action, held_[i].binding.args, held_[i].previous == 1);
-        out.push_back(f);
+        if (f.result.ran || !held_[i].repeat)
+            out.push_back(f);
         held_.erase(held_.begin() + static_cast<std::ptrdiff_t>(i));
     }
     return out;

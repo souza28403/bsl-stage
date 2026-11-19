@@ -41,6 +41,8 @@ public:
     std::vector<Fired> releaseToken(int token, ActionContext& ctx);
     bool tokenHeld(int token) const;
 
+    std::vector<Fired> tick(ActionContext& ctx);
+
     bool isHeld(Key key) const;
     size_t heldCount() const { return held_.size(); }
 
@@ -51,7 +53,11 @@ private:
         KeyBinding binding;
         int previous = -1;
         int token = 0;
+        bool repeat = false;
+        double next = 0.0;
+        int rate = 4;
     };
+    Fired begin(const Match& match, const KeyBinding& binding, int token, ActionContext& ctx);
     std::vector<Held> held_;
 };
 

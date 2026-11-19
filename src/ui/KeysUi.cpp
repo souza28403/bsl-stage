@@ -469,7 +469,7 @@ void drawEditPopup(KeyBinding& b)
             if (ImGui::Selectable(label.c_str(), b.action == d.id) && b.action != d.id) {
                 b.action = d.id;
                 b.args = ActionArgs{};
-                if (!d.isToggle())
+                if (!control::supportsMode(b.action, b.mode))
                     b.mode = control::Mode::Press;
             }
         }
@@ -572,7 +572,7 @@ void drawEditor(PanelContext& ctx)
         ImGui::TableSetupColumn("Ação", ImGuiTableColumnFlags_WidthStretch, 3.0f);
         ImGui::TableSetupColumn("Tecla", ImGuiTableColumnFlags_WidthFixed, dp(190.0f));
         ImGui::TableSetupColumn("Escopo", ImGuiTableColumnFlags_WidthFixed, dp(96.0f));
-        ImGui::TableSetupColumn("Modo", ImGuiTableColumnFlags_WidthFixed, dp(118.0f));
+        ImGui::TableSetupColumn("Modo", ImGuiTableColumnFlags_WidthFixed, dp(128.0f));
         ImGui::TableSetupColumn("Global", ImGuiTableColumnFlags_WidthFixed, dp(70.0f));
         ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, dp(34.0f));
         ImGui::TableHeadersRow();
@@ -658,18 +658,45 @@ void drawEditor(PanelContext& ctx)
                 ImGui::TableSetColumnIndex(3);
                 ImGui::SetNextItemWidth(-FLT_MIN);
                 const bool canHold = control::supportsHold(b.action);
-                if (beginCombo(("##atalho_" + n + "_modo").c_str(), b.mode == control::Mode::Hold ? "Segurar" : "Pressionar")) {
-                    if (ImGui::Selectable("Pressionar", b.mode == control::Mode::Press))
+                const bool canRepeat = control::supportsRepeat(b.action);
+                const int rate = control::snapRate(b.rate);
+                const char* const rateNames[] = {"Repetir 1/4", "Repetir 1/8", "Repetir 1/16", "Repetir 1/32"};
+                const char* const rateItems[] = {"Repetir 1/4 (uma vez por batida)", "Repetir 1/8", "Repetir 1/16",
+                                                 "Repetir 1/32"};
+                const int rates[] = {1, 2, 4, 8};
+                const char* modeLabel = b.mode == control::Mode::Hold ? "Segurar" : "Pressionar";
+                if (b.mode == control::Mode::Repeat)
+                    for (int r = 0; r < 4; ++r)
+                        if (rates[r] == rate)
+                            modeLabel = rateNames[r];
+                if (beginCombo(("##atalho_" + n + "_modo").c_str(), modeLabel)) {
+                    if (ImGui::Selectable("Pressionar", b.mode == control::Mode::Press) && b.mode != control::Mode::Press) {
                         b.mode = control::Mode::Press;
+                        touch(scope);
+                    }
                     ImGui::BeginDisabled(!canHold);
-                    if (ImGui::Selectable("Segurar", b.mode == control::Mode::Hold))
+                    if (ImGui::Selectable("Segurar", b.mode == control::Mode::Hold) && b.mode != control::Mode::Hold) {
                         b.mode = control::Mode::Hold;
+                        touch(scope);
+                    }
+                    ImGui::EndDisabled();
+                    ImGui::Separator();
+                    ImGui::BeginDisabled(!canRepeat);
+                    for (int r = 0; r < 4; ++r) {
+                        const bool selected = b.mode == control::Mode::Repeat && rate == rates[r];
+                        if (ImGui::Selectable(rateItems[r], selected) && !selected) {
+                            b.mode = control::Mode::Repeat;
+                            b.rate = rates[r];
+                            touch(scope);
+                        }
+                    }
                     ImGui::EndDisabled();
                     ImGui::EndCombo();
                 }
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Pressionar: dispara ao apertar.\nSegurar: liga enquanto a tecla está apertada e desliga ao "
-                                      "soltar (flash, blackout). Só para ações de ligar/desligar.");
+                                      "soltar (flash, blackout). Só para ações de ligar/desligar.\nRepetir: enquanto a tecla "
+                                      "está apertada, dispara de novo no ritmo do BPM (strobo). Ao soltar, volta como estava.");
 
                 ImGui::TableSetColumnIndex(4);
                 if (ImGui::Checkbox(("##atalho_" + n + "_global").c_str(), &b.global))
@@ -746,6 +773,8 @@ void keysFrame(PanelContext& ctx)
     if (svc.dispatcher.heldCount() > 0) {
         for (const control::Fired& f : svc.dispatcher.releaseUp(
                  [](const KeyBinding& b) { return b.global || ImGui::IsKeyDown(imguiKeyOf(b.chord.key)); }, ac))
+            svc.note(f);
+        for (const control::Fired& f : svc.dispatcher.tick(ac))
             svc.note(f);
     }
 

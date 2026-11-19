@@ -718,6 +718,72 @@ void testHold()
     CHECK(!clipHold);
 }
 
+void testRepeat()
+{
+    section("repetir no ritmo do BPM");
+    Rig r;
+    r.comp.bpm = 120.0f;
+    KeyBindingSet set;
+    KeyBinding strobe = bind("master.blackout", Key::K, ModNone, Mode::Repeat);
+    strobe.rate = 4;
+    set.items.push_back(strobe);
+    KeyBinding clip = bind("clip.trigger", Key::L, ModNone, Mode::Repeat);
+    clip.args.layer = 0;
+    clip.args.column = 0;
+    set.items.push_back(clip);
+
+    ActionContext c = r.ctx();
+    c.now = 10.0;
+    const bool original = r.comp.blackout;
+    Fired f = r.svc.dispatcher.fire(Match{Scope::Project, 0, &set.items[0]}, c);
+    CHECK(f.hold && r.comp.blackout != original && r.svc.dispatcher.isHeld(Key::K) && r.svc.dispatcher.heldCount() == 1);
+    Fired again = r.svc.dispatcher.fire(Match{Scope::Project, 0, &set.items[0]}, c);
+    CHECK(!again.hold && r.svc.dispatcher.heldCount() == 1);
+    c.now = 10.05;
+    CHECK(r.svc.dispatcher.tick(c).empty() && r.comp.blackout != original);
+    c.now = 10.13;
+    CHECK(r.svc.dispatcher.tick(c).size() == 1 && r.comp.blackout == original);
+    c.now = 10.26;
+    CHECK(r.svc.dispatcher.tick(c).size() == 1 && r.comp.blackout != original);
+    c.now = 10.27;
+    CHECK(r.svc.dispatcher.tick(c).empty());
+    c.now = 11.5;
+    CHECK(r.svc.dispatcher.tick(c).size() == 1);
+    CHECK(r.svc.dispatcher.tick(c).empty());
+    for (const Fired& rel : r.svc.dispatcher.release(Key::K, c))
+        r.svc.note(rel);
+    CHECK(r.comp.blackout == original && r.svc.dispatcher.heldCount() == 0);
+
+    c.now = 20.0;
+    Fired ct = r.svc.dispatcher.fire(Match{Scope::Project, 1, &set.items[1]}, c);
+    CHECK(ct.hold && r.played(0, 0) && r.svc.dispatcher.isHeld(Key::L));
+    c.now = 20.13;
+    const std::vector<Fired> ticks = r.svc.dispatcher.tick(c);
+    CHECK(ticks.size() == 1 && ticks[0].result.ran);
+    const std::vector<Fired> rel = r.svc.dispatcher.release(Key::L, c);
+    CHECK(rel.empty() && r.svc.dispatcher.heldCount() == 0);
+
+    KeyBindingSet loadedSet;
+    set.items[0].rate = 8;
+    loadedSet = bindingsFromJson(bindingsToJson(set));
+    CHECK(loadedSet.items.size() == 2 && loadedSet.items[0].mode == Mode::Repeat && loadedSet.items[0].rate == 8);
+    CHECK(bindingsToJson(set)[0]["mode"] == "repeat" && bindingsToJson(set)[0]["rate"] == 8);
+
+    nlohmann::json j = bindingsToJson(set);
+    j[0]["rate"] = 5;
+    CHECK(bindingsFromJson(j).items[0].rate == 4);
+    j[0]["rate"] = 100;
+    CHECK(bindingsFromJson(j).items[0].rate == 8);
+
+    nlohmann::json p = nlohmann::json::array();
+    p.push_back({{"action", "project.save"}, {"key", "Ctrl+S"}, {"mode", "repeat"}});
+    const KeyBindingSet saved = bindingsFromJson(p);
+    CHECK(saved.items.size() == 1 && saved.items[0].mode == Mode::Press);
+    CHECK(supportsRepeat("master.blackout") && supportsRepeat("clip.trigger") && !supportsRepeat("project.save")
+          && !supportsRepeat("nao.existe"));
+    CHECK(supportsMode("project.save", Mode::Press) && !supportsMode("project.save", Mode::Repeat));
+}
+
 void testDispatchGate()
 {
     section("despacho respeita o foco");
@@ -1093,6 +1159,7 @@ int main()
     testGate();
     testActions();
     testHold();
+    testRepeat();
     testDispatchGate();
     testFlash();
     testFiles();

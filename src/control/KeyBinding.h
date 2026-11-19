@@ -13,7 +13,7 @@
 namespace bsl::control {
 
 enum class Scope { App, Project };
-enum class Mode { Press, Hold };
+enum class Mode { Press, Hold, Repeat };
 
 struct KeyBinding
 {
@@ -21,6 +21,7 @@ struct KeyBinding
     ActionArgs args;
     Chord chord;
     Mode mode = Mode::Press;
+    int rate = 4;
     bool global = false;
 
     bool operator==(const KeyBinding&) const = default;
@@ -52,6 +53,9 @@ std::vector<Match> findConflicts(const Chord& chord, const KeyBindingSet& app, c
 Scope defaultScopeFor(const std::string& action);
 
 bool supportsHold(const std::string& action);
+bool supportsRepeat(const std::string& action);
+bool supportsMode(const std::string& action, Mode mode);
+int snapRate(int rate);
 
 nlohmann::json bindingsToJson(const KeyBindingSet& set);
 KeyBindingSet bindingsFromJson(const nlohmann::json& j, std::vector<std::string>* warnings = nullptr);
