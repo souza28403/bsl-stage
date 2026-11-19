@@ -26,6 +26,9 @@ if (Test-Path -LiteralPath $arqPedido) {
         if ($t -eq '-Force') {
             $Force = $true
         }
+        elseif ($t -eq '-Agora') {
+            $Agora = $true
+        }
         elseif ($t -eq '-UiqaRuns' -and ($k + 1) -lt $tokens.Count -and $tokens[$k + 1] -match '^\d+$') {
             $UiqaRuns = [int]$tokens[$k + 1]
             $k++

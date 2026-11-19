@@ -823,7 +823,7 @@ class App:
                 break
         self.hover(it.rect.cx, it.rect.cy)
         self.wait_frames(4)
-        self.command("drop " + "|".join(os.path.abspath(f) for f in files))
+        self.command("drop @%.1f,%.1f|" % (it.rect.cx, it.rect.cy) + "|".join(os.path.abspath(f) for f in files))
 
     def find_dialog(self, timeout=6.0):
         t0 = time.time()

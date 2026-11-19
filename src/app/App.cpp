@@ -1409,6 +1409,20 @@ void App::runQaCommands()
         } else if (cmd == "drop") {
             std::vector<std::string> files;
             size_t pos = 0;
+            bool at = false;
+            float atX = 0.0f, atY = 0.0f;
+            if (!arg.empty() && arg[0] == '@') {
+                const size_t bar = arg.find('|');
+                const std::string spec = arg.substr(1, bar == std::string::npos ? std::string::npos : bar - 1);
+                char* end = nullptr;
+                atX = std::strtof(spec.c_str(), &end);
+                if (end && *end == ',') {
+                    const char* rest = end + 1;
+                    atY = std::strtof(rest, &end);
+                    at = end != rest;
+                }
+                pos = bar == std::string::npos ? arg.size() : bar + 1;
+            }
             while (pos < arg.size()) {
                 const size_t bar = arg.find('|', pos);
                 files.push_back(arg.substr(pos, bar == std::string::npos ? std::string::npos : bar - pos));
@@ -1420,6 +1434,11 @@ void App::runQaCommands()
             for (const std::string& f : files)
                 pointers.push_back(f.c_str());
             onDrop(window_, static_cast<int>(pointers.size()), pointers.data());
+            if (at) {
+                const ImVec2 origin = imguiReady_ ? ImGui::GetMainViewport()->Pos : ImVec2(0.0f, 0.0f);
+                drop_.x = atX + origin.x;
+                drop_.y = atY + origin.y;
+            }
         }
     }
 }
