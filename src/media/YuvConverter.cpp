@@ -3,6 +3,8 @@
 #include "render/Fbo.h"
 #include "render/Shader.h"
 
+#include <cstring>
+
 namespace bsl::media {
 
 namespace {
@@ -38,6 +40,21 @@ void main()
                     y + uCoef.w * cb);
     float a = (uHasAlpha != 0) ? texture(uA, vUv).r : 1.0;
     fragColor = vec4(clamp(rgb, 0.0, 1.0), a);
+}
+)";
+
+const char* kYcocgFragmentSrc = R"(#version 330 core
+in vec2 vUv;
+out vec4 fragColor;
+uniform sampler2D uTex;
+void main()
+{
+    vec4 c = texture(uTex, vUv);
+    float scale = c.z * (255.0 / 8.0) + 1.0;
+    float co = (c.x - 0.5 * 256.0 / 255.0) / scale;
+    float cg = (c.y - 0.5 * 256.0 / 255.0) / scale;
+    float y = c.w;
+    fragColor = vec4(clamp(vec3(y + co - cg, y + cg, y - co - cg), 0.0, 1.0), 1.0);
 }
 )";
 
@@ -224,6 +241,108 @@ void YuvConverter::convert(const Frame& frame)
     else
         glUniform4f(glGetUniformLocation(prog, "uCoef"), 1.402f, 0.344136f, 0.714136f, 1.772f);
 
+    fbo_->bind();
+    glViewport(0, 0, frame.width, frame.height);
+    glDisable(GL_BLEND);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glBindVertexArray(vao_);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+}
+
+bool DxtConverter::supported()
+{
+    return GLAD_GL_EXT_texture_compression_s3tc != 0 && glad_glCompressedTexImage2D != nullptr &&
+           glad_glCompressedTexSubImage2D != nullptr;
+}
+
+DxtConverter::DxtConverter()
+{
+    glGenVertexArrays(1, &vao_);
+}
+
+DxtConverter::~DxtConverter()
+{
+    if (tex_)
+        glDeleteTextures(1, &tex_);
+    if (pbo_[0])
+        glDeleteBuffers(kPboCount, pbo_);
+    if (vao_)
+        glDeleteVertexArrays(1, &vao_);
+}
+
+GLuint DxtConverter::texture() const
+{
+    if (ycocg_)
+        return fbo_ ? fbo_->texture() : 0;
+    return tex_;
+}
+
+void DxtConverter::upload(const Frame& frame)
+{
+    if (!frame.isCompressed() || frame.empty())
+        return;
+
+    GlStateGuard guard;
+
+    const GLenum internal = frame.format == PixelFormat::DXT1 ? GL_COMPRESSED_RGB_S3TC_DXT1_EXT
+                                                              : GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
+    if (!tex_) {
+        glGenTextures(1, &tex_);
+        setupTexture(tex_);
+        texFormat_ = 0;
+    }
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, tex_);
+    const GLsizei bytes = static_cast<GLsizei>(frame.planes[0].size());
+    GLint prevPbo = 0;
+    glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &prevPbo);
+    const void* src = frame.planes[0].data();
+    if (width_ != frame.width || height_ != frame.height || texFormat_ != internal) {
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+        glCompressedTexImage2D(GL_TEXTURE_2D, 0, internal, frame.width, frame.height, 0, bytes, src);
+        texFormat_ = internal;
+        width_ = frame.width;
+        height_ = frame.height;
+    } else {
+        if (!pbo_[0])
+            glGenBuffers(kPboCount, pbo_);
+        pboIndex_ = (pboIndex_ + 1) % kPboCount;
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo_[pboIndex_]);
+        if (pboBytes_ != bytes) {
+            for (int i = 0; i < kPboCount; ++i) {
+                glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo_[i]);
+                glBufferData(GL_PIXEL_UNPACK_BUFFER, bytes, nullptr, GL_STREAM_DRAW);
+            }
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo_[pboIndex_]);
+            pboBytes_ = bytes;
+        }
+        void* dst = glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0, bytes, GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
+        if (dst) {
+            std::memcpy(dst, src, static_cast<size_t>(bytes));
+            glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
+            glCompressedTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, frame.width, frame.height, internal, bytes, nullptr);
+        } else {
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+            glCompressedTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, frame.width, frame.height, internal, bytes, src);
+        }
+    }
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, static_cast<GLuint>(prevPbo));
+
+    ycocg_ = frame.format == PixelFormat::DXT5_YCoCg;
+    if (!ycocg_)
+        return;
+
+    if (!shader_)
+        shader_ = std::make_unique<Shader>(kVertexSrc, kYcocgFragmentSrc);
+    if (!fbo_ || fbo_->width() != frame.width || fbo_->height() != frame.height)
+        fbo_ = std::make_unique<Fbo>(frame.width, frame.height);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, tex_);
+    shader_->use();
+    glUniform1i(glGetUniformLocation(shader_->id(), "uTex"), 0);
     fbo_->bind();
     glViewport(0, 0, frame.width, frame.height);
     glDisable(GL_BLEND);

@@ -7,6 +7,7 @@
 #include "media/DocInfo.h"
 #include "media/ImageSource.h"
 #include "media/PdfSource.h"
+#include "media/ShowCache.h"
 #include "media/WebSource.h"
 #include "media/VideoSource.h"
 
@@ -387,6 +388,20 @@ bool runAction(Composition& comp, const std::string& id)
     return a && a->run(comp) > 0;
 }
 
+std::pair<int, int> Composition::showCacheLimits(const Clip& clip) const
+{
+    return clip.showReduce ? std::pair<int, int>{width, height} : std::pair<int, int>{0, 0};
+}
+
+std::filesystem::path Composition::showCachePath(const Clip& clip) const
+{
+    if (!clip.showCache || showCacheDir.empty() || clip.type != Clip::Type::File || clip.kind != media::MediaKind::Video)
+        return {};
+    const auto [maxW, maxH] = showCacheLimits(clip);
+    const std::optional<std::filesystem::path> found = media::lookupShowCache(showCacheDir, clip.path, maxW, maxH);
+    return found ? *found : std::filesystem::path{};
+}
+
 std::unique_ptr<media::ISource> Composition::openSource(const Clip& clipToOpen) const
 {
     std::unique_ptr<media::ISource> src;
@@ -418,8 +433,14 @@ std::unique_ptr<media::ISource> Composition::openSource(const Clip& clipToOpen) 
         return nullptr;
     }
 
+    std::filesystem::path openPath = clipToOpen.path;
+    if (clipToOpen.type == Clip::Type::File) {
+        const std::filesystem::path cached = showCachePath(clipToOpen);
+        if (!cached.empty())
+            openPath = cached;
+    }
     std::string error;
-    if (!src->open(clipToOpen.path, &error)) {
+    if (!src->open(openPath, &error)) {
         log::warn("Não foi possível abrir \"" + clipToOpen.name + "\"" + (error.empty() ? "" : ": " + error));
         return nullptr;
     }
@@ -439,6 +460,8 @@ bool Composition::trigger(int layer, int column)
         std::error_code ec;
         if (c.type == Clip::Type::File && std::filesystem::exists(c.path, ec)) {
             c.missing = false;
+        } else if (c.type == Clip::Type::File && !showCachePath(c).empty()) {
+            log::warn("Original ausente: tocando o cache de show");
         } else {
             log::warn(c.missingPlugin ? "Plugin ausente: \"" + c.generatorId + "\" não existe mais nesta versão."
                                       : "Arquivo não encontrado: \"" + c.name + "\"");
@@ -452,6 +475,16 @@ bool Composition::trigger(int layer, int column)
         if (paused)
             resumeAll();
         return true;
+    }
+
+    if (c.type == Clip::Type::File && !c.source) {
+        c.playPath = c.showCache ? showCachePath(c) : std::filesystem::path{};
+        if (c.showCache && c.playPath.empty() && !c.showCacheWarned) {
+            c.showCacheWarned = true;
+            log::warn("Cache de show ausente, tocando o original");
+        }
+        if (c.playPath.empty())
+            c.playPath = c.path;
     }
 
     std::unique_ptr<media::ISource> resumed;

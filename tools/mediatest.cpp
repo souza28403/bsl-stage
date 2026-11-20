@@ -38,6 +38,9 @@ const char* fmtName(PixelFormat f)
     case PixelFormat::RGBA8: return "RGBA";
     case PixelFormat::YUV420P: return "YUV420P";
     case PixelFormat::YUVA420P: return "YUVA420P";
+    case PixelFormat::DXT1: return "DXT1";
+    case PixelFormat::DXT5: return "DXT5";
+    case PixelFormat::DXT5_YCoCg: return "DXT5_YCoCg";
     }
     return "?";
 }
@@ -61,6 +64,7 @@ Result testVideo(const fs::path& path, bool eco)
     r.kind = "video";
     VideoDecoder dec;
     VideoDecoderOptions opt;
+    opt.allowCompressed = true;
     if (eco) {
         opt.lowPower = true;
         opt.targetWidth = 960;
@@ -93,6 +97,7 @@ Result testVideo(const fs::path& path, bool eco)
             outFmt = std::string(fmtName(f->format)) + " " + std::to_string(f->width) + "x" + std::to_string(f->height);
         anyAlphaFrame = anyAlphaFrame || frameHasAlpha(*f);
         ++got;
+        dec.recycle(std::move(f));
     }
     const double total = msSince(t0);
     if (got == 0) {
@@ -101,7 +106,8 @@ Result testVideo(const fs::path& path, bool eco)
     }
     r.msPerFrame = total / got;
     r.detail += " -> " + outFmt + " x" + std::to_string(got);
-    if (vi.hasAlpha && !anyAlphaFrame && outFmt.rfind("YUVA", 0) != 0 && outFmt.rfind("RGBA", 0) != 0) {
+    if (vi.hasAlpha && !anyAlphaFrame && outFmt.rfind("YUVA", 0) != 0 && outFmt.rfind("RGBA", 0) != 0 &&
+        outFmt.rfind("DXT", 0) != 0) {
         r.detail += " | alpha declarado mas frames sem alpha";
         return r;
     }

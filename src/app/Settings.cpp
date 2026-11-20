@@ -99,6 +99,8 @@ Settings Settings::load()
                 if (item.is_string() && !item.get<std::string>().empty() && s.isfFolders.size() < 32)
                     s.isfFolders.push_back(item.get<std::string>());
         }
+        if (j.contains("showCacheDir") && j["showCacheDir"].is_string())
+            s.showCacheDir = j["showCacheDir"].get<std::string>();
         if (j.contains("ffglFolders") && j["ffglFolders"].is_array()) {
             for (const auto& item : j["ffglFolders"])
                 if (item.is_string() && !item.get<std::string>().empty() && s.ffglFolders.size() < 32)
@@ -189,6 +191,7 @@ void Settings::save() const
     j["lastLayoutPreset"] = lastLayoutPreset;
     j["isfFolders"] = isfFolders;
     j["ffglFolders"] = ffglFolders;
+    j["showCacheDir"] = showCacheDir;
     j["audio"] = {{"enabled", audio.enabled},
                   {"source", audio.source == audio::AudioSource::Input ? "input" : "loopback"},
                   {"deviceId", audio.deviceId},

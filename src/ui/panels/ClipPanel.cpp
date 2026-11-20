@@ -3,6 +3,7 @@
 #include "app/Log.h"
 #include "app/Paths.h"
 #include "app/Qa.h"
+#include "app/ShowCacheQueue.h"
 #include "media/CaptureTargets.h"
 #include "media/ControlPanel.h"
 #include "media/DeviceCatalog.h"
@@ -11,8 +12,10 @@
 #include "media/NetStreamSource.h"
 #include "media/PdfSource.h"
 #include "media/RemoteSource.h"
+#include "media/ShowCache.h"
 #include "media/VideoSource.h"
 #include "media/WebSource.h"
+#include "platform/OpenUrl.h"
 #include "ui/Theme.h"
 #include "ui/Ui.h"
 #include "ui/Widgets.h"
@@ -28,6 +31,8 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <cstdio>
+#include <filesystem>
 #include <iterator>
 #include <string>
 
@@ -265,6 +270,148 @@ void pagedControls(Clip& clip)
     }
 }
 
+struct ShowCacheEstimate
+{
+    std::string key;
+    std::string text;
+};
+
+std::string formatBytes(std::uintmax_t bytes)
+{
+    char buf[48];
+    const double mb = static_cast<double>(bytes) / (1024.0 * 1024.0);
+    if (mb >= 1024.0)
+        std::snprintf(buf, sizeof(buf), "%.1f GB", mb / 1024.0);
+    else
+        std::snprintf(buf, sizeof(buf), "%.0f MB", mb);
+    return buf;
+}
+
+std::string buildShowCacheText(PanelContext& ctx, const Clip& clip, int maxW, int maxH)
+{
+    std::string text;
+    if (const auto* video = clip.isOpen() ? dynamic_cast<const media::VideoSource*>(clip.source.get()) : nullptr) {
+        const media::VideoInfo& info = video->info();
+        int w = info.width, h = info.height;
+        if (maxW > 0 && w > maxW) {
+            h = std::max(1, static_cast<int>(static_cast<double>(h) * maxW / w));
+            w = maxW;
+        }
+        if (maxH > 0 && h > maxH) {
+            w = std::max(1, static_cast<int>(static_cast<double>(w) * maxH / h));
+            h = maxH;
+        }
+        if (w > 0 && h > 0 && info.fps > 0.0 && info.duration > 0.0) {
+            const std::int64_t frames = static_cast<std::int64_t>(info.duration * info.fps) + 1;
+            text = "Tamanho estimado: ~" + formatBytes(media::estimateShowCacheBytes(w, h, frames, info.hasAlpha));
+        }
+    }
+    std::error_code ec;
+    const std::filesystem::path dir = ctx.showCache.cacheDir();
+    std::filesystem::path probe = dir;
+    while (!probe.empty() && !std::filesystem::exists(probe, ec) && probe.has_parent_path() && probe.parent_path() != probe)
+        probe = probe.parent_path();
+    const std::filesystem::space_info sp = std::filesystem::space(probe, ec);
+    if (!ec) {
+        if (!text.empty())
+            text += "  |  ";
+        text += "Espaço livre no disco do cache: " + formatBytes(sp.available);
+    }
+    return text;
+}
+
+void showCacheSection(PanelContext& ctx, Clip& clip)
+{
+    using State = ShowCacheQueue::State;
+    Composition& comp = ctx.composition;
+    ImGui::Spacing();
+    ImGui::SeparatorText("Otimização para show");
+
+    bool on = clip.showCache;
+    if (ImGui::Checkbox("Tocar versão otimizada (HAP)##clip_hap_ligar", &on)) {
+        clip.showCache = on;
+        clip.showCacheWarned = false;
+        const auto [w, h] = comp.showCacheLimits(clip);
+        if (on)
+            ctx.showCache.enqueue(clip.path, w, h);
+        else
+            ctx.showCache.cancel(clip.path, w, h);
+    }
+    bool reduce = clip.showReduce;
+    if (ImGui::Checkbox("Reduzir para a resolução da composição##clip_hap_reduzir", &reduce)) {
+        const auto [oldW, oldH] = comp.showCacheLimits(clip);
+        clip.showReduce = reduce;
+        clip.showCacheWarned = false;
+        if (clip.showCache) {
+            ctx.showCache.cancel(clip.path, oldW, oldH);
+            const auto [w, h] = comp.showCacheLimits(clip);
+            ctx.showCache.enqueue(clip.path, w, h);
+        }
+    }
+
+    const auto [maxW, maxH] = comp.showCacheLimits(clip);
+    const ShowCacheQueue::Status st = clip.showCache ? ctx.showCache.status(clip.path, maxW, maxH) : ShowCacheQueue::Status{};
+    ImGui::Spacing();
+    switch (st.state) {
+    case State::Pendente:
+        ImGui::TextUnformatted("Na fila");
+        break;
+    case State::Convertendo: {
+        const std::string label = "Convertendo… " + std::to_string(static_cast<int>(st.progress * 100.0f)) + "%";
+        ImGui::TextUnformatted(label.c_str());
+        ImGui::ProgressBar(std::clamp(st.progress, 0.0f, 1.0f), ImVec2(-FLT_MIN, dp(6.0f)), "");
+        break;
+    }
+    case State::Pronto:
+        ImGui::TextUnformatted("Pronto: tocando a versão HAP");
+        break;
+    case State::Falhou:
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(theme::kWarning, "Falhou: %s", st.error.c_str());
+        ImGui::PopTextWrapPos();
+        break;
+    default:
+        ImGui::TextUnformatted("Original (sem otimização)");
+        break;
+    }
+
+    if (st.state == State::Pendente || st.state == State::Convertendo) {
+        if (ImGui::Button("Cancelar##clip_hap_cancelar"))
+            ctx.showCache.cancel(clip.path, maxW, maxH);
+    } else if (st.state == State::Falhou) {
+        if (ImGui::Button("Refazer##clip_hap_refazer"))
+            ctx.showCache.enqueue(clip.path, maxW, maxH);
+    }
+    if (st.state == State::Pendente || st.state == State::Convertendo || st.state == State::Falhou)
+        ImGui::SameLine();
+    if (ImGui::Button("Abrir pasta do cache##clip_hap_pasta")) {
+        std::error_code ec;
+        const std::filesystem::path dir = ctx.showCache.cacheDir();
+        std::filesystem::create_directories(dir, ec);
+        bslplat::openFolder(dir);
+    }
+
+    static ShowCacheEstimate estimate;
+    const std::string key = paths::toUtf8(clip.path) + "|" + std::to_string(maxW) + "x" + std::to_string(maxH) + "|"
+                            + (clip.isOpen() ? "1" : "0") + "|" + paths::toUtf8(ctx.showCache.cacheDir());
+    if (estimate.key != key) {
+        estimate.key = key;
+        estimate.text = buildShowCacheText(ctx, clip, maxW, maxH);
+    }
+    if (!estimate.text.empty()) {
+        ImGui::Spacing();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(theme::kTextDim, "%s", estimate.text.c_str());
+        ImGui::PopTextWrapPos();
+    }
+    ImGui::Spacing();
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(theme::kTextDim,
+                       "Converte o vídeo para um formato leve de decodificar. O original não é alterado. A troca vale no "
+                       "próximo disparo do clip.");
+    ImGui::PopTextWrapPos();
+}
+
 void clipControls(Clip& clip, int layerIndex)
 {
     const bool open = clip.isOpen();
@@ -463,6 +610,16 @@ void drawClipPanel(PanelContext& ctx)
     Composition& comp = ctx.composition;
     const Selection& sel = ctx.selection;
 
+    static int lastKind = -1, lastLayer = -1, lastColumn = -1, lastDeck = -1;
+    const int kind = static_cast<int>(sel.kind);
+    if (kind != lastKind || sel.layer != lastLayer || sel.column != lastColumn || comp.currentDeck != lastDeck) {
+        ImGui::SetScrollY(0.0f);
+        lastKind = kind;
+        lastLayer = sel.layer;
+        lastColumn = sel.column;
+        lastDeck = comp.currentDeck;
+    }
+
     if (sel.kind == Selection::Kind::Clip && comp.validCell(sel.layer, sel.column)
         && !comp.clip(sel.layer, sel.column).empty()) {
         Clip& clip = comp.clip(sel.layer, sel.column);
@@ -531,6 +688,9 @@ void drawClipPanel(PanelContext& ctx)
             ImGui::EndTable();
         }
         }
+
+        if (clip.type == Clip::Type::File && clip.kind == media::MediaKind::Video && !clip.missing)
+            showCacheSection(ctx, clip);
 
         ImGui::Spacing();
         drawClipTransformToggle(ctx, clip, sel.layer);

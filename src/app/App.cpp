@@ -5,6 +5,7 @@
 #include "app/Log.h"
 #include "app/Paths.h"
 #include "app/ProjectSession.h"
+#include "app/ShowCacheQueue.h"
 #include "app/Qa.h"
 #include "app/Version.h"
 #include "legal/Notices.h"
@@ -358,6 +359,9 @@ bool App::init()
         return false;
     }
     thumbs_ = std::make_unique<ThumbnailCache>();
+    showCache_ = std::make_unique<ShowCacheQueue>();
+    showCache_->setCacheDirOverride(settings_.showCacheDir);
+    composition_.showCacheDir = showCache_->cacheDir();
     liveThumbs_ = std::make_unique<LiveThumbnailer>();
 
     IMGUI_CHECKVERSION();
@@ -447,6 +451,8 @@ void App::shutdown()
     g_keepAliveApp = nullptr;
 #endif
     updates_.shutdown();
+    if (showCache_)
+        showCache_->shutdown();
     if (qaOn_) {
         qa::finish();
         qaOn_ = false;
@@ -593,6 +599,7 @@ void App::afterProjectLoaded()
         composition_.height = compositor_->height();
     }
     applyDecoderOptions();
+    queueShowCaches();
     ui::mapEditorReset(output_);
     ui::transformEditorReset(composition_);
     ui::pixelMapReset();
@@ -601,6 +608,22 @@ void App::afterProjectLoaded()
     dmx_.engine().reset();
     absorverEnvelopesDoProjeto();
     versaoSlicesAncoras_ = 0;
+}
+
+void App::queueShowCaches()
+{
+    if (!showCache_)
+        return;
+    showCache_->setCacheDirOverride(settings_.showCacheDir);
+    composition_.showCacheDir = showCache_->cacheDir();
+    for (const Deck& deck : composition_.decks)
+        for (const auto& row : deck.clips)
+            for (const Clip& c : row) {
+                if (!c.showCache || c.type != Clip::Type::File || c.kind != media::MediaKind::Video || c.missing)
+                    continue;
+                const auto [maxW, maxH] = composition_.showCacheLimits(c);
+                showCache_->enqueue(c.path, maxW, maxH);
+            }
 }
 
 void App::absorverEnvelopesDoProjeto()
@@ -1152,6 +1175,9 @@ void App::frame(bool minimized)
         afterProjectLoaded();
 
     applyDecoderOptions();
+    showCache_->setCacheDirOverride(settings_.showCacheDir);
+    composition_.showCacheDir = showCache_->cacheDir();
+    showCache_->poll();
     thumbs_->pump();
     pixelmap::syncInput(composition_.pixelMap, composition_.width, composition_.height);
     fx::bsllight::PixelMapFeed::instance().set(composition_.pixelMap);
@@ -1231,7 +1257,7 @@ void App::frame(bool minimized)
 
     PanelContext ctx{composition_, selection_, *compositor_, settings_.profile, stats_, glInfo_,
                      compositor_->uvMax(), settings_, *thumbs_, drop_,
-                     quitRequested_, output_, *outputs_, mapping_, mode_, *project_, keyService_, dmx_, updates_, envelopes_};
+                     quitRequested_, output_, *outputs_, mapping_, mode_, *project_, keyService_, dmx_, updates_, envelopes_, *showCache_};
 #if BSL_WITH_ATIVACAO
     if (!ativado_) {
         bool sair = false;
@@ -1538,12 +1564,31 @@ std::string App::qaStateJson() const
                 if (!c.clip(l, col).empty())
                     cells.push_back({l, col, c.clip(l, col).name});
     j["cells"] = cells;
+    json showCaches = json::array();
+    if (c.validDeck(c.currentDeck) && showCache_)
+        for (int l = 0; l < c.layerCount(); ++l)
+            for (int col = 0; col < c.columnCount(); ++col) {
+                const Clip& sc = c.clip(l, col);
+                if (sc.empty() || !sc.showCache)
+                    continue;
+                const auto [maxW, maxH] = c.showCacheLimits(sc);
+                const ShowCacheQueue::Status st = showCache_->status(sc.path, maxW, maxH);
+                const char* state = st.state == ShowCacheQueue::State::Pendente      ? "pendente"
+                                    : st.state == ShowCacheQueue::State::Convertendo ? "convertendo"
+                                    : st.state == ShowCacheQueue::State::Pronto      ? "pronto"
+                                    : st.state == ShowCacheQueue::State::Falhou      ? "falhou"
+                                                                                     : "nenhum";
+                showCaches.push_back({{"layer", l}, {"col", col}, {"reduce", sc.showReduce}, {"state", state},
+                                      {"progress", st.progress}, {"error", st.error},
+                                      {"playing", paths::toUtf8(sc.playPath)}});
+            }
+    j["showCache"] = showCaches;
     j["selection"] = {{"kind", static_cast<int>(selection_.kind)}, {"layer", selection_.layer}, {"column", selection_.column}};
     if (selection_.kind == Selection::Kind::Clip && c.validCell(selection_.layer, selection_.column)) {
         const Clip& clip = c.clip(selection_.layer, selection_.column);
         j["selClip"] = {{"name", clip.name}, {"speed", clip.speed}, {"loop", static_cast<int>(clip.loop)},
                         {"fit", static_cast<int>(clip.fit)}, {"playing", clip.playing}, {"params", clip.params.json()},
-                        {"open", clip.isOpen()}, {"effects", chainJson(clip.effects)},
+                        {"open", clip.isOpen()}, {"playPath", paths::toUtf8(clip.playPath)}, {"effects", chainJson(clip.effects)},
                         {"status", clip.isOpen() ? clip.source->status().text : std::string()}};
     }
     json screens = json::array();

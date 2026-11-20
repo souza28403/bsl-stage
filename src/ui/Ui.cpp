@@ -26,6 +26,7 @@
 #include "ui/panels/PluginWizard.h"
 #include "ui/panels/PreviewPanel.h"
 #include "ui/panels/ReportWindow.h"
+#include "ui/panels/ShowCacheWindow.h"
 #include "ui/panels/SeqCanvas.h"
 #include "ui/panels/SeqFactoryPanel.h"
 #include "ui/panels/SequencePanels.h"
@@ -340,6 +341,8 @@ void drawMenuBar(PanelContext& ctx)
         ImGui::Separator();
         if (ImGui::MenuItem(ICON_AUDIO_LINES "  Áudio…##menu_audio"))
             openAudioWindow();
+        if (ImGui::MenuItem(ICON_FOLDER "  Cache de show…##menu_cache_show"))
+            openShowCacheWindow();
         if (ImGui::MenuItem(ICON_SPARKLES "  IA…##menu_ia"))
             openAiWindow();
         if (ImGui::MenuItem(ICON_PLUG "  Plugins…##menu_plugins"))
@@ -583,6 +586,7 @@ void drawUi(PanelContext& ctx)
     drawPluginWizard(ctx);
     drawCompatWindow(ctx);
     drawAudioWindow(ctx);
+    drawShowCacheWindow(ctx);
     drawDmxWindow(ctx);
     drawAiWindow(ctx);
     ctx.project.drawModals();

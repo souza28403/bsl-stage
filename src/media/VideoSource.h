@@ -35,10 +35,12 @@ private:
     VideoDecoderOptions options_;
     VideoDecoder decoder_;
     std::unique_ptr<YuvConverter> yuv_;
+    std::unique_ptr<DxtConverter> dxt_;
     GLuint rgbaTex_ = 0;
     int rgbaW_ = 0;
     int rgbaH_ = 0;
     bool usingYuv_ = false;
+    bool usingDxt_ = false;
     int width_ = 0;
     int height_ = 0;
 };

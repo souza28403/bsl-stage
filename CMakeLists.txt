@@ -439,9 +439,12 @@ add_library(bslmedia_cpu STATIC
     ${BSL_DOCTHUMB_SRC}
     src/media/FrameConverter.cpp
     src/media/VideoDecoder.cpp
+    src/media/Snappy.cpp
+    src/media/HapFrame.cpp
     src/media/NetStream.cpp
     src/media/ImageDecoder.cpp
-    src/media/Thumbnailer.cpp)
+    src/media/Thumbnailer.cpp
+    src/media/ShowCache.cpp)
 target_include_directories(bslmedia_cpu PUBLIC src)
 target_link_libraries(bslmedia_cpu PUBLIC bslplatform ffmpeg::ffmpeg stb_image nlohmann_json::nlohmann_json)
 if(WIN32)
@@ -487,6 +490,7 @@ function(bsl_pick_impl outVar enabled)
 endfunction()
 bsl_pick_impl(BSL_SPOUT_IN_SRC "${BSL_WITH_SPOUT}" src/media/SpoutInput)
 bsl_pick_impl(BSL_SPOUT_OUT_SRC "${BSL_WITH_SPOUT}" src/output/SpoutOutput)
+bsl_pick_impl(BSL_SHOWPROC_SRC "${WIN32}" src/app/ShowCacheProc)
 bsl_pick_impl(BSL_HOTKEYS_SRC "${BSL_WITH_HOTKEYS}" src/control/SystemHotkeys)
 if(WIN32)
     set(BSL_AUDIO_SRC src/audio/AudioAnalyzer_win.cpp)
@@ -696,6 +700,8 @@ add_executable(BSLStage
     src/app/Qa.cpp
     src/app/ProjectSession.cpp
     src/app/Settings.cpp
+    src/app/ShowCacheQueue.cpp
+    ${BSL_SHOWPROC_SRC}
     src/app/IsfSetup.cpp
     src/legal/Notices.cpp
     src/app/FfglSetup.cpp
@@ -737,6 +743,7 @@ add_executable(BSLStage
     src/ui/panels/PluginsWindow.cpp
     src/ui/panels/PluginWizard.cpp
     src/ui/panels/AudioWindow.cpp
+    src/ui/panels/ShowCacheWindow.cpp
     src/ui/panels/DmxWindow.cpp
     src/ui/panels/AiWindow.cpp
     src/ui/panels/PreviewPanel.cpp
@@ -801,6 +808,7 @@ set(BSL_WORKER_SOURCES
     src/worker/WorkerMain.cpp
     src/worker/WorkerUtil.cpp
     src/worker/PdfDocument.cpp
+    src/media/HapTranscode.cpp
     ${BSL_OFFICE_SRC})
 if(WIN32)
     list(APPEND BSL_WORKER_SOURCES src/worker/PipeChannel_win.cpp src/worker/FrameSink_win.cpp src/worker/FfglScan.cpp)
@@ -812,7 +820,7 @@ bsl_add_version_resource(bslstage_worker "BSL Stage - Processo auxiliar" bslstag
 target_include_directories(bslstage_worker PRIVATE src)
 target_include_directories(bslstage_worker SYSTEM PRIVATE "${BSL_PDFIUM_ROOT}/include")
 target_compile_definitions(bslstage_worker PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
-target_link_libraries(bslstage_worker PRIVATE bslplatform nlohmann_json::nlohmann_json "${BSL_PDFIUM_LIB}")
+target_link_libraries(bslstage_worker PRIVATE bslplatform ffmpeg::ffmpeg nlohmann_json::nlohmann_json "${BSL_PDFIUM_LIB}")
 if(WIN32)
     target_link_libraries(bslstage_worker PRIVATE bslffgl_core ole32 oleaut32 uuid shell32 advapi32 user32)
     if(BSL_WITH_D3D)
@@ -849,6 +857,9 @@ target_link_libraries(bslstage_platformtest PRIVATE bslplatform)
 
 add_executable(bslstage_mediatest tools/mediatest.cpp)
 target_link_libraries(bslstage_mediatest PRIVATE bslmedia_cpu)
+
+add_executable(bslstage_haptest tools/haptest.cpp src/media/HapTranscode.cpp)
+target_link_libraries(bslstage_haptest PRIVATE bslsources glfw bslmedia_cpu)
 
 add_executable(bslstage_gltest tools/gltest.cpp)
 target_link_libraries(bslstage_gltest PRIVATE bslsources glfw bslmedia_cpu)
@@ -1071,7 +1082,7 @@ target_include_directories(bslstage_seqfxtest PRIVATE src)
 target_link_libraries(bslstage_seqfxtest PRIVATE bslsources glfw bslmedia_cpu)
 
 if(WIN32)
-    foreach(_tgt BSLStage bslstage_spouttest bslstage_ndittest bslstage_pixelmaptest bslstage_mediatest bslstage_gltest bslstage_projecttest bslstage_livetest bslstage_doctest bslstage_fxtest bslstage_ffgltest bslstage_bsltest bslstage_outputstress bslstage_aitest bslstage_keystest bslstage_transformtest bslstage_dmxtest bslstage_isfcheck bslstage_plugintest bslstage_streamtest bslstage_seqfxtest bslstage_seqtest)
+    foreach(_tgt BSLStage bslstage_spouttest bslstage_ndittest bslstage_pixelmaptest bslstage_mediatest bslstage_haptest bslstage_gltest bslstage_projecttest bslstage_livetest bslstage_doctest bslstage_fxtest bslstage_ffgltest bslstage_bsltest bslstage_outputstress bslstage_aitest bslstage_keystest bslstage_transformtest bslstage_dmxtest bslstage_isfcheck bslstage_plugintest bslstage_streamtest bslstage_seqfxtest bslstage_seqtest)
         if(TARGET ${_tgt})
             add_custom_command(TARGET ${_tgt} POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different ${BSL_FFMPEG_DLLS} ${BSL_ORT_DLLS} $<TARGET_FILE_DIR:${_tgt}>
@@ -1115,6 +1126,7 @@ if(MSVC)
         bslsources
         bslstage_livetest
         bslstage_mediatest
+        bslstage_haptest
         bslstage_gltest
         bslstage_spouttest
         bslstage_ndittest

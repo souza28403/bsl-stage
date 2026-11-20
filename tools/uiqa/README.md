@@ -133,6 +133,8 @@ segurando = blackout); digitar num campo de texto não dispara atalho de show; e
 Segurar, global, remover, restaurar padrões). Grava `docs/screenshot-atalhos.png` (editor aberto, teclas nas células e na camada):
 `py -3 tools/uiqa/run.py --config window --only atalhos,fuzz`.
 
+Cenário `hap`: Otimizar para show (menu da célula `##cel_hap_converter`/`##cel_hap_remover`, painel do clip `##clip_hap_*`, janela Cache de show `##menu_cache_show`); converte `h264_1080p.mp4` em HAP (até 60 s), confere em `state.showCache` (`{layer, col, reduce, state, progress, error, playing}`) e em `selClip.playPath` que o clip toca o .mov da pasta isolada `<qa>/appdata/cache/show` e volta ao .mp4 ao remover: `py -3 tools/uiqa/run.py --only hap`.
+
 Os presets também têm teste sem janela: `build\Release\bslstage_uitest.exe` (JSON, preset inválido, troca de trechos do `imgui.ini`, pasta
 de presets, exportar/importar).
 

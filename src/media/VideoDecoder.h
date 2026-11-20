@@ -26,6 +26,7 @@ struct VideoDecoderOptions {
     int targetWidth = 0;
     int targetHeight = 0;
     int queueSize = 4;
+    bool allowCompressed = false;
 
     bool live = false;
     std::string inputFormat;
@@ -57,6 +58,8 @@ public:
     std::unique_ptr<Frame> nextFrame(int timeoutMs);
 
     bool atEnd() const;
+
+    void recycle(std::unique_ptr<Frame> frame);
 
 private:
     struct Impl;

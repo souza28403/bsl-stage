@@ -10,7 +10,10 @@ namespace bsl::media {
 enum class PixelFormat {
     RGBA8,
     YUV420P,
-    YUVA420P
+    YUVA420P,
+    DXT1,
+    DXT5,
+    DXT5_YCoCg
 };
 
 enum class ColorSpace { BT601, BT709 };
@@ -28,9 +31,18 @@ struct Frame {
 
     static int planeCount(PixelFormat f)
     {
-        return f == PixelFormat::RGBA8 ? 1 : (f == PixelFormat::YUV420P ? 3 : 4);
+        switch (f) {
+        case PixelFormat::YUV420P: return 3;
+        case PixelFormat::YUVA420P: return 4;
+        default: return 1;
+        }
     }
-    bool isYuv() const { return format != PixelFormat::RGBA8; }
+    static bool isCompressedFormat(PixelFormat f)
+    {
+        return f == PixelFormat::DXT1 || f == PixelFormat::DXT5 || f == PixelFormat::DXT5_YCoCg;
+    }
+    bool isYuv() const { return format == PixelFormat::YUV420P || format == PixelFormat::YUVA420P; }
+    bool isCompressed() const { return isCompressedFormat(format); }
     bool hasAlphaPlane() const { return format == PixelFormat::YUVA420P; }
     bool empty() const { return width <= 0 || height <= 0 || planes[0].empty(); }
 
@@ -42,6 +54,14 @@ struct Frame {
         width = w;
         height = h;
         format = f;
+        if (isCompressedFormat(f)) {
+            const int blockBytes = f == PixelFormat::DXT1 ? 8 : 16;
+            strides = {((w + 3) / 4) * blockBytes, 0, 0, 0};
+            planes[0].resize(static_cast<size_t>(strides[0]) * static_cast<size_t>((h + 3) / 4));
+            for (int i = 1; i < 4; ++i)
+                planes[static_cast<size_t>(i)].clear();
+            return;
+        }
         for (int i = 0; i < 4; ++i) {
             if (i < planeCount(f)) {
                 const int bpp = (f == PixelFormat::RGBA8) ? 4 : 1;

@@ -20,7 +20,7 @@ namespace {
 
 bool fitToRgba(const Frame& src, int dstW, int dstH, Frame& dst)
 {
-    if (src.empty())
+    if (src.empty() || src.isCompressed())
         return false;
     const double s = std::min(static_cast<double>(dstW) / src.width, static_cast<double>(dstH) / src.height);
     const int w = std::clamp(static_cast<int>(std::lround(src.width * s)), 1, dstW);

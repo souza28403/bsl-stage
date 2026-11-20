@@ -143,6 +143,8 @@ Json clipToJson(int layer, int column, const Clip& clip, const fs::path& project
     j["fitMode"] = keyOf(kFitKeys, clip.fit);
     if (clip.replay != clip.defaultReplay())
         j["replayMode"] = clip.replay == ReplayMode::Resume ? "resume" : "restart";
+    if (clip.showCache && clip.type == Clip::Type::File)
+        j["showCache"] = {{"reduce", clip.showReduce}};
     if (!clip.effects.empty())
         j["effects"] = Json(clip.effects.toJson());
     if (clip.ownTransform || !transformIsDefault(clip.transform, canvasW, canvasH)) {
@@ -431,6 +433,12 @@ Clip clipFromJson(const Json& j, const fs::path& projectDirAbs, std::vector<std:
         }
     }
 
+    if (clip.type == Clip::Type::File) {
+        if (const Json* sc = getObj(j, "showCache")) {
+            clip.showCache = true;
+            clip.showReduce = getBool(*sc, "reduce", false);
+        }
+    }
     clip.effects = effectsFromJson(j, warnings);
     clip.setSpeed(getFloat(j, "speed", 1.0f, 0.0f, 4.0f));
     clip.setLoop(fromKey(kLoopKeys, getStr(j, "loopMode"), media::LoopMode::Loop));

@@ -1,12 +1,14 @@
 #include "media/VideoDecoder.h"
 
 #include "media/FrameConverter.h"
+#include "media/HapFrame.h"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstdio>
 #include <deque>
 #include <mutex>
 #include <thread>
@@ -48,6 +50,8 @@ struct VideoDecoder::Impl {
     FrameConverter converter;
     int outW = 0;
     int outH = 0;
+    bool dxtMode = false;
+    std::string fileName;
 
     std::atomic<bool> abortIo{false};
 
@@ -60,6 +64,7 @@ struct VideoDecoder::Impl {
     std::condition_variable cvWorker;
     std::condition_variable cvConsumer;
     std::deque<Queued> queue;
+    std::vector<std::unique_ptr<Frame>> spare;
     bool stop = false;
     bool loop = false;
     bool loopBroken = false;
@@ -86,6 +91,7 @@ struct VideoDecoder::Impl {
     }
 
     bool openFile(const std::filesystem::path& path);
+    bool probeDxt();
     void run();
     void seekInternal(double target, double& discardBefore);
     std::unique_ptr<Frame> takeDue(double clipTime);
@@ -221,7 +227,46 @@ bool VideoDecoder::Impl::openFile(const std::filesystem::path& path)
         outW = std::max(2, static_cast<int>(std::lround(info.width * s)) & ~1);
         outH = std::max(2, static_cast<int>(std::lround(info.height * s)) & ~1);
     }
+    dxtMode = false;
+    if (options.allowCompressed && !options.live && par->codec_id == AV_CODEC_ID_HAP && outW == 0 && outH == 0) {
+        const auto name = path.filename().u8string();
+        fileName.assign(name.begin(), name.end());
+        dxtMode = probeDxt();
+        if (dxtMode)
+            info.decoderName = "hap-dxt";
+    }
     return true;
+}
+
+bool VideoDecoder::Impl::probeDxt()
+{
+    bool ok = false;
+    if (info.width % 4 != 0 || info.height % 4 != 0) {
+        std::fprintf(stderr, "HAP: %s com dimensoes nao multiplas de 4, usando decodificacao por CPU\n",
+                     fileName.c_str());
+    } else {
+        AVPacket* pkt = av_packet_alloc();
+        for (int tries = 0; pkt && tries < 64 && av_read_frame(fmt, pkt) >= 0; ++tries) {
+            const bool mine = pkt->stream_index == streamIdx;
+            if (mine) {
+                HapTexture format = HapTexture::DXT1;
+                std::vector<std::uint8_t> tex;
+                const HapStatus st = hapParseFrame(pkt->data, static_cast<size_t>(pkt->size), info.width, info.height,
+                                                   format, tex);
+                ok = st == HapStatus::Ok;
+                if (!ok)
+                    std::fprintf(stderr, "HAP: %s nao suportado pelo caminho DXT (%s), usando decodificacao por CPU\n",
+                                 fileName.c_str(), st == HapStatus::Unsupported ? "formato" : "quadro invalido");
+            }
+            av_packet_unref(pkt);
+            if (mine)
+                break;
+        }
+        av_packet_free(&pkt);
+    }
+    double ignored = 0.0;
+    seekInternal(0.0, ignored);
+    return ok;
 }
 
 void VideoDecoder::Impl::seekInternal(double target, double& discardBefore)
@@ -279,6 +324,63 @@ void VideoDecoder::Impl::run()
             draining = false;
             lastPts = -frameDur;
             framesSinceLoop = 0;
+        }
+
+        if (dxtMode) {
+            const int rr = av_read_frame(fmt, pkt);
+            if (rr < 0) {
+                std::lock_guard lk(m);
+                eof = true;
+                if (loop && framesSinceLoop == 0)
+                    loopBroken = true;
+                cvConsumer.notify_all();
+                continue;
+            }
+            if (pkt->stream_index == streamIdx) {
+                const int64_t ts = pkt->pts != AV_NOPTS_VALUE ? pkt->pts : pkt->dts;
+                const double t = ts != AV_NOPTS_VALUE ? static_cast<double>(ts) * av_q2d(timeBase) - startTime
+                                                      : lastPts + frameDur;
+                if (t < discardBefore) {
+                    lastPts = t;
+                } else {
+                    std::unique_ptr<Frame> frame;
+                    {
+                        std::lock_guard lk(m);
+                        if (!spare.empty()) {
+                            frame = std::move(spare.back());
+                            spare.pop_back();
+                        }
+                    }
+                    if (!frame)
+                        frame = std::make_unique<Frame>();
+                    HapTexture format = HapTexture::DXT1;
+                    const HapStatus st = hapParseFrame(pkt->data, static_cast<size_t>(pkt->size), info.width,
+                                                       info.height, format, frame->planes[0]);
+                    if (st == HapStatus::Ok) {
+                        lastPts = t;
+                        frame->width = info.width;
+                        frame->height = info.height;
+                        frame->format = format == HapTexture::DXT1   ? PixelFormat::DXT1
+                                        : format == HapTexture::DXT5 ? PixelFormat::DXT5
+                                                                     : PixelFormat::DXT5_YCoCg;
+                        frame->strides[0] = ((info.width + 3) / 4) * (format == HapTexture::DXT1 ? 8 : 16);
+                        frame->pts = t;
+                        ++framesSinceLoop;
+                        std::lock_guard lk(m);
+                        if (!stop && localGen == seekGen && !seekPending) {
+                            queue.push_back({std::move(frame), epoch});
+                            cvConsumer.notify_all();
+                        }
+                    } else {
+                        std::fprintf(stderr, "HAP: quadro invalido em %s (t=%.3f), voltando para decodificacao por CPU\n",
+                                     fileName.c_str(), t);
+                        dxtMode = false;
+                        avcodec_send_packet(cc, pkt);
+                    }
+                }
+            }
+            av_packet_unref(pkt);
+            continue;
         }
 
         const int r = avcodec_receive_frame(cc, fr);
@@ -422,6 +524,7 @@ void VideoDecoder::close()
     d.freeFfmpeg();
     std::lock_guard lk(d.m);
     d.queue.clear();
+    d.spare.clear();
     d.opened = false;
 }
 
@@ -523,6 +626,16 @@ std::unique_ptr<Frame> VideoDecoder::nextFrame(int timeoutMs)
     lk.unlock();
     d.cvWorker.notify_one();
     return f;
+}
+
+void VideoDecoder::recycle(std::unique_ptr<Frame> frame)
+{
+    if (!frame || !frame->isCompressed())
+        return;
+    Impl& d = *impl_;
+    std::lock_guard lk(d.m);
+    if (d.spare.size() < static_cast<size_t>(std::max(1, d.options.queueSize)) + 2)
+        d.spare.push_back(std::move(frame));
 }
 
 bool VideoDecoder::atEnd() const

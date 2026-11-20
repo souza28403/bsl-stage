@@ -26,6 +26,7 @@ class Compositor;
 class LiveThumbnailer;
 class OutputRenderer;
 class ProjectSession;
+class ShowCacheQueue;
 class ThumbnailCache;
 
 struct AppOptions
@@ -148,6 +149,8 @@ private:
     bool restartSawModal_ = false;
     bool updaterLaunched_ = false;
     std::unique_ptr<ProjectSession> project_;
+    std::unique_ptr<ShowCacheQueue> showCache_;
+    void queueShowCaches();
 
     Clock::time_point lastFrameStart_{};
     Clock::time_point startTime_{};

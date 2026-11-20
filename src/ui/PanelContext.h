@@ -27,6 +27,7 @@ class Service;
 class Compositor;
 class OutputRenderer;
 class ProjectSession;
+class ShowCacheQueue;
 class ThumbnailCache;
 
 enum class AppMode { Composition, Mapping, PixelMap, Sequences };
@@ -95,6 +96,7 @@ struct PanelContext
     dmx::Service& dmx;
     update::Service& updates;
     seq::BibliotecaEnvelopes& envelopes;
+    ShowCacheQueue& showCache;
 };
 
 }

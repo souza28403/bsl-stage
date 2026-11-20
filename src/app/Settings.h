@@ -38,6 +38,7 @@ struct Settings
     std::string lastLayoutPreset;
     std::vector<std::string> isfFolders;
     std::vector<std::string> ffglFolders;
+    std::string showCacheDir;
     audio::AudioConfig audio;
     int aiFps = 0;
     std::string aiDevice = "auto";

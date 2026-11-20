@@ -3,6 +3,7 @@
 #include "app/Log.h"
 #include "app/Paths.h"
 #include "app/ProjectSession.h"
+#include "app/ShowCacheQueue.h"
 #include "app/Qa.h"
 #include "media/DocInfo.h"
 #include "media/NetStream.h"
@@ -53,6 +54,50 @@ using Deferred = std::vector<std::function<void()>>;
 bool contains(ImVec2 a, ImVec2 b, float x, float y)
 {
     return x >= a.x && x < b.x && y >= a.y && y < b.y;
+}
+
+void drawShowCacheBadge(ImDrawList* dl, ImVec2 bottomLeft, const ShowCacheQueue::Status& st, float maxRight)
+{
+    using State = ShowCacheQueue::State;
+    ImFont* mono = fonts().mono;
+    const float size = fontPx(mono) * 0.82f;
+    std::string text;
+    ImU32 color = IM_COL32(232, 232, 232, 220);
+    bool bar = false;
+    switch (st.state) {
+    case State::Pronto:
+        text = "HAP";
+        break;
+    case State::Convertendo:
+        text = "HAP " + std::to_string(static_cast<int>(std::clamp(st.progress, 0.0f, 1.0f) * 100.0f)) + "%";
+        bar = true;
+        break;
+    case State::Pendente:
+        text = "HAP…";
+        break;
+    case State::Falhou:
+        text = "HAP !";
+        color = ImGui::GetColorU32(theme::kWarning);
+        break;
+    default:
+        return;
+    }
+    const ImVec2 ts = mono->CalcTextSizeA(size, FLT_MAX, 0.0f, text.c_str());
+    const float pad = dp(3.5f);
+    const float w = std::min(ts.x + pad * 2.0f, std::max(dp(10.0f), maxRight - bottomLeft.x));
+    const float h = ts.y + dp(2.0f);
+    const ImVec2 a(bottomLeft.x, bottomLeft.y - h);
+    const ImVec2 b(a.x + w, bottomLeft.y);
+    dl->AddRectFilled(a, b, IM_COL32(0, 0, 0, 160), dp(3.0f));
+    dl->AddText(mono, size, ImVec2(a.x + pad, a.y + dp(1.0f)), color, text.c_str());
+    if (bar) {
+        const float th = std::max(1.0f, dp(2.0f));
+        const float f = std::clamp(st.progress, 0.0f, 1.0f);
+        dl->AddRectFilled(ImVec2(a.x + dp(2.0f), b.y - th - dp(1.0f)), ImVec2(b.x - dp(2.0f), b.y - dp(1.0f)),
+                          IM_COL32(255, 255, 255, 50));
+        dl->AddRectFilled(ImVec2(a.x + dp(2.0f), b.y - th - dp(1.0f)),
+                          ImVec2(a.x + dp(2.0f) + (w - dp(4.0f)) * f, b.y - dp(1.0f)), ImGui::GetColorU32(theme::kAccent));
+    }
 }
 
 void drawEllipsized(ImDrawList* dl, ImVec2 pos, float maxW, ImU32 color, const std::string& text)
@@ -595,6 +640,41 @@ void drawCells(PanelContext& ctx, Deferred& deferred, bool& addColumnRequested, 
                     const std::filesystem::path file = clip.path;
                     deferred.push_back([file] { paths::revealInExplorer(file); });
                 }
+                if (!clip.empty() && clip.type == Clip::Type::File && clip.kind == media::MediaKind::Video && !clip.missing
+                    && ImGui::BeginMenu("Otimizar para show")) {
+                    if (ImGui::MenuItem("Converter para HAP##cel_hap_converter")) {
+                        deferred.push_back([&comp, &ctx, li, col] {
+                            Clip& c = comp.clip(li, col);
+                            c.showCache = true;
+                            c.showReduce = false;
+                            c.showCacheWarned = false;
+                            const auto [w, h] = comp.showCacheLimits(c);
+                            ctx.showCache.enqueue(c.path, w, h);
+                        });
+                    }
+                    if (ImGui::MenuItem("Converter para HAP na resolução da composição##cel_hap_reduzir")) {
+                        deferred.push_back([&comp, &ctx, li, col] {
+                            Clip& c = comp.clip(li, col);
+                            c.showCache = true;
+                            c.showReduce = true;
+                            c.showCacheWarned = false;
+                            const auto [w, h] = comp.showCacheLimits(c);
+                            ctx.showCache.enqueue(c.path, w, h);
+                        });
+                    }
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                        ImGui::SetTooltip("Arquivo bem menor; recomendado para vídeos 4K");
+                    if (clip.showCache && ImGui::MenuItem("Remover otimização##cel_hap_remover")) {
+                        deferred.push_back([&comp, &ctx, li, col] {
+                            Clip& c = comp.clip(li, col);
+                            const auto [w, h] = comp.showCacheLimits(c);
+                            c.showCache = false;
+                            c.showCacheWarned = false;
+                            ctx.showCache.cancel(c.path, w, h);
+                        });
+                    }
+                    ImGui::EndMenu();
+                }
                 keyAssignMenu(control::Target::cell(deckIndex, li, col), !clip.empty());
                 dmxActionMenu(control::Target::cell(deckIndex, li, col), false);
                 ImGui::EndPopup();
@@ -662,6 +742,18 @@ void drawCells(PanelContext& ctx, Deferred& deferred, bool& addColumnRequested, 
 
             if (!clip.empty() && !clip.missing)
                 drawEffectsBadge(dl, ImVec2(b.x - dp(13.0f), a.y + dp(13.0f)), clip.effects);
+            if (!clip.empty() && !clip.missing && clip.showCache && clip.type == Clip::Type::File
+                && clip.kind == media::MediaKind::Video) {
+                const auto [limW, limH] = comp.showCacheLimits(clip);
+                const ShowCacheQueue::Status hapSt = ctx.showCache.status(clip.path, limW, limH);
+                const ImVec2 badgeAt(a.x + dp(4.0f), thumbMax.y - dp(6.0f));
+                drawShowCacheBadge(dl, badgeAt, hapSt, b.x - dp(4.0f));
+                if (hapSt.state == ShowCacheQueue::State::Falhou && !hapSt.error.empty() && overThumb) {
+                    const ImVec2 mp = ImGui::GetIO().MousePos;
+                    if (mp.x < a.x + dp(46.0f) && mp.y > badgeAt.y - dp(16.0f) && mp.y < badgeAt.y)
+                        ImGui::SetTooltip("Otimização para show falhou: %s", hapSt.error.c_str());
+                }
+            }
             const control::Target cellTarget = control::Target::cell(deckIndex, li, col);
             if (const std::string cellHint = keyHint(cellTarget); !cellHint.empty())
                 drawKeyHint(dl, ImVec2(a.x + dp(4.0f), a.y + dp(4.0f)), cellHint);

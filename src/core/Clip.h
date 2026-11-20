@@ -71,6 +71,10 @@ struct Clip
     media::MediaKind kind = media::MediaKind::Unknown;
     bool missing = false;
     bool missingPlugin = false;
+    bool showCache = false;
+    bool showReduce = false;
+    std::filesystem::path playPath;
+    mutable bool showCacheWarned = false;
 
     float speed = 1.0f;
     media::LoopMode loop = media::LoopMode::Loop;

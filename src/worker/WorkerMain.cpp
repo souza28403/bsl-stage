@@ -1,3 +1,4 @@
+#include "media/HapTranscode.h"
 #include "media/WorkerProtocol.h"
 #ifdef _WIN32
 #include "worker/FfglScan.h"
@@ -495,6 +496,67 @@ private:
 #endif
 };
 
+void writeJsonAtomic(const fs::path& file, const nlohmann::json& j)
+{
+    fs::path tmp = file;
+    tmp += ".tmp";
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        if (!f)
+            return;
+        f << j.dump();
+    }
+    std::error_code ec;
+    fs::rename(tmp, file, ec);
+    if (ec)
+        fs::remove(tmp, ec);
+}
+
+int runHapConvert(const fs::path& jobFile, const fs::path& progressFile)
+{
+    auto failWith = [&](const std::string& msg) {
+        writeJsonAtomic(progressFile, nlohmann::json{{"state", "failed"}, {"error", msg}});
+        return 1;
+    };
+
+    bsl::media::HapJob job;
+    try {
+        std::ifstream f(jobFile, std::ios::binary);
+        if (!f)
+            return failWith("Nao foi possivel ler o arquivo do trabalho.");
+        const nlohmann::json j = nlohmann::json::parse(f);
+        job.source = pathFromUtf8(j.value("source", std::string()));
+        job.target = pathFromUtf8(j.value("target", std::string()));
+        job.maxWidth = j.value("maxWidth", 0);
+        job.maxHeight = j.value("maxHeight", 0);
+    } catch (const std::exception&) {
+        return failWith("Arquivo do trabalho invalido.");
+    }
+    if (job.source.empty() || job.target.empty())
+        return failWith("Origem ou destino nao informados.");
+
+    std::atomic<bool> cancel{false};
+    auto last = Clock::now() - std::chrono::seconds(1);
+    const auto onProgress = [&](double p) {
+        const auto now = Clock::now();
+        if (now - last < std::chrono::milliseconds(250))
+            return;
+        last = now;
+        writeJsonAtomic(progressFile, nlohmann::json{{"state", "running"}, {"progress", p}});
+    };
+
+    const bsl::media::HapResult res = bsl::media::transcodeToHap(job, onProgress, cancel);
+    if (!res.ok)
+        return failWith(res.error);
+    writeJsonAtomic(progressFile, nlohmann::json{{"state", "done"},
+                                                 {"width", res.width},
+                                                 {"height", res.height},
+                                                 {"alpha", res.alpha},
+                                                 {"frames", res.frames},
+                                                 {"fps", res.fps}});
+    return 0;
+}
+
 }
 
 }
@@ -510,6 +572,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     std::wstring pipe, thumbIn, thumbOut, scanDll, scanOut, panelUrl, panelTitle = L"BSL Stage";
+    std::wstring hapJob, hapProgress;
     DWORD parent = 0;
     int thumbW = 160, thumbH = 90;
     bool thumb = false;
@@ -530,6 +593,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
             scanDll = argv[++i];
             if (i + 1 < argc && std::wstring(argv[i + 1]).rfind(L"--", 0) != 0)
                 scanOut = argv[++i];
+        } else if (a == L"--hap-convert" && i + 2 < argc) {
+            hapJob = argv[++i];
+            hapProgress = argv[++i];
         } else if (a == L"--panel" && i + 1 < argc) {
             panelUrl = argv[++i];
         } else if (a == L"--title" && i + 1 < argc) {
@@ -547,6 +613,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
         return 1;
 #endif
     }
+    if (!hapJob.empty())
+        return runHapConvert(fs::path(hapJob), fs::path(hapProgress));
     if (!scanDll.empty())
         runFfglScan(scanDll, scanOut);
     if (thumb)

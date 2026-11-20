@@ -56,6 +56,7 @@ struct Composition
     dmx::Config dmx;
 
     media::VideoDecoderOptions decoderOptions;
+    std::filesystem::path showCacheDir;
 
     static Composition createDefault(int layerCount = 3, int columns = 8);
 
@@ -101,6 +102,8 @@ struct Composition
     void removeDeck(int index);
 
     std::unique_ptr<media::ISource> openSource(const Clip& clip) const;
+    std::filesystem::path showCachePath(const Clip& clip) const;
+    std::pair<int, int> showCacheLimits(const Clip& clip) const;
 
     bool trigger(int layer, int column);
     void triggerColumn(int column);

@@ -2475,6 +2475,91 @@ def _artnet_packet(port_address, values, seq=1):
             + struct.pack(">H", 512) + bytes(data))
 
 
+def _norm_path(p):
+    return os.path.normcase(os.path.normpath(p)).replace("\\", "/")
+
+
+def sc_hap(t):
+    """Otimizar para show: converte um clip para HAP em segundo plano pelo menu da celula, confere que o clip passa a tocar
+    o .mov da pasta do cache (isolada em <qa>/appdata/cache/show), a secao do painel do clip, remover a otimizacao e a janela
+    Cache de show (Limpar)."""
+    app = t.app
+    ensure_mode(app, "composition")
+    app.click("##master_limpar", "cmp_grade")
+    app.wait_state(lambda s: all(l["activeColumn"] == -1 for l in s["layers"]), "tudo parado")
+    used = {(x[0], x[1]) for x in app.read()["state"]["cells"]}
+    free = [(l, c) for l in (1, 2) for c in (3, 4, 5) if (l - 1, c - 1) not in used]
+    expect(free, "ha uma celula livre")
+    layer, col = free[0]
+    cache_dir = _norm_path(os.path.join(app.dir, "appdata", "cache", "show"))
+    mp4 = _norm_path(os.path.join(MEDIA, "h264_1080p.mp4"))
+
+    def entry(s):
+        for e in s["showCache"]:
+            if e["layer"] == layer - 1 and e["col"] == col - 1:
+                return e
+        return None
+
+    def play(label):
+        app.click("##camada_%d_parar" % layer)
+        app.wait_state(lambda s: s["layers"][layer - 1]["activeColumn"] == -1, "camada parada " + label)
+        app.click("celula L%d C%d" % (layer, col))
+        app.wait_state(lambda s: s["layers"][layer - 1]["activeColumn"] == col - 1 and s.get("selClip", {}).get("open"),
+                       "clip disparado " + label)
+        return app.read()["state"]["selClip"]["playPath"]
+
+    drop_clip(app, "h264_1080p.mp4", layer, col)
+    expect(entry(app.read()["state"]) is None, "clip novo sem otimizacao")
+    app.click("celula L%d C%d" % (layer, col), button="right")
+    app.wait_frames(3)
+    app.click("Otimizar para show")
+    app.wait_frames(4)
+    app.click("##cel_hap_converter")
+    app.wait_state(lambda s: entry(s) is not None, "showCache ligado na celula")
+    s = app.wait_state(lambda s: entry(s) and entry(s)["state"] == "pronto", "conversao HAP pronta", timeout=60.0)
+    expect(entry(s)["progress"] >= 0.99, "progresso 100%% (%s)" % entry(s))
+    expect(not entry(s)["error"], "sem erro de conversao (%s)" % entry(s))
+    app.wait_frames(10)
+    t.shot("hap_celula")
+
+    playing = play("com cache")
+    expect(playing.lower().endswith(".mov"), "toca o .mov do cache (%s)" % playing)
+    expect(_norm_path(os.path.dirname(playing)) == cache_dir, "o .mov esta na pasta isolada do cache (%s)" % playing)
+
+    app.click("celula L%d C%d" % (layer, col))
+    app.wait_state(lambda s: s.get("selClip", {}).get("open"), "clip selecionado e aberto")
+    app.wait_frames(10)
+    expect(app.has("##clip_hap_ligar", "cmp_clip"), "secao Otimizacao para show no painel do clip")
+    app.wait_frames(10)
+    t.shot("hap_painel")
+    expect(app.has("##clip_hap_pasta", "cmp_clip"), "botao Abrir pasta do cache")
+
+    app.click("celula L%d C%d" % (layer, col), button="right")
+    app.wait_frames(3)
+    app.click("Otimizar para show")
+    app.wait_frames(4)
+    app.click("##cel_hap_remover")
+    app.wait_state(lambda s: entry(s) is None, "showCache removido da celula")
+    playing = play("sem cache")
+    expect(_norm_path(playing) == mp4, "depois de remover toca o .mp4 original (%s)" % playing)
+
+    menu(app, "Exibir", "##menu_cache_show")
+    app.wait_frames(5)
+    expect(app.has("##cache_show_limpar"), "janela Cache de show aberta")
+    t.shot("hap_janela")
+    app.click("##cache_show_limpar")
+    app.wait_frames(6)
+    app.key("esc")
+    app.wait_frames(4)
+    if app.has("##cache_show_limpar"):
+        rect = app.window_rect("janela_cache_show") or app.window_rect("Cache de show")
+        expect(rect is not None, "janela Cache de show tem retangulo")
+        app.click_at(rect.x1 - 14 * app.scale, rect.y0 + 10 * app.scale)
+        app.wait_frames(4)
+    expect(not app.has("##cache_show_limpar"), "janela Cache de show fechada")
+    app.click("##camada_%d_parar" % layer)
+
+
 def sc_dmx(t):
     """DMX / Art-Net: janela (menu Saída), receptor desligado por padrão, ligar só no loopback (nada abre na rede), patch
     automático, dados Art-Net reais por UDP em 127.0.0.1 (opacidade pelo patch), indicador na barra de status e DMX learn
@@ -3391,6 +3476,7 @@ SCENARIOS = [
     ("layouts", sc_layouts),
     ("exibir", sc_exibir),
     ("atalhos", sc_atalhos),
+    ("hap", sc_hap),
     ("dmx", sc_dmx),
     ("atualizacao", sc_atualizacao),
     ("licencas", sc_licencas),
