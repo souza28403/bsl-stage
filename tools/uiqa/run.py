@@ -2214,6 +2214,25 @@ def find_binding(s, action, key=None, scope="project", **args):
     return None
 
 
+def hold_toggles(app, key, getter, seconds):
+    """Segura a tecla por alguns segundos e conta quantas vezes o valor lido do estado trocou."""
+    values = []
+    app.key_down(key)
+    try:
+        t0 = time.time()
+        while time.time() - t0 < seconds:
+            d = app.read()
+            if d:
+                values.append(bool(getter(d["state"])))
+            time.sleep(0.01)
+    finally:
+        app.key_up(key)
+    app.wait_frames(6)
+    n = sum(1 for a, b in zip(values, values[1:]) if a != b)
+    print("      %s segurado %.1f s: %d trocas em %d leituras" % (key.upper(), seconds, n, len(values)))
+    return n
+
+
 def sc_atalhos(t):
     """Atalhos de teclado: atribuir tecla pelo botao direito (celula e camada), disparar, ligar/desligar camada, padroes
     (colunas, Q..P, Espaco, Delete, B segurando), nao disparar digitando, editor (gravar, conflito, modo, remover,
@@ -2321,7 +2340,7 @@ def sc_atalhos(t):
     expect(rows >= 20, "editor lista os atalhos (%d)" % rows)
     for _ in range(25):
         app.read()
-        if any(it.visible and it.label.startswith("Ligar/desligar camada") for it in app.items if not it.is_window):
+        if any(it.visible and "Ligar/desligar camada" in it.label for it in app.items if not it.is_window):
             break
         r = app.find("##atalhos_busca", "Atalhos").rect
         app.wheel(r.cx, r.y1 + 150, -2)
@@ -2385,6 +2404,53 @@ def sc_atalhos(t):
     n = len(app.state["keys"]["project"])
     app.click("##atalho_1_remover")
     app.wait_state(lambda s: len(s["keys"]["project"]) == n - 1 and find_binding(s, "layer.power") is None, "remover o atalho")
+
+    app.click("##atalhos_busca", "Atalhos")
+    app.key("a", "ctrl")
+    app.key("backspace")
+    app.wait_state(lambda s: s["keys"]["rows"] >= 20, "busca limpa")
+    app.click("##atalhos_strobo")
+    app.wait_frames(4)
+    expect(app.has("##strobo_gravar") and app.has("##strobo_tela"), "janela Novo strobo aberta")
+    t.shot("atalhos_strobo")
+    app.click("##strobo_32")
+    app.click("##strobo_gravar")
+    app.wait_state(lambda s: s["keys"]["capturing"], "strobo pede a tecla")
+    app.key("h")
+    app.wait_state(lambda s: (find_binding(s, "master.blackout", "H") or {}).get("mode") == "repeat", "H vira strobo do blackout")
+    expect(find_binding(app.state, "master.blackout", "H").get("rate") == 8, "strobo em 1/32")
+    expect((find_binding(app.state, "master.blackout", "B") or {}).get("mode") == "hold", "o B (blackout ao segurar) continua igual")
+    app.click("##atalhos_busca", "Atalhos")
+    app.wait_frames(2)
+    app.click("##atalhos_fechar")
+    app.wait_state(lambda s: not s["keys"]["editorOpen"], "editor fechado para o strobo")
+    expect(hold_toggles(app, "h", lambda s: s["blackout"], 1.5) >= 6, "segurar o H pisca o blackout")
+    app.wait_state(lambda s: not s["blackout"] and s["keys"]["held"] == 0, "soltar o H volta sem blackout")
+
+    app.click("camada 1 nome", button="right")
+    app.wait_frames(3)
+    expect(app.has("##key_strobo"), "menu da camada tem 'Atribuir tecla de strobo'")
+    app.click("##key_strobo")
+    app.wait_state(lambda s: s["keys"]["capturing"], "gravacao do strobo da camada")
+    app.key("g")
+    app.wait_state(lambda s: (find_binding(s, "layer.power", "G") or {}).get("mode") == "repeat", "G vira strobo da camada 1")
+    expect(hold_toggles(app, "g", lambda s: s["layers"][0]["bypass"], 1.5) >= 4, "segurar o G pisca a camada 1")
+    app.wait_state(lambda s: not s["layers"][0]["bypass"] and s["keys"]["held"] == 0, "soltar o G deixa a camada ligada")
+
+    menu(app, "Exibir", "##menu_atalhos")
+    app.wait_state(lambda s: s["keys"]["editorOpen"], "editor de atalhos aberto de novo")
+    app.wait_frames(4)
+    n = len(app.state["keys"]["project"])
+    app.click("##atalhos_novo")
+    app.wait_state(lambda s: s["keys"]["capturing"], "Novo atalho pede a tecla")
+    app.key("n")
+    app.wait_state(lambda s: len(s["keys"]["project"]) == n + 1 and find_binding(s, "clip.trigger", "N") is not None,
+                   "N gravada no novo atalho")
+    app.wait_frames(4)
+    expect(app.has("##atalho_acao"), "depois da tecla abre a escolha da ação")
+    t.shot("atalhos_novo_acao")
+    app.click("##atalhos_busca", "Atalhos")
+    app.wait_frames(3)
 
     app.click("##atalhos_restaurar")
     app.wait_frames(4)

@@ -100,7 +100,17 @@ struct Capture
     ActionArgs args;
     std::string title;
     control::Mode mode = control::Mode::Press;
+    int rate = 4;
+    bool fresh = false;
+    bool editAfter = false;
     int frames = 0;
+};
+
+struct RowRef
+{
+    bool active = false;
+    Scope scope = Scope::Project;
+    int index = -1;
 };
 
 struct Pending
@@ -137,12 +147,26 @@ struct State
     bool importRequest = false;
     int visibleRows = 0;
     std::map<std::string, std::string> probeCache;
+    RowRef openEdit;
+    int strobeTarget = 0;
+    int strobeLayer = 1;
+    int strobeRate = 4;
 };
 State g;
 
 KeyBindingSet& setFor(Scope scope)
 {
     return scope == Scope::Project ? g.comp->keys : g.settings->keys;
+}
+
+int findPlain(const KeyBindingSet& set, const std::string& action, const ActionArgs& args)
+{
+    for (size_t i = 0; i < set.items.size(); ++i) {
+        const KeyBinding& b = set.items[i];
+        if (b.action == action && b.args == args && b.mode != control::Mode::Repeat)
+            return static_cast<int>(i);
+    }
+    return -1;
 }
 
 void touch(Scope scope)
@@ -213,6 +237,25 @@ void beginCapture(Capture cap)
     g.cap = std::move(cap);
 }
 
+void ownOf(const Capture& cap, int& ownScope, int& ownIndex)
+{
+    ownScope = -1;
+    ownIndex = -1;
+    if (cap.isRow) {
+        const KeyBindingSet& set = setFor(cap.scope);
+        if (cap.index >= 0 && cap.index < static_cast<int>(set.items.size())) {
+            ownScope = static_cast<int>(cap.scope);
+            ownIndex = cap.index;
+        }
+    } else if (!cap.fresh) {
+        const int i = findPlain(setFor(cap.scope), cap.action, cap.args);
+        if (i >= 0) {
+            ownScope = static_cast<int>(cap.scope);
+            ownIndex = i;
+        }
+    }
+}
+
 void commitChord(const Capture& cap, int ownScope, int ownIndex, Chord chord)
 {
     for (const control::Match& m : control::findConflicts(chord, g.settings->keys, g.comp->keys, ownScope, ownIndex)) {
@@ -222,34 +265,29 @@ void commitChord(const Capture& cap, int ownScope, int ownIndex, Chord chord)
     if (ownIndex >= 0) {
         setFor(static_cast<Scope>(ownScope)).items[static_cast<size_t>(ownIndex)].chord = chord;
         touch(static_cast<Scope>(ownScope));
+        if (cap.editAfter)
+            g.openEdit = RowRef{true, static_cast<Scope>(ownScope), ownIndex};
     } else {
         KeyBinding b;
         b.action = cap.action;
         b.args = cap.args;
         b.chord = chord;
         b.mode = cap.mode;
+        b.rate = cap.rate;
         setFor(cap.scope).items.push_back(std::move(b));
         touch(cap.scope);
     }
     g.status = "Tecla " + control::chordLabel(chord) + " atribuída.";
+    if (cap.mode == control::Mode::Repeat)
+        g.status += " Segure a tecla para piscar.";
+    else if (cap.editAfter)
+        g.status += " Agora escolha a ação na lista que abriu.";
 }
 
 void assignChord(const Capture& cap, Chord chord)
 {
     int ownScope = -1, ownIndex = -1;
-    if (cap.isRow) {
-        const KeyBindingSet& set = setFor(cap.scope);
-        if (cap.index >= 0 && cap.index < static_cast<int>(set.items.size())) {
-            ownScope = static_cast<int>(cap.scope);
-            ownIndex = cap.index;
-        }
-    } else {
-        const int i = setFor(cap.scope).find(cap.action, cap.args);
-        if (i >= 0) {
-            ownScope = static_cast<int>(cap.scope);
-            ownIndex = i;
-        }
-    }
+    ownOf(cap, ownScope, ownIndex);
     const std::vector<control::Match> conflicts =
         control::findConflicts(chord, g.settings->keys, g.comp->keys, ownScope, ownIndex);
     if (conflicts.empty()) {
@@ -322,13 +360,7 @@ void drawConflictModal()
         if (ImGui::Button("Substituir##key_conflito_substituir", ImVec2(dp(140.0f), 0.0f))) {
             const Capture cap = g.pending.cap;
             int ownScope = -1, ownIndex = -1;
-            if (cap.isRow) {
-                ownScope = static_cast<int>(cap.scope);
-                ownIndex = cap.index;
-            } else if (const int i = setFor(cap.scope).find(cap.action, cap.args); i >= 0) {
-                ownScope = static_cast<int>(cap.scope);
-                ownIndex = i;
-            }
+            ownOf(cap, ownScope, ownIndex);
             commitChord(cap, ownScope, ownIndex, g.pending.chord);
             g.pending.open = false;
             ImGui::CloseCurrentPopup();
@@ -530,9 +562,17 @@ void drawEditor(PanelContext& ctx)
         cap.isRow = true;
         cap.scope = Scope::Project;
         cap.index = static_cast<int>(g.comp->keys.items.size()) - 1;
-        cap.title = describe(b);
+        cap.title = "Novo atalho (a ação você escolhe depois)";
+        cap.editAfter = true;
         beginCapture(cap);
     }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Aperte a tecla e depois escolha o que ela faz.");
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_ZAP "  Strobo…##atalhos_strobo"))
+        ImGui::OpenPopup("Novo strobo###keys_strobo");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Cria uma tecla que pisca enquanto você segura.");
     ImGui::SameLine();
     if (ImGui::Button(ICON_UNDO "  Restaurar padrões##atalhos_restaurar"))
         ImGui::OpenPopup("Restaurar padrões?###keys_restaurar");
@@ -557,6 +597,59 @@ void drawEditor(PanelContext& ctx)
         }
         ImGui::SameLine();
         if (ImGui::Button("Cancelar##atalhos_restaurar_cancelar", ImVec2(dp(140.0f), 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+
+    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Novo strobo###keys_strobo", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::TextUnformatted("Enquanto você segura a tecla, pisca no ritmo do BPM.");
+        ImGui::TextUnformatted("Ao soltar, tudo volta como estava.");
+        ImGui::SeparatorText("O que pisca");
+        ImGui::RadioButton("Tela toda (blackout)##strobo_tela", &g.strobeTarget, 0);
+        ImGui::RadioButton("A camada em foco##strobo_foco", &g.strobeTarget, 1);
+        ImGui::RadioButton("A camada nº##strobo_camada", &g.strobeTarget, 2);
+        if (g.strobeTarget == 2) {
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(dp(90.0f));
+            ImGui::InputInt("##strobo_camada_n", &g.strobeLayer);
+            g.strobeLayer = std::clamp(g.strobeLayer, 1, std::max(1, g.comp->layerCount()));
+            ImGui::SameLine();
+            ImGui::TextColored(theme::kTextDim, "(1 = a de baixo)");
+        }
+        ImGui::SeparatorText("Velocidade");
+        ImGui::RadioButton("1/8##strobo_8", &g.strobeRate, 2);
+        ImGui::SameLine();
+        ImGui::RadioButton("1/16##strobo_16", &g.strobeRate, 4);
+        ImGui::SameLine();
+        ImGui::RadioButton("1/32##strobo_32", &g.strobeRate, 8);
+        const float flashes = g.comp->bpm / 60.0f * static_cast<float>(g.strobeRate);
+        ImGui::TextColored(theme::kTextDim, "Com %.0f BPM: %.0f trocas por segundo.", g.comp->bpm, flashes);
+        ImGui::Spacing();
+        if (ImGui::Button(ICON_ZAP "  Gravar tecla##strobo_gravar", ImVec2(dp(140.0f), 0.0f))) {
+            Capture cap;
+            cap.scope = Scope::Project;
+            cap.fresh = true;
+            cap.mode = control::Mode::Repeat;
+            cap.rate = g.strobeRate;
+            if (g.strobeTarget == 0) {
+                cap.action = "master.blackout";
+            } else {
+                cap.action = "layer.power";
+                cap.args.selected = g.strobeTarget == 1;
+                cap.args.layer = g.strobeLayer - 1;
+            }
+            const ActionDef* def = control::findAction(cap.action);
+            if (def) {
+                control::stampLayerId(*def, cap.args, *g.comp);
+                cap.title = "Strobo: " + control::describeAction(*g.comp, *def, cap.args);
+            }
+            ImGui::CloseCurrentPopup();
+            beginCapture(cap);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancelar##strobo_cancelar", ImVec2(dp(140.0f), 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape))
             ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
@@ -596,11 +689,17 @@ void drawEditor(PanelContext& ctx)
                 ImGui::TableSetColumnIndex(0);
                 const ImVec4 textCol = b.chord.valid() ? theme::kText : theme::kTextDim;
                 ImGui::PushStyleColor(ImGuiCol_Text, textCol);
-                if (ImGui::Selectable((desc + "##atalho_" + n + "_acao").c_str()))
+                if (ImGui::Selectable((ICON_CHEVRON_DOWN "  " + desc + "##atalho_" + n + "_acao").c_str()))
                     ImGui::OpenPopup("##atalho_editar");
                 ImGui::PopStyleColor();
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Clique para trocar a ação ou os argumentos (camada, coluna...)");
+                if (g.openEdit.active && !g.cap.active && !g.pending.open && g.openEdit.scope == scope
+                    && g.openEdit.index == i) {
+                    ImGui::OpenPopup("##atalho_editar");
+                    ImGui::SetScrollHereY();
+                    g.openEdit = RowRef{};
+                }
                 drawEditPopup(b);
 
                 ImGui::TableSetColumnIndex(1);
@@ -896,7 +995,7 @@ void keyAssignMenu(const control::Target& target, bool leadingSeparator)
     if (const control::ActionDef* targetDef = control::findAction(id))
         control::stampLayerId(*targetDef, args, *g.comp);
     const Scope scope = control::defaultScopeFor(id);
-    const int own = setFor(scope).find(id, args);
+    const int own = findPlain(setFor(scope), id, args);
     const bool hasKey = own >= 0 && setFor(scope).items[static_cast<size_t>(own)].chord.valid();
 
     if (leadingSeparator)
@@ -921,6 +1020,19 @@ void keyAssignMenu(const control::Target& target, bool leadingSeparator)
         cap.title = def ? control::describeAction(*g.comp, *def, args) : id;
         beginCapture(cap);
     }
+    if ((target.kind == Target::Kind::Layer || target.kind == Target::Kind::Effect) && control::supportsRepeat(id)
+        && ImGui::MenuItem(ICON_ZAP "  Atribuir tecla de strobo (pisca enquanto segurar)…##key_strobo")) {
+        Capture cap;
+        cap.scope = scope;
+        cap.action = id;
+        cap.args = args;
+        cap.fresh = true;
+        cap.mode = control::Mode::Repeat;
+        cap.rate = 4;
+        const control::ActionDef* def = control::findAction(id);
+        cap.title = "Strobo: " + (def ? control::describeAction(*g.comp, *def, args) : id);
+        beginCapture(cap);
+    }
     if (hasKey && ImGui::MenuItem("Remover tecla##key_remover")) {
         setFor(scope).items.erase(setFor(scope).items.begin() + own);
         touch(scope);
@@ -938,7 +1050,7 @@ void keyParamMenu(const control::ActionArgs& argsIn, bool offerHold)
     ActionArgs args = argsIn;
     control::stampLayerId(*def, args, *g.comp);
     const Scope scope = control::defaultScopeFor(id);
-    const int own = setFor(scope).find(id, args);
+    const int own = findPlain(setFor(scope), id, args);
     const bool hasKey = own >= 0 && setFor(scope).items[static_cast<size_t>(own)].chord.valid();
 
     auto start = [&](control::Mode mode) {
@@ -977,7 +1089,7 @@ std::string actionShortcut(const std::string& actionId, const control::ActionArg
     if (!g.settings || !g.comp)
         return {};
     for (const KeyBindingSet* set : {&g.settings->keys, &g.comp->keys}) {
-        const int i = set->find(actionId, args);
+        const int i = findPlain(*set, actionId, args);
         if (i >= 0 && set->items[static_cast<size_t>(i)].chord.valid())
             return control::chordLabel(set->items[static_cast<size_t>(i)].chord);
     }
