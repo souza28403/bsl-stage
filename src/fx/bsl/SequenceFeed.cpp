@@ -66,4 +66,17 @@ std::uint64_t SequenceFeed::version() const
     return versao_;
 }
 
+void SequenceFeed::setPreferida(int id)
+{
+    preferida_ = id;
+}
+
+int SequenceFeed::sequenciaPadrao() const
+{
+    const auto snap = snapshot();
+    if (snap->sequencia(preferida_))
+        return preferida_;
+    return snap->conjunto.sequencias.empty() ? 0 : snap->conjunto.sequencias.front().id;
+}
+
 }

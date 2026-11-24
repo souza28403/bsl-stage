@@ -3,6 +3,7 @@
 #include "seq/Envelope.h"
 #include "seq/SeqModel.h"
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -39,8 +40,11 @@ public:
     bool set(const seq::SequenceSet& conjunto, const std::vector<seq::Envelope>& envelopes);
     std::shared_ptr<const SequenceSnapshot> snapshot() const;
     std::uint64_t version() const;
+    void setPreferida(int id);
+    int sequenciaPadrao() const;
 
 private:
+    std::atomic<int> preferida_{0};
     mutable std::mutex mutex_;
     std::shared_ptr<const SequenceSnapshot> atual_;
     std::uint64_t versao_ = 0;

@@ -2,6 +2,7 @@
 
 #include "app/Log.h"
 #include "fx/EffectRegistry.h"
+#include "fx/bsl/SequenceFeed.h"
 
 #include <algorithm>
 #include <atomic>
@@ -172,7 +173,14 @@ EffectInstance& EffectChain::insert(int index, const std::string& typeId)
 {
     if (index < 0 || index > size())
         index = size();
-    return *items.insert(items.begin() + index, EffectInstance(typeId));
+    EffectInstance& inst = *items.insert(items.begin() + index, EffectInstance(typeId));
+    for (const media::ParamDesc& d : EffectRegistry::instance().describe(typeId)) {
+        if (d.custom != "seq-ref" || inst.params.has(d.id))
+            continue;
+        if (const int id = bsllight::SequenceFeed::instance().sequenciaPadrao(); id > 0)
+            inst.setParam(d.id, media::Json(id));
+    }
+    return inst;
 }
 
 bool EffectChain::remove(int index)

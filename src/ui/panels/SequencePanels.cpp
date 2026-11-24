@@ -1,6 +1,7 @@
 #include "ui/panels/SequencePanels.h"
 
 #include "app/Qa.h"
+#include "fx/bsl/SequenceFeed.h"
 #include "seq/SeqEdit.h"
 #include "seq/SeqFactory.h"
 #include "ui/Theme.h"
@@ -313,6 +314,7 @@ void sequencesPrepare(PanelContext& ctx)
 
     if (!seq::acharSequencia(c, e.sequenciaId))
         e.sequenciaId = c.sequencias.empty() ? 0 : c.sequencias.front().id;
+    fx::bsllight::SequenceFeed::instance().setPreferida(e.sequenciaId);
     if (e.visaoId != seq::kVisaoTudo && !seq::acharVisao(c, e.visaoId))
         e.visaoId = seq::kVisaoTudo;
     if (const seq::Sequencia* s = seq::acharSequencia(c, e.sequenciaId))

@@ -2,6 +2,7 @@
 
 #include "fx/bsl/BslCommon.h"
 #include "fx/bsl/BslEffects.h"
+#include "fx/EffectChain.h"
 #include "fx/bsl/SequenceFeed.h"
 
 #include <glad/gl.h>
@@ -131,6 +132,29 @@ void testarSequencia()
     rodar(cor);
     VERIFICAR(efeito->status().level == media::SourceStatus::Level::Ok);
     VERIFICAR(efeito->status().text.empty());
+
+    secao("efeito novo ja vem com a sequencia");
+    {
+        auto sequenciaDe = [](const EffectInstance& e) {
+            const media::Json* j = e.params.find("sequencia");
+            return j && j->is_number_integer() ? j->get<int>() : 0;
+        };
+        EffectChain cadeia;
+        SequenceFeed::instance().setPreferida(0);
+        VERIFICAR(sequenciaDe(cadeia.add(kSequenciaId)) == idSeq);
+        seq::SequenceSet dois = conjunto;
+        const int idB = seq::criarSequencia(dois, "B", 2);
+        publicarConjunto(dois);
+        SequenceFeed::instance().setPreferida(idB);
+        VERIFICAR(sequenciaDe(cadeia.add(kSequenciaId)) == idB);
+        SequenceFeed::instance().setPreferida(9999);
+        VERIFICAR(sequenciaDe(cadeia.add(kSequenciaId)) == idSeq);
+        SequenceFeed::instance().setPreferida(0);
+        publicarConjunto(seq::SequenceSet{});
+        VERIFICAR(sequenciaDe(cadeia.add(kSequenciaId)) == 0);
+        VERIFICAR(!cadeia.add("native:invert").params.has("sequencia"));
+        publicarConjunto(conjunto);
+    }
 
     VERIFICAR(glGetError() == GL_NO_ERROR);
     glDeleteTextures(1, &cor);
