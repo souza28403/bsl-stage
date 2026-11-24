@@ -91,9 +91,22 @@ public static class BslStageOcioso
         CloseDesktop(h);
         return false;
     }
+
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GetConsoleWindow();
+
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    public static void EsconderConsole()
+    {
+        IntPtr h = GetConsoleWindow();
+        if (h != IntPtr.Zero) ShowWindow(h, 0);
+    }
 }
 "@
 if (-not ('BslStageOcioso' -as [type])) { Add-Type -TypeDefinition $codigoOcioso }
+if ($env:BSL_NOTURNO_VISIVEL -ne '1') { [BslStageOcioso]::EsconderConsole() }
 
 function Usuario-Ativo {
     [BslStageOcioso]::OciosoMs() -lt 180000
@@ -118,6 +131,44 @@ function Passo-Visual($rotulo, $motivo) {
 
 function Adicionar-Passo($nome, $estado, $segundos, $codigo, $linhas, $aviso) {
     [void]$passos.Add([pscustomobject]@{ Nome = $nome; Estado = $estado; Segundos = $segundos; Codigo = $codigo; Linhas = @($linhas); Aviso = $aviso })
+    Escrever-Relatorio $cabecalhoParcial
+}
+
+$cabecalhoParcial = 'INTERROMPIDO: a rotina parou antes de terminar (relatório parcial, até o último passo concluído)'
+
+function Escrever-Relatorio($cab) {
+    $linhas = New-Object System.Collections.ArrayList
+    [void]$linhas.Add($cab)
+    [void]$linhas.Add('Início: ' + $inicio.ToString('yyyy-MM-dd HH:mm:ss') + ' | commit: ' + $commit)
+    [void]$linhas.Add('Parâmetros: UiqaRuns=' + $UiqaRuns + ' Force=' + [bool]$Force)
+    foreach ($a in $avisosPedido) { [void]$linhas.Add($a) }
+    foreach ($s in $passos) { [void]$linhas.Add('- ' + $s.Nome + ': ' + $s.Estado) }
+    if ($resumoUiqa) { [void]$linhas.Add($resumoUiqa) }
+    foreach ($s in $passos) {
+        [void]$linhas.Add('')
+        $cabPasso = '[' + $s.Estado + '] ' + $s.Nome
+        if ($null -ne $s.Segundos) { $cabPasso += ' | tempo ' + $s.Segundos + ' s | código ' + $s.Codigo }
+        if ($s.Aviso) { $cabPasso += ' | ' + $s.Aviso }
+        [void]$linhas.Add($cabPasso)
+        if ($s.Estado -eq 'FALHA' -or $s.Estado -eq 'INTERFERÊNCIA') {
+            $falhas = @($s.Linhas | Where-Object { $_ -cmatch '\bFALH(A|OU)\b|\bFAIL\b|QaFailure' } | Select-Object -First 30)
+            if ($falhas.Count -gt 0) {
+                [void]$linhas.Add('  linhas com falha:')
+                foreach ($l in $falhas) { [void]$linhas.Add('    ' + $l) }
+            }
+        }
+        $ultimas = @($s.Linhas | Select-Object -Last 15)
+        if ($ultimas.Count -gt 0) {
+            [void]$linhas.Add('  últimas 15 linhas:')
+            foreach ($l in $ultimas) { [void]$linhas.Add('    ' + $l) }
+        }
+    }
+    try {
+        Set-Content -LiteralPath $arqRelatorio -Value $linhas -Encoding UTF8
+        Copy-Item -LiteralPath $arqRelatorio -Destination $arqUltimo -Force
+    }
+    catch {
+    }
 }
 
 function Hash-Texto($texto) {
@@ -290,9 +341,13 @@ function Executar-Passos {
         }
         $r = Executar 'python' 'tools\uiqa\run.py --config window'
         $falhas = @($r.Linhas | ForEach-Object { if ($_ -match '^\s*FALHA\s+(\S+)') { $Matches[1] } })
+        $linhasFalha = @($r.Linhas | Where-Object { $_ -match '^\s*FALHA\s' })
+        $reais = @($linhasFalha | Where-Object { $_ -notmatch 'INTERFERENCIA' })
         $estado = 'FALHA'
         if ($r.Codigo -eq 0) { $estado = 'OK'; $ok++ }
+        elseif ($linhasFalha.Count -gt 0 -and $reais.Count -eq 0) { $estado = 'INTERFERÊNCIA' }
         $aviso = 'passos com falha: ' + $(if ($falhas.Count) { $falhas -join ', ' } else { 'nenhum' })
+        if ($estado -eq 'INTERFERÊNCIA') { $aviso = 'alguém mexeu no mouse durante a rodada (' + ($falhas -join ', ') + ')' }
         Adicionar-Passo ('uiqa rodada ' + $i + ' de ' + $UiqaRuns) $estado $r.Segundos $r.Codigo $r.Linhas $aviso
     }
     $script:resumoUiqa = 'uiqa: ' + $ok + ' de ' + $UiqaRuns + ' rodadas passaram'
@@ -300,6 +355,7 @@ function Executar-Passos {
 
 try {
     $commit = (& git -C $raiz rev-parse HEAD 2>$null | Out-String).Trim()
+    Escrever-Relatorio $cabecalhoParcial
     $estadoAtual = Obter-Estado
     $anterior = ''
     if (Test-Path -LiteralPath $arqEstado) { $anterior = (Get-Content -LiteralPath $arqEstado -Raw).Trim() }
@@ -336,7 +392,7 @@ try {
                 }
             }
             $falhas = @($passos | Where-Object { $_.Estado -eq 'FALHA' }).Count
-            $pendentes = @($passos | Where-Object { $_.Estado -eq 'PULADO' -or $_.Estado -eq 'ADIADO' }).Count
+            $pendentes = @($passos | Where-Object { $_.Estado -eq 'PULADO' -or $_.Estado -eq 'ADIADO' -or $_.Estado -eq 'INTERFERÊNCIA' }).Count
             if ($falhas -gt 0) { $cabecalho = 'FALHAS: ' + $falhas }
             elseif ($pendentes -gt 0) { $cabecalho = 'PARCIAL: ' + $pendentes + ' passo(s) pulado(s) ou adiado(s)' }
             else { $cabecalho = 'TUDO OK' }
@@ -349,34 +405,7 @@ catch {
     $cabecalho = 'FALHAS: ' + @($passos | Where-Object { $_.Estado -eq 'FALHA' }).Count
 }
 
-$linhas = New-Object System.Collections.ArrayList
-[void]$linhas.Add($cabecalho)
-[void]$linhas.Add('Início: ' + $inicio.ToString('yyyy-MM-dd HH:mm:ss') + ' | commit: ' + $commit)
-[void]$linhas.Add('Parâmetros: UiqaRuns=' + $UiqaRuns + ' Force=' + [bool]$Force)
-foreach ($a in $avisosPedido) { [void]$linhas.Add($a) }
-foreach ($s in $passos) { [void]$linhas.Add('- ' + $s.Nome + ': ' + $s.Estado) }
-if ($resumoUiqa) { [void]$linhas.Add($resumoUiqa) }
-foreach ($s in $passos) {
-    [void]$linhas.Add('')
-    $cab = '[' + $s.Estado + '] ' + $s.Nome
-    if ($null -ne $s.Segundos) { $cab += ' | tempo ' + $s.Segundos + ' s | código ' + $s.Codigo }
-    if ($s.Aviso) { $cab += ' | ' + $s.Aviso }
-    [void]$linhas.Add($cab)
-    if ($s.Estado -eq 'FALHA') {
-        $falhas = @($s.Linhas | Where-Object { $_ -cmatch '\bFALH(A|OU)\b|\bFAIL\b|QaFailure' } | Select-Object -First 30)
-        if ($falhas.Count -gt 0) {
-            [void]$linhas.Add('  linhas com falha:')
-            foreach ($l in $falhas) { [void]$linhas.Add('    ' + $l) }
-        }
-    }
-    $ultimas = @($s.Linhas | Select-Object -Last 15)
-    if ($ultimas.Count -gt 0) {
-        [void]$linhas.Add('  últimas 15 linhas:')
-        foreach ($l in $ultimas) { [void]$linhas.Add('    ' + $l) }
-    }
-}
-Set-Content -LiteralPath $arqRelatorio -Value $linhas -Encoding UTF8
-Copy-Item -LiteralPath $arqRelatorio -Destination $arqUltimo -Force
+Escrever-Relatorio $cabecalho
 Get-ChildItem -LiteralPath $pastaRel -Filter '*.txt' -File |
     Where-Object { $_.Name -match '^\d{4}-\d{2}-\d{2}_\d{4}\.txt$' } |
     Sort-Object Name -Descending |

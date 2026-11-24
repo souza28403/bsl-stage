@@ -631,14 +631,31 @@ class App:
             x, y = self.to_screen(x, y)
         self.last_move = "cliente %s -> tela (%d, %d)" % (("%.1f,%.1f" % want) if client else "-", int(round(x)), int(round(y)))
         user32.SetCursorPos(int(round(x)), int(round(y)))
+        pt = wintypes.POINT()
+        user32.GetCursorPos(ctypes.byref(pt))
+        self.cursor_expected = (pt.x, pt.y)
+
+    def check_interference(self):
+        """Falha com INTERFERENCIA se o cursor saiu de onde o driver o deixou (alguem mexeu no mouse durante o teste)."""
+        exp = getattr(self, "cursor_expected", None)
+        if exp is None:
+            return
+        pt = wintypes.POINT()
+        user32.GetCursorPos(ctypes.byref(pt))
+        if abs(pt.x - exp[0]) > 4 or abs(pt.y - exp[1]) > 4:
+            self.cursor_expected = None
+            raise QaFailure("INTERFERENCIA: o mouse foi movido fora do teste (o driver deixou em %d,%d e esta em %d,%d); "
+                            "ninguem deve usar o PC durante o uiqa" % (exp[0], exp[1], pt.x, pt.y))
 
     def hover(self, x, y):
         self.mouse_move(x, y, client=True)
         time.sleep(0.06)
 
     def press(self, button="left", double=False):
+        self.check_interference()
         self.ensure_focus()
         self.ensure_cursor_target()
+        self.check_interference()
         down, up = (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP) if button == "left" else (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP)
         for _ in range(2 if double else 1):
             _mouse(down)
@@ -694,13 +711,16 @@ class App:
                 _key(VK[m])
                 held.append(m)
             time.sleep(0.05 if mods else 0)
+            self.check_interference()
             _mouse(down)
             pressed = True
             time.sleep(0.08)
             for i in range(1, steps + 1):
+                self.check_interference()
                 self.mouse_move(x0 + (x1 - x0) * i / steps, y0 + (y1 - y0) * i / steps, client=True)
                 time.sleep(0.03)
             time.sleep(0.08 + hold)
+            self.check_interference()
             result = None
             if probe:
                 self.wait_frames(4)
